@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from app.api import health, llm_usage_writer, startup_report
 from app.api.cors import register_cors
 from app.api.errors import register_error_handlers
+from app.api.metrics import MetricsMiddleware, start_metrics_server
 from app.api.openapi import install_openapi
 from app.api.runs import hold_purge, registry
 from app.api.v1.router import v1_router
@@ -23,7 +24,6 @@ from app.core.constants import API_V1_PREFIX
 from app.core.logging_config import configure_logging
 from app.domains.memory.curator import trigger as curator_trigger
 from app.integrations import discord
-from app.integrations.hospital.client import NmcHospitals
 from app.integrations.tour.events import TourEvents
 from app.integrations.weather.source import PublicWeather
 
@@ -95,9 +95,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     행사 어댑터(TourAPI)도 같다 — 하루치 전국 목록 · 소개정보 캐시가 프로세스 메모리에 있다.
     같은 공공데이터포털 키를 쓰고, 없으면 Activity 는 행사를 찾지 않는다.
 
-    병원 어댑터(국립중앙의료원, #713)도 같다 — 시도별 기관 목록 캐시가 프로세스 메모리에 있다.
-    같은 키를 쓰고, 없으면 Health 병원 찾기가 `place.unavailable` 로 닫힌다.
-
     LLM 사용량 writer(#710)는 키와 상관없이 늘 띄운다 — 큐를 2초마다 `llm_usage` 표에 쓴다.
     프로세스마다 큐 · writer 가 하나라 `--workers` 와 무관하다. 종료 때는 먼저 멈춰서(취소)
     남은 큐를 쓰고 끝낸다. SIGKILL · OOM 이면 최대 2초분을 잃는다.
@@ -109,14 +106,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     has_key = bool(settings.DATA_GO_KR_SERVICE_KEY.strip())
     weather = PublicWeather() if has_key else None
     events = TourEvents() if has_key else None
-    hospitals = NmcHospitals() if has_key else None
     app.state.activity_weather = weather
     app.state.activity_events = events
-    app.state.health_places = hospitals
     usage_writer = asyncio.create_task(llm_usage_writer.run_writer(), name="llm-usage-writer")
     # 만료된 되묻기 맥락을 1분마다 지운다 (#877). 처리방침이 "15분 안에 지운다" 라
     # 하루 배치로는 늦다
     hold_purger = asyncio.create_task(hold_purge.run_purger(), name="run-hold-purger")
+    # 메트릭 창구 (#975) — import 가 아니라 여기서 연다. 테스트 · 스크립트도 app.main 을 import 한다
+    metrics_server = (
+        start_metrics_server(settings.METRICS_PORT, settings.METRICS_ALLOWED_IP)
+        if settings.METRICS_PORT
+        else None
+    )
     try:
         yield
     finally:
@@ -133,9 +134,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # 아래 클라이언트 닫기를 건너뛰면 안 된다
         with suppress(asyncio.CancelledError, Exception):
             await usage_writer
-        for client in (weather, events, hospitals):
+        for client in (weather, events):
             if client is not None:
                 await client.aclose()
+        if metrics_server is not None:
+            metrics_server.shutdown()
 
 
 app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
@@ -147,6 +150,9 @@ register_error_handlers(app)
 # 브라우저에서 다른 오리진의 이 API 를 부를 수 있게 한다 (이슈 #34).
 # 허용 오리진은 CORS_ALLOW_ORIGINS 환경변수에서만 오고, * 는 부팅에서 막힌다.
 register_cors(app)
+
+# 요청 수 · 응답 코드 · 응답 시간 (#975, app/api/metrics.py). 창구는 lifespan 에서 연다.
+app.add_middleware(MetricsMiddleware)
 
 # 헬스체크는 /api/v1 밖에 둔다.
 # API 계약서 §01: "경로는 모두 /api/v1 하위 · 인증 예외 없음".

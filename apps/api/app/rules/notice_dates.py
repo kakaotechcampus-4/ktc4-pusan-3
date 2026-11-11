@@ -9,6 +9,7 @@ import calendar
 import re
 from dataclasses import dataclass
 from datetime import date, time, timedelta
+from itertools import pairwise
 from typing import NamedTuple
 
 _WEEKDAYS = "월화수목금토일"
@@ -29,7 +30,27 @@ _DOW = (
 _FULL = re.compile(_YMD + f"(?:{_DOW})?")
 _SHORT = re.compile(r"(?<![\d.])" + _MD + f"(?:{_DOW})?")
 _BARE_DAY = re.compile(r"(?<![\d.])(?P<d>\d{1,2})\s*일" + f"(?:{_DOW})?")
+# "11/23~27" · "11.23(월)~27(금)" — 기간의 끝 날은 "일" 도 빠진다.
+# 숫자에 붙은 달 · 금액 · 단위("~12월" · "~2만원" · "~3세"), 혼자 선 금액("~27 만원"), 뒤의 숫자가
+# 오면 날이 아니다. 띄어 쓴 낱말("~27 원내 행사" · "~27 만 3세반" · "~27 학부모")은 막지 않는다
+_UNIT_AFTER_DAY = r"(?:월|년|만|천|원|주|째|차|회|개|명|번|학|세|살|%|시|분|달)"
+_BARE_END_DAY = re.compile(
+    r"(?P<d>\d{1,2})"
+    + r"(?!\s*[\d:/]|\.\d|"
+    + _UNIT_AFTER_DAY
+    + r"|\s*(?:[만천]\s*)?원(?![가-힣]))\.?"
+    + f"(?:{_DOW})?"
+)
 _CALENDAR_CELL = re.compile(r"\d{1,2}")
+# 월간표의 "30(월)" — "일" 없이 요일 괄호만 붙는다. 숫자만으로는 날인지 몰라 요일이 맞을 때만 읽는다
+_CELL_WITH_DOW = re.compile(
+    r"(?<![\d./:])(?P<d>\d{1,2})\s*[(（]\s*(?P<w>[월화수목금토일])\s*(?:요일)?\s*[)）]"
+)
+# "2~6(금)" 의 6(금) 은 기간의 끝이다. 혼자 읽으면 기간이 금요일 하루가 된다
+_ENDS_WITH_RANGE_SEP = re.compile(r"(?:~|∼|〜|-|–|—|부터)\s*$")
+# "제3(화)" 의 3 은 차례, "만 3(화)" 의 3 은 나이, "총 3(화)" 의 3 은 개수다. 낱말에 붙은 숫자와
+# 셈 낱말 뒤의 숫자는 요일이 맞아도 날이 아니다. "휴원 30(월)" 처럼 띄어 쓴 다른 낱말 뒤는 읽는다
+_NOT_A_CELL_BEFORE = re.compile(r"(?:[가-힣]|(?:^|[^가-힣])(?:만|총|약|외|제)\s+)$")
 _BASE_MONTH = re.compile(r"(?:(?P<y>\d{4})\s*년\s*)?(?P<m>\d{1,2})\s*월")
 _RELATIVE = {"오늘": 0, "금일": 0, "내일": 1, "명일": 1, "모레": 2}
 _WEEK_WORD = re.compile(r"(?P<week>이번\s*주|금주|다음\s*주|차주)\s*(?P<wk>[월화수목금토일])요일")
@@ -40,6 +61,14 @@ _CLOCK = re.compile(_MERIDIEM + r"\s*(?P<h>\d{1,2})\s*:\s*(?P<min>\d{2})")
 _HANGUL_TIME = re.compile(
     _MERIDIEM + r"\s*(?P<h>\d{1,2})\s*시"
     r"(?:\s*(?P<min>\d{1,2})\s*분|(?P<min2>\d{2})(?!\d)|\s*(?P<half>반))?"
+)
+# "10~12시" · "오후 2~4시" — 범위의 앞 시각은 "시" 가 빠진다. "~" 뒤에 "N시" 가 바로 올 때만
+# 시각이다. 오전 · 오후는 다른 시각과 같은 규칙으로 읽는다(_times · _time_span).
+# 앞에 숫자 · 구분 기호가 붙은 숫자는 날짜의 일부다 ("11/23~12시" 의 23)
+_BARE_HOUR = re.compile(
+    _MERIDIEM
+    + r"\s*(?<![\d./:\-])(?P<h>\d{1,2})(?P<min>)"
+    + r"(?=\s*(?:~|∼|〜|-|–|—)\s*(?:새벽|아침|오전|낮|오후|저녁|밤)?\s*\d{1,2}\s*시(?!간))"
 )
 _TIME_RANGE = re.compile(r"\0+\s*(?:~|∼|〜|-|–|—|부터)\s*\0+")
 _UNTIL = re.compile(r"\s*까지")
@@ -76,6 +105,8 @@ class _Clock(NamedTuple):
     end: int
     guessed: bool  # 오전 · 오후가 안 적혀 오후로 읽었다 ("3시")
     vague: bool  # 오전 · 오후가 안 적혔고 둘 다 될 수 있다 ("7시")
+    bare: bool = False  # 오전 · 오후가 안 적혔다 (24시간제 "07:30" 은 아니다)
+    inherited_am: bool = False  # 앞 시각의 "오전" 을 이어받았다 ("오전 11~1시" 의 1시)
 
 
 def _safe(y: int, m: int, d: int) -> date | None:
@@ -141,6 +172,16 @@ def _first_date(
         return _month_day(
             base_month, int(m["d"]), _written_weekday(m), anchor, m[0].strip(), m.end()
         )
+    if (
+        base_month is not None
+        and (m := _CELL_WITH_DOW.search(text))
+        and not _ENDS_WITH_RANGE_SEP.search(text[: m.start()])
+        and not _NOT_A_CELL_BEFORE.search(text[: m.start()])
+        and (found := _nearest(base_month, int(m["d"]), anchor))
+        and not _dow_mismatch(found, m["w"])
+    ):
+        # 요일이 어긋나면 다른 해로 옮겨 맞추지 않는다 — 읽지 못한 것으로 둔다
+        return found, None, m.end()
     if m := _WEEK_WORD.search(text):
         monday = anchor - timedelta(days=anchor.weekday())
         if m["week"].replace(" ", "") in ("다음주", "차주"):
@@ -150,6 +191,30 @@ def _first_date(
         if (at := text.find(word)) >= 0:
             return anchor + timedelta(days=days), None, at + len(word)
     return None, None, 0
+
+
+def _month_and_day(month: str, day: str) -> bool:
+    return 1 <= int(month) <= 12 and 1 <= int(day) <= 31
+
+
+def _bare_hours(text: str) -> list[re.Match]:
+    """시 없는 앞 시각. 날짜 표현 안의 숫자는 뺀다.
+
+    "11. 23 ~ 12시" · "11월 23 ~ 12시" 의 23 은 날이다. 달 · 날로 있을 수 없는 짝은 날짜로 치지
+    않는다 — "11.23. 10~12시" 를 "11년 23월 10일" 로 보면 10 이 날이 된다.
+    두 자리 연도는 앞 두 숫자가 월 · 일이 될 수 있으면 연도로 보지 않는다 — "11.2. 10~12시" 는
+    11월 2일 10~12시지 2011년 2월 10일이 아니다. "26.11.23 ~ 12시" 의 26 은 달이 아니라 연도다.
+    """
+    dates = [
+        m.span()
+        for m in (*_FULL.finditer(text), *_SHORT.finditer(text))
+        if 1 <= int(m["m"]) <= 12
+        and 1 <= int(m["d"]) <= 31
+        and not ("y" in m.re.groupindex and len(m["y"]) == 2 and _month_and_day(m["y"], m["m"]))
+    ]
+    return [
+        m for m in _BARE_HOUR.finditer(text) if not any(a <= m.start("h") < b for a, b in dates)
+    ]
 
 
 def _time_of(mer: str | None, hour: int, minute: int) -> time | None:
@@ -174,7 +239,8 @@ def _times(text: str) -> list[_Clock]:
     taken: list[tuple[int, int]] = []
     last_mer: str | None = None
     for m in sorted(
-        [*_CLOCK.finditer(text), *_HANGUL_TIME.finditer(text)], key=lambda x: x.start()
+        [*_CLOCK.finditer(text), *_HANGUL_TIME.finditer(text), *_bare_hours(text)],
+        key=lambda x: x.start(),
     ):
         if any(a <= m.start() < b for a, b in taken):
             continue
@@ -184,9 +250,14 @@ def _times(text: str) -> list[_Clock]:
         groups = m.groupdict()
         minute = 30 if groups.get("half") else int(m["min"] or groups.get("min2") or 0)
         hour = int(m["h"])
+        if m["mer"] is None and mer in _MORNING and hour == 12:
+            # "오전 9시~12시" 의 12시는 정오다. 이어받은 "오전" 으로 자정을 만들지 않는다.
+            # 바로 붙은 "오전 12시" 는 적힌 그대로 자정이다
+            mer = None
         parsed = _time_of(mer, hour, minute)
         if parsed is not None:
-            bare = mer is None and not m["h"].startswith("0")  # "07:30" 은 24시간제다
+            # "07:30" 은 24시간제다. 한 자리 "0" 은 표시 없는 시각이다
+            bare = mer is None and not (len(m["h"]) == 2 and m["h"].startswith("0"))
             found.append(
                 _Clock(
                     parsed,
@@ -194,6 +265,8 @@ def _times(text: str) -> list[_Clock]:
                     m.end(),
                     guessed=bare and 1 <= hour <= _EARLY_HOUR,
                     vague=bare and hour in _BOTH_WAYS,
+                    bare=bare,
+                    inherited_am=m["mer"] is None and mer in _MORNING,
                 )
             )
     return found
@@ -210,19 +283,33 @@ def _time_span(text: str) -> tuple[time | None, time | None, bool, bool]:
     first, *rest = times
     if rest and _RANGE_SEP.fullmatch(text[first.end : rest[0].start]):
         start, end = first.at, rest[0].at
+        # 범위가 또 있으면 회차다 — "10~12시, 2~4시" 의 둘째 회차가 조용히 사라지면 안 된다.
+        # 범위 뒤의 낱 시각("9:30 출발, 12:30 도착")은 범위가 아니라 세지 않는다
+        several = any(_RANGE_SEP.fullmatch(text[a.end : b.start]) for a, b in pairwise(rest[1:]))
         if first.vague and not rest[0].vague:
             # "7:30 ~ 19:30" — 끝이 분명하면 시작은 끝보다 이른 쪽 하나로만 읽힌다
             fits = [t for t in (start, start.replace(hour=start.hour + 12)) if t < end]
             if len(fits) == 1:
-                return fits[0], end, False, False
+                return fits[0], end, several, False
         if first.vague:
-            return None, None, False, True
-        if (first.guessed or rest[0].vague) and end <= start and end.hour < 12:
-            # 끝이 시작보다 이를 수는 없다 — "6시 30분 ~ 8시 30분" · "10시 ~ 7시" 는 저녁에 끝난다
-            return start, end.replace(hour=end.hour + 12), False, False
+            return None, None, several, True
+        if (
+            (first.guessed or rest[0].vague or rest[0].inherited_am)
+            and end <= start
+            and end.hour < 12
+        ):
+            # 끝이 시작보다 이를 수는 없다 — "6시 30분 ~ 8시 30분" · "10시 ~ 7시" 는 저녁에 끝난다.
+            # 이어받은 "오전" 도 같다 — "오전 11~1시" 의 1시는 오후 1시다
+            return start, end.replace(hour=end.hour + 12), several, False
+        if ((first.guessed or rest[0].guessed) and end <= start) or (
+            first.bare and start == time(0)
+        ):
+            # 짐작한 오후로도 거꾸로인 범위("3~2시")와 표시 없는 0시("0~2시")는 읽을 길이 없다.
+            # 시각을 비우고 되묻는다 — 적힌 그대로 거꾸로인 "14:00~10:00" 은 고치지 않는다
+            return None, None, several, True
         if rest[0].vague:
-            return start, None, False, True
-        return start, end, False, False
+            return start, None, several, True
+        return start, end, several, False
     if first.vague:
         return None, None, bool(rest), True
     return first.at, None, bool(rest), False
@@ -238,6 +325,9 @@ def _drop_time_words(text: str) -> str:
     위치가 같아야 시각이 범위의 어느 쪽에 붙었는지 원문에서 찾을 수 있다.
     시각 범위의 "~" 도 같이 지운다. 남기면 "19일 10:00~11:30, 27일" 이 19일부터 27일까지가 된다.
     """
+    # "시" 없는 앞 시각은 뒤의 "N시" 를 보고 찾으므로 그것을 지우기 전에 지운다
+    for m in _bare_hours(text):
+        text = text[: m.start()] + _hide(m) + text[m.end() :]
     marked = _HANGUL_TIME.sub(_hide, _CLOCK.sub(_hide, text))
     return _TIME_RANGE.sub(lambda m: " " * len(m[0]), marked).replace("\0", " ")
 
@@ -310,7 +400,14 @@ def parse_notice_when(
         adjacent = bool(_DATE_START.match(rest))
         end, end_reason, _ = _first_date(rest, start, month) if adjacent else (None, None, 0)
         reason = reason or end_reason
-        if end is None and (bare := _BARE_DAY.match(rest.strip())):
+        bare = _BARE_DAY.match(rest.strip()) if end is None else None
+        # 날짜 표현 끝의 공백은 지운 시각일 수 있다 — 원문은 그 공백을 빼고 본다
+        core = len(dateless[:at].rstrip())
+        if end is None and bare is None and _RANGE_SEP.match(text[core:]):
+            # "일" 없는 끝 날은 원문에서 "~" 가 날짜 바로 뒤일 때만 읽는다. "11/2 9:30~12" 의 12 는
+            # 시각이다 — 시각을 지운 글에서는 "~" 가 날짜 바로 뒤처럼 보인다
+            bare = _BARE_END_DAY.match(rest.strip())
+        if bare:
             # "11월 9일~20일" — 뒤쪽은 달이 생략된다. 말일을 넘기면 다음 달로 읽지 않고 되묻는다
             end = _safe(start.year, start.month, int(bare["d"]))
             if end is None:
@@ -363,5 +460,6 @@ def _span_of_times(text: str, split_at: int | None) -> tuple[time | None, time |
     right_start, right_end, right_several, right_vague = _time_span(text[split_at:])
     vague = left_vague or right_vague
     if left_start is None and right_end is not None:
-        return right_start, right_end, False, vague
+        # 끝 날 쪽에만 시각이 있으면 매일의 시간이다. 거기에 범위가 또 있으면 그대로 되묻는다
+        return right_start, right_end, right_several, vague
     return left_start, left_end or right_start, left_several or right_several, vague

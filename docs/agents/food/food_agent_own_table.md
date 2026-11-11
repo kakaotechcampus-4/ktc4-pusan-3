@@ -38,7 +38,7 @@
 | `menu_catalog` | 동기화 배치 (`integrations`) · 캐시 미스는 Food 요청 중 외부 조회 뒤 백엔드 어댑터가 없을 때만 INSERT (§1) | Food | 메뉴 카탈로그 — 급식 · 기록 · 영양 판정. 영양DB 결과 + 사람이 넣은 행 |
 | `recipe_catalog` | 레시피 배치 (`integrations`) (§1-1) | Food (식단 추천 후보 풀) | 레시피 카탈로그 — 추천 후보. 레시피 재료 + 영양 |
 | `menu_alias` | 동기화 배치 (`integrations`) | Food | 표기 사전 |
-| **`daycare_meal`** | 최초 적재는 OCR·급식 배치(INSERT) · 이후 갱신·삭제는 **Food** | Food | **도메인 전용** — 아무도 안 읽는다 |
+| **`daycare_meal`** | 최초 적재는 OCR·급식 배치(INSERT) · 이후 갱신·삭제는 **Food** | Food · 03 홈 API(오늘 급식 줄, 읽기만) | **도메인 전용** — 다른 Agent 는 안 읽는다. 홈은 그날 행을 있는 그대로 보여 줄 뿐 판정 · 쓰기가 없다 |
 | `nutrient_reference` | 마이그레이션 시드 | Food | 참조 상수 |
 | `food_doc` | 마이그레이션 시드 | Food | 문서 행 |
 | `allergen_term` | 마이그레이션 시드 | Food · **Health** | 공유 참조 |
@@ -104,6 +104,7 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 - 레시피 행은 받지 않는다 — DB 는 `source` CHECK, 코드는 `RECIPE_SOURCES`(`store/ports.py`)로 막는다.
 - 운영 트래픽을 API에 직접 걸지 않는다. 매일 새벽 배치(FT-19) + 카탈로그에 없을 때(캐시 미스) 1회 — 그 1회는 Food 요청 중에 부르고, 저장은 어댑터가 한다.
 - 배치는 요청 중 조회와 **같은 규칙으로 행을 고른다**(`nutrition_source.pick_nutrition` — 품목대표 · 이름 정확히 일치 · 그룹 순서). 다르게 고르면 같은 메뉴가 배치 전후로 다른 영양값을 갖는다. **✅ 정함(10-13, #321 파트 2)** — 이 함수는 `app.core.nutrition_pick` 으로 내려왔다(배치·Agent 공용, apps/api/CLAUDE.md 레이어 경계). 배치는 받은 품목대표 행을 그대로 `nutrition_facts_by_key(rows)` 에 넘겨 `dict[menu_key, NutritionFacts]` 를 받는다 — 메뉴마다 직접 `pick_nutrition_row` 를 부를 필요가 없다. (#326 코멘트로 BE 에 전달 예정)
+- 급식표 사진 저장(`photo_run.meal_row`)만 `normalize_menu_key` 위에 괄호 안 음식 이름을 키로 하나 더 싣는다(`meal_menu_keys`) — [급식표 파이프라인 결정 ⑤](../../meal-plan/meal-plan-pipeline-v1.md).
 
 ### 1-1. `recipe_catalog` — 레시피 카탈로그 (추천 후보) · 재료명 정리 표
 

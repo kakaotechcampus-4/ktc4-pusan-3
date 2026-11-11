@@ -25,7 +25,7 @@ async def test_읽기가_상한을_넘으면_timeout_으로_끝낸다(monkeypatc
     monkeypatch.setattr(
         photo_run.entrypoint,
         "read_photo",
-        lambda data, *, received_at, meal_deadline: time.sleep(0.4),
+        lambda data, *, received_at, meal_deadline, on_meal_plan: time.sleep(0.4),
     )
     run = photo_run.open_photo_run(run_id="run_test", parent_id=uuid.uuid4(), child_id=uuid.uuid4())
     channel = _Channel()
@@ -53,7 +53,7 @@ async def test_식단표_읽기에는_전체_상한보다_이른_기한을_넘�
 ) -> None:
     seen: dict = {}
 
-    def read_photo(data, *, received_at, meal_deadline):
+    def read_photo(data, *, received_at, meal_deadline, on_meal_plan):
         seen["left"] = meal_deadline - time.monotonic()
         raise photo_run.entrypoint.UnreadablePhoto("읽지 못했어요")
 
@@ -72,7 +72,11 @@ async def test_식단표_읽기에는_전체_상한보다_이른_기한을_넘�
 def _meal_failed_reason(*, timed_out: bool) -> str:
     run = photo_run.open_photo_run(run_id="run_test", parent_id=uuid.uuid4(), child_id=uuid.uuid4())
     reading = SimpleNamespace(
-        notice=SimpleNamespace(items=[]), meal_plan=None, meal_failed=True, meal_timed_out=timed_out
+        notice=SimpleNamespace(items=[]),
+        meal_plan=None,
+        meal_failed=True,
+        meal_timed_out=timed_out,
+        meal_month=None,
     )
     (entry,) = photo_run.build_entries(run, reading, today=date(2026, 11, 10))
     return entry["review_reason"]

@@ -48,7 +48,7 @@ IMMUNE = HealthSafetyEntry("chronic_disease", "만성 면역력 저하증", "act
 ASTHMA = HealthSafetyEntry("chronic_disease", "소아천식", "active")
 PEANUT = HealthSafetyEntry("allergy", "땅콩", "active")
 
-DEFAULT_COUGH = "최근 1주 동안 '기침'이(가) 3번 기록됐어요. 병원에서 확인해 보시는 게 좋겠어요."
+DEFAULT_COUGH = "최근 1주 동안 '기침' 기록이 3번 있어요. 병원에서 확인해 보시는 게 좋겠어요."
 
 
 def _cough_three_days(symptoms: tuple[str, ...] = ("기침",)) -> InMemoryHealthMemory:
@@ -69,8 +69,8 @@ async def test_등록_질환과_행이_맞으면_질환_문장과_카드():
     assert [r.kind for r in readouts] == ["symptom_repeat", "condition_guidance"]
     # 명세 §4 문구와 글자 단위로 같고, {condition} 은 보호자가 적은 이름 원문이다
     assert readouts[0].body == (
-        "최근 1주 동안 '기침'이(가) 3번 기록됐어요. "
-        "등록하신 '만성 면역력 저하증'이(가) 있어 병원에서 확인해 보시는 게 좋겠어요."
+        "최근 1주 동안 '기침' 기록이 3번 있어요. "
+        "등록하신 '만성 면역력 저하증'도 있어서 병원에서 확인해 보시는 게 좋겠어요."
     )
     assert readouts[1].title == "출처: 테스트 기관 「테스트 문서」"
     assert readouts[1].body == "테스트 안내 문구"
@@ -86,7 +86,7 @@ async def test_행이_없으면_기본_문장():
     readouts, _ = await _readouts([IMMUNE], memory=memory)
 
     assert [r.body for r in readouts] == [
-        "최근 1주 동안 '발열'이(가) 3번 기록됐어요. 병원에서 확인해 보시는 게 좋겠어요."
+        "최근 1주 동안 '발열' 기록이 3번 있어요. 병원에서 확인해 보시는 게 좋겠어요."
     ]
 
 
@@ -151,8 +151,8 @@ async def test_질환이_둘이면_둘_다_적는다():
     readouts, _ = await _readouts([IMMUNE, ASTHMA])
 
     assert readouts[0].body == (
-        "최근 1주 동안 '기침'이(가) 3번 기록됐어요. "
-        "등록하신 '만성 면역력 저하증' · '소아천식'이(가) 있어 병원에서 확인해 보시는 게 좋겠어요."
+        "최근 1주 동안 '기침' 기록이 3번 있어요. "
+        "등록하신 '만성 면역력 저하증' · '소아천식'도 있어서 병원에서 확인해 보시는 게 좋겠어요."
     )
     assert [r.body for r in readouts[1:]] == ["테스트 안내 문구", "천식 테스트 안내 문구"]
 

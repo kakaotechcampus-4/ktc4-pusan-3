@@ -127,7 +127,9 @@ def key_set(monkeypatch):
 
 async def _upload(db_client, headers, cid, monkeypatch, reading) -> tuple[str, dict]:
     monkeypatch.setattr(
-        entrypoint, "read_photo", lambda data, *, received_at, meal_deadline=None: reading
+        entrypoint,
+        "read_photo",
+        lambda data, *, received_at, meal_deadline=None, on_meal_plan=None: reading,
     )
     response = await db_client.post(
         PHOTOS.format(cid=cid),
@@ -579,7 +581,7 @@ async def test_S3_에_올린_사진은_열쇠로_읽고_지운다(
     s3_bucket[key] = b"photo-bytes"  # 화면이 S3 에 올렸다
     received: list[bytes] = []
 
-    def read(data, *, received_at, meal_deadline=None):
+    def read(data, *, received_at, meal_deadline=None, on_meal_plan=None):
         received.append(data)
         return _reading()
 
@@ -642,7 +644,9 @@ async def test_저장할_것이_없는_사진은_빈_확인_화면_대신_실패
     headers, _ = bearer
     reading = entrypoint.PhotoReading(notice=replace(_reading().notice, items=()), meal_plan=None)
     monkeypatch.setattr(
-        entrypoint, "read_photo", lambda data, *, received_at, meal_deadline=None: reading
+        entrypoint,
+        "read_photo",
+        lambda data, *, received_at, meal_deadline=None, on_meal_plan=None: reading,
     )
     response = await db_client.post(
         PHOTOS.format(cid=cid),
@@ -662,7 +666,7 @@ async def test_저장할_것이_없는_사진은_빈_확인_화면_대신_실패
 async def test_글자를_못_찾으면_실패로_끝난다(db_client, bearer, cid, key_set, monkeypatch):
     headers, _ = bearer
 
-    def unreadable(data, *, received_at, meal_deadline=None):
+    def unreadable(data, *, received_at, meal_deadline=None, on_meal_plan=None):
         raise entrypoint.UnreadablePhoto("글자를 찾지 못했어요")
 
     monkeypatch.setattr(entrypoint, "read_photo", unreadable)
@@ -836,7 +840,9 @@ async def test_같은_요청을_다시_보내면_새로_올린_사진은_지우�
 ):
     headers, _ = bearer
     monkeypatch.setattr(
-        entrypoint, "read_photo", lambda data, *, received_at, meal_deadline=None: _reading()
+        entrypoint,
+        "read_photo",
+        lambda data, *, received_at, meal_deadline=None, on_meal_plan=None: _reading(),
     )
     idem = {**headers, "Idempotency-Key": str(uuid.uuid4())}
     first_key = (await db_client.post(UPLOADS.format(cid=cid), headers=headers)).json()["key"]
@@ -871,7 +877,7 @@ async def test_recall_이_놓친_같은_키는_사진을_다시_읽지_않고_�
     headers, _ = bearer
     reads: list[bytes] = []
 
-    def read(data, *, received_at, meal_deadline=None):
+    def read(data, *, received_at, meal_deadline=None, on_meal_plan=None):
         reads.append(data)
         return _reading()
 
@@ -904,3 +910,60 @@ async def test_recall_이_놓친_같은_키는_사진을_다시_읽지_않고_�
     assert len(lost) == 1
     assert lost[0].closed and lost[0].task is None  # 진 쪽 채널은 닫혔고 러너가 붙지 않았다
     assert s3_bucket == {}  # 진 요청이 받은 사진도 남지 않는다 — 받으면서 지웠다
+
+
+# ── 2026-11-11 운영 장애 — 화면 항목은 저장 검증을 통과한다 ──────────────────────
+
+
+async def test_망가진_읽기도_웹이_확인한_항목을_그대로_보내면_저장된다(
+    db_client, session, bearer, cid, key_set, monkeypatch
+):
+    # 범위 밖 연도의 일정 · 빈 제목 · 같은 날 같은 끼니 두 번. 전에는 한 건만 걸려도 저장 전체가 400
+    # (또는 같은 id 422)이었다. 웹은 확인이 필요한 항목을 빼고 나머지를 그대로 보낸다
+    headers, _ = bearer
+    reading = _reading(meal_plan=_meal_plan())
+    broken = (
+        replace(reading.notice.items[0], starts_at=datetime(2019, 3, 1, tzinfo=KST)),
+        replace(reading.notice.items[1], title="   "),
+        *reading.notice.items[2:],
+    )
+    plan = _meal_plan()
+    lunch = plan.days[0].meals[0]
+    plan = plan.model_copy(
+        update={
+            "days": [
+                MealDay(day=2, meals=[lunch, lunch]),
+                MealDay(day=4, meals=[lunch]),
+            ]
+        }
+    )
+    reading = entrypoint.PhotoReading(notice=replace(reading.notice, items=broken), meal_plan=plan)
+    run_id, parsed = await _upload(db_client, headers, cid, monkeypatch, reading)
+    checked = [e for e in parsed["entries"] if not e["needs_review"]]
+
+    response = await _commit(db_client, headers, run_id, checked)
+
+    assert response.status_code == 201
+    days = await session.scalars(select(DaycareMeal.serve_date).where(DaycareMeal.child_id == cid))
+    assert sorted(days) == [date(2026, 11, 2), date(2026, 11, 4)]
+
+
+async def test_읽지_못한_항목은_확인해_보내도_저장하지_않는다(
+    db_client, session, bearer, cid, key_set, monkeypatch
+):
+    headers, _ = bearer
+    run_id, parsed = await _upload(db_client, headers, cid, monkeypatch, _reading())
+    unread = {
+        "id": "pe_unread_0",
+        "kind": "info",
+        "title": "읽지 못한 항목",
+        "date": None,
+        "all_day": True,
+        "items": [],
+        "needs_review": False,
+    }
+
+    response = await _commit(db_client, headers, run_id, [parsed["entries"][0], unread])
+
+    assert response.status_code == 201
+    assert await _count(session, NoticeItem) == 1

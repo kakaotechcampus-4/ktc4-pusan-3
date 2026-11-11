@@ -54,6 +54,7 @@ import {
   REPORT_MESSAGE_MAX_LENGTH,
 } from "@/lib/api/types";
 import type {
+  HomeResponse,
   MedicationDose,
   MedicationsResponse,
   SubmitMedicationBody,
@@ -5427,5 +5428,47 @@ describe("반복 일정 — 새 반복 일정 · 묶음 고치기 (#738)", () =>
     const plain = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
     // 🚨 반복이 아닌 일정에는 키 자체가 없다.
     expect(plain.events[0]).not.toHaveProperty("series");
+  });
+});
+
+describe("03 홈 오늘 줄 — 서버 `GET /children/{cid}/home` 과 같은 모양", () => {
+  afterEach(() => setScenario("default"));
+
+  const SLOT = /^(오전 간식|점심|오후 간식) · \S/;
+
+  function mealsOf(data: HomeResponse) {
+    return data.today.filter((item) => item.kind === "meal");
+  }
+
+  it("급식은 끼니마다 한 줄이고 일정 줄보다 앞에 선다", async () => {
+    const data = await api.get<HomeResponse>("/children/c1/home");
+    const kinds = data.today.map((item) => item.kind);
+
+    expect(kinds.indexOf("event")).toBeGreaterThan(kinds.lastIndexOf("meal"));
+    expect(mealsOf(data).length).toBeGreaterThan(1);
+    for (const meal of mealsOf(data)) {
+      expect(meal.title).toMatch(SLOT);
+      expect(meal.origin).toBe("기관 급식표");
+    }
+  });
+
+  it("급식 줄 제목은 겹치지 않는다 — 화면이 제목을 줄의 key 로 쓴다", async () => {
+    const titles = mealsOf(await api.get<HomeResponse>("/children/c1/home")).map((m) => m.title);
+    expect(new Set(titles).size).toBe(titles.length);
+  });
+
+  it("`empty_meal` 은 기록 0건 · 기억 없음인데 오늘 급식만 있다", async () => {
+    setScenario("empty_meal");
+    const data = await api.get<HomeResponse>("/children/c1/home");
+
+    expect(data.observation_count).toBe(0);
+    expect(data.highlight).toBeNull();
+    expect(data.today.length).toBeGreaterThan(0);
+    expect(data.today.every((item) => item.kind === "meal")).toBe(true);
+  });
+
+  it("`empty` 는 오늘 줄이 없다 — 급식이 없는 날은 빈 줄을 세우지 않는다", async () => {
+    setScenario("empty");
+    expect((await api.get<HomeResponse>("/children/c1/home")).today).toEqual([]);
   });
 });

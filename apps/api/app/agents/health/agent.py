@@ -7,11 +7,12 @@
      동의를 받게 하지 않는다
   ② build_gate 로 월령 · 동의 · 안전 조회를 모은다
   ③ 동의가 없으면 전 라벨이 `blocked.consent` 코드 문구로 끝 — 모델 0회
-  ④ 구현된 라벨 경로가 없으면 `unsupported` — 모델 0회. 병원 찾기만 준비 중 문구 한 줄이 붙는다
+  ④ 구현된 라벨 경로가 없으면 문구 없이 `unsupported` — 모델 0회
   ⑤ 구현된 라벨은 `_LABEL_RUNNERS` 의 경로가 처리한다
 
 라벨 경로는 라벨 이슈가 `_LABEL_RUNNERS` 와 `registry.IMPLEMENTED_TASKS` 에 같이 더한다
-(지금은 `schedule_check` · `medication` · `care_handoff` · `visit_summary` 가 있다).
+(지금은 `schedule_check` · `medication` · `care_handoff` · `visit_summary` · `place_lookup` 이
+있다).
 저장은 하지 않는다 — 복약 초안(`medication_drafts`)과 일정 초안(`event_requests`)은 결과로만
 나가고, 보호자가 제출해야 백엔드가 쓴다. 복약 중단만 예외다 — 한 번 물어 '네' 를 받은 다음 run 이
 `medication` 경로에서 쓴다.
@@ -29,12 +30,12 @@ from app.agents.health.context import HealthContext, build_gate
 from app.agents.health.envelope import result as _result
 from app.agents.health.labels.handoff import run_care_handoff, wants_notice
 from app.agents.health.labels.medication import answer_leftover, is_dose_report, run_medication
+from app.agents.health.labels.place import run_place_lookup
 from app.agents.health.labels.schedule import run_schedule_check
 from app.agents.health.labels.visit import run_visit_summary
 from app.agents.health.readouts import (
     MED_PREPARING,
     NOTICE_PREPARING,
-    PLACE_PREPARING,
     READOUTS,
 )
 from app.agents.health.registry import HOOK_HANDLERS, IMPLEMENTED_TASKS, closed_readout_key
@@ -57,10 +58,8 @@ _LABEL_RUNNERS: dict[HealthTaskType, LabelRunner] = {
     HealthTaskType.MEDICATION: run_medication,
     HealthTaskType.CARE_HANDOFF: run_care_handoff,
     HealthTaskType.VISIT_SUMMARY: run_visit_summary,
+    HealthTaskType.PLACE_LOOKUP: run_place_lookup,
 }
-
-# 라벨 경로가 아직 없지만 보호자에게 이유를 말해 줄 라벨. 경로가 붙으면 여기서 뺀다
-_PREPARING: dict[HealthTaskType, str] = {HealthTaskType.PLACE_LOOKUP: PLACE_PREPARING}
 
 
 async def run(
@@ -83,9 +82,7 @@ async def run(
         return _result(task_type, "blocked", readouts=(READOUTS.render(key),))
 
     if task_type not in IMPLEMENTED_TASKS:
-        preparing = _PREPARING.get(task_type)
-        readouts = () if preparing is None else (READOUTS.render(preparing),)
-        return _result(task_type, "unsupported", readouts=readouts)
+        return _result(task_type, "unsupported")
 
     return await _LABEL_RUNNERS[task_type](task, context, client)
 

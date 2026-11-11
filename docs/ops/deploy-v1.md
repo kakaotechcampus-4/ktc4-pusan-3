@@ -4,6 +4,10 @@
 
 ## 한눈에
 
+[![아이캐치 AWS 인프라 구성도 — 서울 리전의 EC2 한 대 위에 prod · dev 두 compose 프로젝트가 뜨고, Caddy 가 두 환경을 함께 받는다. 배포는 GitHub Actions 가 OIDC 로 IAM 역할을 받아 Systems Manager 로 deploy.sh 를 실행한다. S3 버킷은 사진 임시 보관과 DB 백업 둘이다.](../assets/architecture-detail.png)](../assets/architecture-detail.png)
+
+그림을 누르면 원본 크기로 열린다. VPC · 서브넷 · 보안 그룹 규칙은 저장소에 적혀 있지 않아 단일 퍼블릭 서브넷 구성으로 그렸다.
+
 ```
 develop push ─┐                                    ┌─ dev  (dev.icatch.ai.kr · api.dev.icatch.ai.kr)
               ├─ API CI + Web CI ─ 통과 ─ deploy.sh ┤
@@ -252,7 +256,8 @@ dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · �
      빌드 인자(`NEXT_PUBLIC_*`)를 바꿨으면 `deploy.sh` 로 다시 배포한다.
    - swap 을 확인한다. `free -h` 에서 Swap 이 0이면 2GB 를 만든다 (`fallocate -l 2G /swapfile` …).
    - 🚨 일정 알림 발송 cron(`docker exec ktc4-api … app.workers.reminder_dispatch`)은 **prod 에만** 둔다. dev 에는 등록하지 않는다 (11-06 결정).
-     dev 에서 실제 기기로 푸시가 나가지 않게 하려는 것이다. 컨테이너 이름이 `ktc4-api` 로 고정이라 prod 줄은 고치지 않는다
+     dev 에서 실제 기기로 푸시가 나가지 않게 하려는 것이다. 컨테이너 이름이 `ktc4-api` 로 고정이라 prod 줄은 고치지 않는다.
+     worker cron 세 줄(일정 알림 · 정리 · 기억 다시 계산)은 prod 배포가 `deploy/scripts/worker-cron.sh` 로 건다 (#718) — 손으로 넣지 않는다
    - 컨테이너 감시 cron 한 줄을 더한다:
      `* * * * * cd /home/ubuntu/ktc4-pusan-3-dev && STATE_FILE=/tmp/ktc4-health-alert-dev.state deploy/scripts/health-alert.sh >> /var/tmp/ktc4-health-alert-dev.log 2>&1`
 5. **카카오 개발자 콘솔** — dev 콜백 URL(`https://api.dev.icatch.ai.kr/...`)을 등록한다.

@@ -94,6 +94,160 @@ def test_기간을_읽는다(text, start, end):
 
 
 @pytest.mark.parametrize(
+    ("text", "start", "end"),
+    [
+        ("11/23~27", date(2026, 11, 23), date(2026, 11, 27)),
+        ("11/23(월)~27(금)", date(2026, 11, 23), date(2026, 11, 27)),
+        ("11.23~27", date(2026, 11, 23), date(2026, 11, 27)),
+        ("11.23.(월) ~ 27.(금)", date(2026, 11, 23), date(2026, 11, 27)),
+        # 이미 되던 것 — 그대로여야 한다
+        ("11월 23일~27일", date(2026, 11, 23), date(2026, 11, 27)),
+        ("11/28~12/2", date(2026, 11, 28), date(2026, 12, 2)),
+    ],
+)
+def test_끝_날에_일_글자가_없어도_기간이다(text, start, end):
+    # "11/23~27" 의 27 을 못 읽으면 끝이 열린 것으로 보고 첫날 하루 일정이 된다
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert (when.start, when.end) == (start, end)
+    assert when.open_ended is False
+    assert when.review is None
+
+
+def test_일_글자_없는_끝_날도_요일을_검산한다():
+    when = parse_notice_when("11/23(월)~27(목)", anchor=ANCHOR)
+    assert "요일" in when.review
+
+
+def test_일_글자_없는_끝_날의_시각은_매일의_시간이다():
+    when = parse_notice_when("11/23~27 10:00~12:00", anchor=ANCHOR)
+    assert (when.start, when.end) == (date(2026, 11, 23), date(2026, 11, 27))
+    assert (when.start_time, when.end_time) == (time(10), time(12))
+
+
+@pytest.mark.parametrize(
+    ("text", "start_time", "end_time"),
+    [
+        ("11/23 10~12시", time(10), time(12)),
+        ("11월 23일 10~12시", time(10), time(12)),
+        ("11월 23일 오후 2~4시", time(14), time(16)),
+        ("11월 23일 2~4시", time(14), time(16)),
+        ("11월 23일 9~11시 30분", time(9), time(11, 30)),
+        ("11월 23일 10~1시", time(10), time(13)),
+    ],
+)
+def test_앞_숫자에_시가_없는_시각_범위를_읽는다(text, start_time, end_time):
+    # "10~12시" 의 10 을 못 읽으면 12시가 시작이 된다
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert when.start == date(2026, 11, 23)
+    assert (when.start_time, when.end_time) == (start_time, end_time)
+    assert when.review is None
+
+
+@pytest.mark.parametrize("text", ["11. 23 ~ 12시", "2026. 11. 23 ~ 12시", "11월 23 ~ 12시"])
+def test_날짜의_숫자를_시_없는_앞_시각으로_읽지_않는다(text):
+    # "11. 23 ~ 12시" 의 23 은 날이다. 시각으로 먹으면 날짜가 사라진다 (검토 R5) — 전처럼 읽는다
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert (when.start, when.start_time) == (date(2026, 11, 23), time(12))
+    assert when.review is None
+
+
+@pytest.mark.parametrize(
+    ("text", "start", "start_time", "end_time"),
+    [
+        ("11.23. 10~12시", date(2026, 11, 23), time(10), time(12)),
+        # "11.2. 10" 을 두 자리 연도 · 월 · 일(2011-02-10)로 보면 안 된다 (검토 N2)
+        ("11.2. 10~12시", date(2026, 11, 2), time(10), time(12)),
+        ("11. 2. 10~12시", date(2026, 11, 2), time(10), time(12)),
+        ("11/2. 10~12시", date(2026, 11, 2), time(10), time(12)),
+        ("11.12. 10~12시", date(2026, 11, 12), time(10), time(12)),
+        ("12.1. 10~12시", date(2026, 12, 1), time(10), time(12)),
+        ("11.2. 2~4시", date(2026, 11, 2), time(14), time(16)),
+    ],
+)
+def test_마침표_날짜_뒤의_시_없는_시각_범위는_읽는다(text, start, start_time, end_time):
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert (when.start, when.start_time, when.end_time) == (start, start_time, end_time)
+    assert when.review is None
+
+
+def test_두_자리_연도_날짜의_숫자도_시_없는_앞_시각으로_읽지_않는다():
+    # 앞 두 숫자가 월 · 일이 될 수 없으면 연 · 월 · 일이다 — "26.11.23" 의 23 은 날이다
+    when = parse_notice_when("26.11.23 ~ 12시", anchor=ANCHOR)
+    assert (when.start, when.start_time) == (date(2026, 11, 23), time(12))
+
+
+def test_앞_숫자에_시가_없는_7시도_기존_규칙대로_읽는다():
+    # 끝(9시)이 분명하면 시작은 끝보다 이른 쪽 하나로만 읽힌다 — "7:30 ~ 19:30" 과 같은 규칙
+    when = parse_notice_when("11월 23일 7~9시", anchor=ANCHOR)
+    assert (when.start_time, when.end_time) == (time(7), time(9))
+    # 표시 없는 5시는 17시, 끝의 7시는 시작보다 늦은 쪽 — "6시 30분 ~ 8시 30분" 과 같은 규칙
+    evening = parse_notice_when("11월 23일 5~7시", anchor=ANCHOR)
+    assert (evening.start_time, evening.end_time) == (time(17), time(19))
+
+
+def test_일_없는_끝_날과_시_없는_시각_범위를_같이_읽는다():
+    when = parse_notice_when("11/23~27 10~12시", anchor=ANCHOR)
+    assert (when.start, when.end) == (date(2026, 11, 23), date(2026, 11, 27))
+    assert (when.start_time, when.end_time) == (time(10), time(12))
+
+
+@pytest.mark.parametrize(
+    "text", ["11/23 9:30~12", "11/23 10~12", "11/23~3세", "11/23~27명", "11/23~12월"]
+)
+def test_물결표_뒤의_숫자가_날이_아니면_끝_날로_읽지_않는다(text):
+    # 시각 범위 · 나이 · 인원을 끝 날로 읽으면 없던 긴 일정이 생긴다
+    assert parse_notice_when(text, anchor=ANCHOR).end is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["11/23~27 원내 행사", "11/23~27 원아 전체", "11/23~27 원복 착용", "11/23~27 만 3세반"]
+    + ["11/23~27 천연염색", "11/23~27 학부모 참여", "11/23~27 달님반"],
+)
+def test_끝_날_뒤에_띄어_쓴_낱말은_단위가_아니다(text):
+    # 금액 · 단위는 숫자에 붙어 쓴다. 띄어 쓴 "원내" · "만 3세" 를 단위로 보면 끝 날을
+    # 놓친다 (검토 N3)
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert (when.start, when.end) == (date(2026, 11, 23), date(2026, 11, 27))
+    assert when.review is None
+
+
+@pytest.mark.parametrize("text", ["11/23~27 만원", "11/23~27 원", "11/23~3 천원", "11/23~2 만 원"])
+def test_띄어_쓴_금액도_끝_날이_아니다(text):
+    # "원" 이 낱말의 첫 글자가 아니라 혼자 서면 금액이다 — "원내" · "원아" 와 가른다
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert when.end is None
+    assert when.review is None
+
+
+@pytest.mark.parametrize("text", ["11/23~2만원", "11/23~3천원", "11/23~5원", "11/23~27원"])
+def test_물결표_뒤의_금액은_끝_날이_아니다(text):
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert when.end is None
+    assert when.review is None
+
+
+@pytest.mark.parametrize(
+    ("text", "start", "start_time"),
+    [
+        ("11/2 9:30~12", date(2026, 11, 2), time(9, 30)),
+        ("11.2 9:30~12", date(2026, 11, 2), time(9, 30)),
+        ("2026.11.2 10:00~11", date(2026, 11, 2), time(10)),
+        ("11/2 10시 ~ 12", date(2026, 11, 2), time(10)),
+        ("11/2 13:00~15", date(2026, 11, 2), time(13)),
+        ("11/2 오후 2시~4", date(2026, 11, 2), time(14)),
+        ("11/10 9:30~12", date(2026, 11, 10), time(9, 30)),
+        ("11/23 9:30~12", date(2026, 11, 23), time(9, 30)),
+    ],
+)
+def test_시각_뒤의_물결표는_날짜_바로_뒤가_아니다(text, start, start_time):
+    # 시각을 지운 자리의 공백까지 날짜 표현으로 치면 "9:30~12" 의 12 가 11/12 가 된다 (검토 R1)
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert (when.start, when.start_time, when.end) == (start, start_time, None)
+    assert when.review is None
+
+
+@pytest.mark.parametrize(
     "text", ["11월 중", "11월 말 예정", "시간은 개별 안내", "추후 공지", "9:30", "2월 30일"]
 )
 def test_못_읽으면_값을_비우고_이유를_준다(text):
@@ -132,6 +286,58 @@ def test_월간표의_기간도_읽는다():
 def test_월간표의_요일이_어긋나면_되묻는다():
     when = parse_notice_when("2일(수)", anchor=ANCHOR, base_month=(11, 2026))
     assert "요일" in when.review
+
+
+@pytest.mark.parametrize("base_month", [(11, 2026), (11, None)])
+def test_월간표의_일_없는_날짜도_요일이_맞으면_읽는다(base_month):
+    # "30(월) 자체 휴원" — 월간표는 "일" 없이 날짜에 요일 괄호만 붙인다
+    when = parse_notice_when("30(월)", anchor=ANCHOR, base_month=base_month)
+    assert when.start == date(2026, 11, 30)
+    assert when.review is None
+
+
+def test_월간표의_일_없는_기간도_읽는다():
+    when = parse_notice_when("16(월) ~ 18(수)", anchor=ANCHOR, base_month=(11, 2026))
+    assert (when.start, when.end) == (date(2026, 11, 16), date(2026, 11, 18))
+    assert when.review is None
+
+
+@pytest.mark.parametrize(
+    "text", ["2~6(금)", "16~20(금) 김장", "9~13(금)", "1~2(월)", "2~6(금) 10:00~12:00", "2 ~ 6(금)"]
+)
+def test_월간표의_물결표_뒤_요일_날짜는_혼자_읽지_않는다(text):
+    # "2~6(금)" 의 6(금) 만 읽으면 기간이 금요일 하루가 된다 (검토 R2). 전처럼 되묻는다
+    when = parse_notice_when(text, anchor=ANCHOR, base_month=(11, 2026))
+    assert when.start is None
+    assert when.review
+
+
+@pytest.mark.parametrize(
+    "text", ["제3(화)", "만 3(화)", "약3(화)", "제 3(화)", "총 3(화)", "약 3(화)", "외 3(화)"]
+)
+def test_월간표의_낱말에_붙은_숫자는_요일이_맞아도_날짜로_읽지_않는다(text):
+    # "제3" 은 차례, "만 3" 은 나이다. 요일이 우연히 맞아도 날짜로 읽지 않고 전처럼 되묻는다
+    when = parse_notice_when(text, anchor=ANCHOR, base_month=(11, 2026))
+    assert when.start is None
+    assert when.review
+
+
+@pytest.mark.parametrize("text", ["휴원 30(월)", "김장 2(월)", "※ 30(월) 휴원", "1학기 3(화)"])
+def test_월간표의_띄어_쓴_낱말_뒤_요일_날짜는_읽는다(text):
+    assert parse_notice_when(text, anchor=ANCHOR, base_month=(11, 2026)).start is not None
+
+
+def test_월간표의_일_없는_날짜는_요일이_어긋나면_읽지_않는다():
+    # 숫자만으로는 날짜인지 모른다. 요일이 맞아야 날짜로 본다 — 어긋나면 전처럼 되묻는다
+    when = parse_notice_when("30(화)", anchor=ANCHOR, base_month=(11, 2026))
+    assert when.start is None
+    assert "읽지 못했어요" in when.review
+
+
+def test_기준_월이_없으면_일_없는_요일_날짜를_읽지_않는다():
+    when = parse_notice_when("30(월)", anchor=ANCHOR)
+    assert when.start is None
+    assert when.review
 
 
 def test_달력_칸의_숫자는_기준_월의_날짜다():
@@ -190,6 +396,24 @@ def test_회차를_범위로_잇지_않는다():
     assert when.start_time == time(10, 30)
     assert when.end_time is None
     assert "시각이 여러 개" in when.review
+
+
+@pytest.mark.parametrize(
+    "text", ["11/23 10~12시, 2~4시", "11/23 10시~12시, 2시~4시", "11/23 10:00~12:00, 14:00~16:00"]
+)
+def test_시각_범위가_둘이면_되묻는다(text):
+    # 2회차가 조용히 사라지면 안 된다 (검토 R3)
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert when.start == date(2026, 11, 23)
+    assert "시각이 여러 개" in when.review
+
+
+@pytest.mark.parametrize(
+    "text", ["11/23~27 10~12시, 2~4시", "11월 23일~27일 10:00~12:00, 14:00~16:00"]
+)
+def test_기간_뒤의_시각_범위가_둘이어도_되묻는다(text):
+    # 끝 날 쪽의 시각만 있을 때 여러 개인지를 버리면 둘째 회차가 사라진다
+    assert "시각이 여러 개" in parse_notice_when(text, anchor=ANCHOR).review
 
 
 def test_범위_뒤의_괄호_속_시각은_범위가_아니다():
@@ -325,6 +549,50 @@ def test_시각_앞의_낱말로_오전_오후를_안다(text, expected):
     when = parse_notice_when(text, anchor=ANCHOR)
     assert when.start_time == expected
     assert when.vague_time is False
+
+
+@pytest.mark.parametrize(
+    ("text", "start_time", "end_time"),
+    [
+        ("11월 6일 오전 9시~12시", time(9), time(12)),
+        ("11월 6일 오전 10~12시", time(10), time(12)),
+        ("11월 6일 오전 10:00~12:00", time(10), time(12)),
+        ("11월 6일 오전 11시~오후 1시", time(11), time(13)),
+    ],
+)
+def test_이어받은_오전은_12시를_자정으로_만들지_않는다(text, start_time, end_time):
+    # "오전 9시~12시" 의 12시는 정오다. 앞의 "오전" 을 이어받으면 00:00 이 된다 (검토 R4)
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert (when.start_time, when.end_time) == (start_time, end_time)
+
+
+def test_이어받은_오전의_12시는_기간의_끝_날에도_정오다():
+    when = parse_notice_when("11/23~11/24 오전 10~12시", anchor=ANCHOR)
+    assert (when.start, when.end) == (date(2026, 11, 23), date(2026, 11, 24))
+    assert (when.start_time, when.end_time) == (time(10), time(12))
+
+
+@pytest.mark.parametrize(
+    ("text", "end"),
+    [("11/23~11/24 오전 11~1시", date(2026, 11, 24)), ("11월 23일 오전 11~1시", None)],
+)
+def test_이어받은_오전의_끝이_시작보다_이르면_오후로_넘긴다(text, end):
+    # "오전 11~1시" 의 1시는 오후 1시다. 이어받은 "오전" 으로 새벽 1시를 만들지 않는다 (검토 N1)
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert when.end == end
+    assert (when.start_time, when.end_time) == (time(11), time(13))
+
+
+@pytest.mark.parametrize("text", ["11/23~11/24 3~2시", "11/23 3~2시", "11/23 0~2시"])
+def test_말이_안_되는_시_없는_시각_범위는_시각을_비운다(text):
+    # 표시 없는 시각으로 짐작해 거꾸로 되거나 새벽이 되는 범위는 짐작하지 않고 되묻는다
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert (when.start_time, when.end_time) == (None, None)
+    assert when.vague_time is True
+
+
+def test_바로_붙은_오전_12시는_그대로_자정이다():
+    assert parse_notice_when("11월 6일 오전 12시", anchor=ANCHOR).start_time == time(0)
 
 
 def test_끝이_7시면_시작보다_늦은_쪽으로_읽는다():

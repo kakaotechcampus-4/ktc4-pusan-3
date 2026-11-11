@@ -17,7 +17,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,7 +25,9 @@ from app.agents import entrypoint
 from app.api.deps.db import background_session
 from app.api.runs import sse
 from app.api.runs.registry import RunChannel
+from app.api.v1.schemas.photos import DATE_WINDOW_YEARS, MAX_COMMIT_ENTRIES, PhotoEntry
 from app.core import llm_usage
+from app.core.event_draft import MAX_ITEM_NAME
 from app.domains.daycare_meal.models import DaycareSlot
 from app.domains.daycare_meal.repository import NewDaycareMeal
 from app.domains.notice.assemble import NewNoticeItem
@@ -38,7 +40,7 @@ from app.domains.run_hold.repository import (
     set_payload,
     share_holder_child,
 )
-from app.rules.menu_key import normalize_menu_key
+from app.rules.menu_key import meal_menu_keys
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +78,10 @@ _MEAL_UNREAD = "식단표의 표를 읽지 못했어요. 더 밝게 다시 찍�
 # 시간이 모자라 못 읽었다. 사진 탓이 아니라서 다시 찍으라고 하지 않는다
 _MEAL_TIMED_OUT = (
     "식단표의 표를 읽는 데 시간이 오래 걸려 끝내지 못했어요. 잠시 뒤 다시 올려 주세요."
+)
+# 연도를 몰라 급식을 내보내지 않았다 (`rules/meal_plan_month` ③). 다시 찍어도 연도는 생기지 않는다
+_MEAL_NO_YEAR = (
+    "급식표에 연도가 적혀 있지 않아 언제 것인지 알 수 없어요. {month}월 급식은 저장하지 않아요."
 )
 
 
@@ -232,18 +238,48 @@ def _item_entry(entry_id: str, item: NewNoticeItem, *, today: date) -> dict:
 
 def _meal_entries(run: PhotoRun, plan, *, today: date) -> list[dict]:
     entries: list[dict] = []
+    # (원문, 이유, 어디) — 모델이 못 읽었다고 한 칸 뒤에 이름이 하나도 없는 끼니를
+    # 같은 모양으로 붙인다
+    unread = [
+        (cell.raw, cell.why, _where(plan, cell.day, cell.meal_type)) for cell in plan.unparsed
+    ]
     for day in plan.days:
         for meal in day.meals:
             # 기관 급식 끼니는 셋이다. 아침 · 저녁은 daycare_meal 에 자리가 없어 싣지 않는다
             if meal.meal_type.value not in _SLOTS or not meal.items:
                 continue
             entry_id = f"pe_meal_{day.day}_{meal.meal_type.value}"
+            if entry_id in run.meals:
+                # 한 날에 같은 끼니가 두 번 왔다. 같은 id 두 개를 내보내면 저장 전체가 "같은 항목을
+                # 두 번 보냈어요" 로 막힌다 — 합치기의 같은 날 규칙처럼 앞의 것을 남긴다
+                unread.append(
+                    (
+                        ", ".join(item.raw for item in meal.items),
+                        "같은 날 같은 끼니가 두 번 읽혀 앞의 것만 남겼어요.",
+                        _where(plan, day.day, meal.meal_type),
+                    )
+                )
+                continue
+            # 원문이 번호뿐이면 이름이 비어 있다(#908) — 빈 조각을 잇지 않는다
+            title = ", ".join(item.name for item in meal.items if item.name)
+            if not meal_menu_keys(title):
+                # 이름이 전부 비었거나(원문이 번호뿐), 괄호 안이 음식이 아니라("(자율배식)" ·
+                # "(국내산)") 저장 키가 하나도 안 나온다. 그대로 내보내면 저장이 422 로 막힌다 —
+                # 조용히 빼지 않고 못 읽은 칸으로 확인을 받는다
+                unread.append(
+                    (
+                        ", ".join(item.raw for item in meal.items),
+                        None,
+                        _where(plan, day.day, meal.meal_type),
+                    )
+                )
+                continue
             run.meals[entry_id] = MealSlot(plan.date_of(day.day), DaycareSlot(meal.meal_type.value))
             entries.append(
                 {
                     "id": entry_id,
                     "kind": "meal",
-                    "title": ", ".join(item.name for item in meal.items),
+                    "title": title,
                     "date": str(plan.date_of(day.day)),
                     "all_day": True,
                     "items": [],
@@ -251,21 +287,47 @@ def _meal_entries(run: PhotoRun, plan, *, today: date) -> list[dict]:
                     "past": plan.date_of(day.day) < today,
                 }
             )
-    for index, cell in enumerate(plan.unparsed):
+    for index, (raw, why, where) in enumerate(unread):
+        reason = why or "이 칸은 읽지 못했어요."
         entries.append(
             {
                 "id": f"pe_meal_unread_{index}",
                 "kind": "meal",
-                "title": cell.raw or "읽지 못한 칸",
+                "title": raw or "읽지 못한 칸",
                 "date": None,
                 "all_day": True,
                 "items": [],
                 "needs_review": True,
                 "past": False,
-                "review_reason": cell.why or "이 칸은 읽지 못했어요.",
+                # 어느 날 어느 끼니인지 보여야 보호자가 종이에서 찾는다.
+                # 🚨 날짜 칸(`date`)은 비운다 — 저장하지 않는 칸이고(commit 이
+                #    `pe_meal_unread_` 를 건너뛴다), 의심스러운 날일 수 있다
+                "review_reason": f"{where} — {reason}" if where else reason,
             }
         )
     return entries
+
+
+_SLOT_NAME = {
+    "breakfast": "아침",
+    "snack_am": "오전 간식",
+    "lunch": "점심",
+    "snack_pm": "오후 간식",
+    "dinner": "저녁",
+}
+
+
+def _where(plan, day: int | None, meal_type) -> str | None:
+    """ "11월 9일 오후 간식" — 그 달에 있는 날일 때만. 없는 날("11월 31일")은 말하지 않는다."""
+    if day is None:
+        return None
+    try:
+        served = plan.date_of(day)
+    except ValueError:
+        return None
+    where = f"{served.month}월 {served.day}일"
+    slot = _SLOT_NAME.get(meal_type.value) if meal_type is not None else None
+    return f"{where} {slot}" if slot else where
 
 
 def build_entries(run: PhotoRun, reading: entrypoint.PhotoReading, *, today: date) -> list[dict]:
@@ -280,6 +342,17 @@ def build_entries(run: PhotoRun, reading: entrypoint.PhotoReading, *, today: dat
         entries.append(_item_entry(entry_id, item, today=today))
     if reading.meal_plan is not None:
         entries.extend(_meal_entries(run, reading.meal_plan, today=today))
+        for thin in reading.meal_thin:
+            # 화면 줄은 못 읽은 칸으로 이미 들어 있다(`agents/notice_ocr.flag_thin_ranges`).
+            # 숫자만 남긴다 — 메뉴 글자는 남기지 않는다 (CLAUDE.md §2 개인정보)
+            log.warning(
+                "사진 run %s 급식 %d일~%d일 구간이 덜 읽혔을 수 있다 — 읽은 날 %d · 평일 %d",
+                run.run_id,
+                thin.first,
+                thin.last,
+                thin.read_days,
+                thin.weekdays,
+            )
     if reading.meal_failed:
         entries.append(
             {
@@ -291,10 +364,195 @@ def build_entries(run: PhotoRun, reading: entrypoint.PhotoReading, *, today: dat
                 "items": [],
                 "needs_review": True,
                 "past": False,
-                "review_reason": _MEAL_TIMED_OUT if reading.meal_timed_out else _MEAL_UNREAD,
+                "review_reason": _meal_failed_reason(reading),
             }
         )
-    return entries
+    return _servable(run, entries)
+
+
+def _meal_failed_reason(reading: entrypoint.PhotoReading) -> str:
+    if reading.meal_timed_out:
+        return _MEAL_TIMED_OUT
+    month = reading.meal_month
+    if month is not None and month.year is None:
+        return _MEAL_NO_YEAR.format(month=month.month)
+    return _MEAL_UNREAD
+
+
+# ── 화면 항목은 저장 검증을 통과한다 (2026-11-11 운영 장애) ─────────────────────
+# 읽은 항목은 검증 없이 화면에 나가고 저장 때 `PhotoEntry` 로 검증된다. 한 건이 걸리면
+# 저장 전체가 400 이었다 — "잘 읽었어요" 를 보고 저장을 눌렀는데 "저장하지 못했어요".
+# 그래서 내보내기 전에 저장과 **같은 스키마**로 미리 검사한다(규칙을 두 벌 두지 않는다).
+
+UNREAD_PREFIXES = ("pe_meal_unread_", "pe_unread_")
+"""저장하지 않는 "읽지 못한 칸" 의 id. commit 은 이 항목을 받아도 건너뛴다."""
+_MAX_TITLE = PhotoEntry.model_fields["title"].metadata[0].max_length
+_MAX_ITEMS = PhotoEntry.model_fields["items"].metadata[0].max_length
+_UNTITLED = "제목을 읽지 못한 항목"
+_REVIEW_DATE = (
+    f"날짜를 확인해 주세요. 읽은 날짜가 저장할 수 있는 범위(앞뒤 {DATE_WINDOW_YEARS}년) 밖이에요."
+)
+_REVIEW_TITLE = "무엇인지 확인해 주세요. 제목을 읽지 못했어요."
+_REVIEW_LONG = "내용이 길어 앞부분만 담았어요. 확인해 주세요."
+_REVIEW_ITEMS = "준비물을 확인해 주세요. 너무 길거나 많아서 줄였어요."
+_REVIEW_TOO_MANY = f"한 번에 {MAX_COMMIT_ENTRIES}건까지 저장할 수 있어요. 이 항목은 확인해 주세요."
+# 저장 때 쓰지 않는 보여 주기 칸(`PhotoEntry` docstring). 걸리면 비운다 — 저장 값은 run 에 있다
+_DISPLAY_DEFAULTS: dict = {
+    "label": None,
+    "target_scope": None,
+    "starts_at": None,
+    "ends_at": None,
+    "due_at": None,
+    "details": [],
+    "source_quote": None,
+    "all_day": True,
+    "past": False,
+    "review_reason": None,
+}
+
+
+def _commit_errors(entry: dict) -> list[str]:
+    """저장 때와 같은 검증에 걸리는 칸 이름. 웹은 항목 그대로에 `event_id` 를 더해 보낸다."""
+    try:
+        PhotoEntry.model_validate({**entry, "event_id": None})
+    except ValidationError as e:
+        return sorted({str(err["loc"][0]) for err in e.errors() if err["loc"]})
+    return []
+
+
+def _cut_meal_title(title: str) -> str:
+    """메뉴 경계에서 자른다 — 이름 한가운데서 자르면 반쪽 이름이 저장 키가 된다(`meal_row`)."""
+    kept: list[str] = []
+    for name in title.split(", "):
+        if len(", ".join([*kept, name])) > _MAX_TITLE:
+            break
+        kept.append(name)
+    return ", ".join(kept) or title[:_MAX_TITLE]
+
+
+def _fix(entry: dict, fields: list[str]) -> dict:
+    """고칠 수 있는 칸은 고친다.
+
+    내용을 바꿨으면 확인을 받는다 — 보호자가 보기 전에 저장되지 않는다.
+    """
+    fixed = dict(entry)
+    reasons: list[str] = []
+    if "date" in fields:
+        fixed["date"] = None
+        reasons.append(_REVIEW_DATE)
+    if "title" in fields:
+        title = entry.get("title") if isinstance(entry.get("title"), str) else ""
+        title = title.strip()
+        if not title:
+            fixed["title"] = (entry.get("label") or "").strip() or _UNTITLED
+            reasons.append(_REVIEW_TITLE)
+        else:
+            cut = _cut_meal_title(title) if entry.get("kind") == "meal" else title[:_MAX_TITLE]
+            fixed["title"] = cut
+            reasons.append(_REVIEW_LONG)
+    if "items" in fields:
+        raw = entry.get("items") if isinstance(entry.get("items"), list) else []
+        names = [n.strip() for n in raw if isinstance(n, str) and n.strip()]
+        fixed["items"] = [n[:MAX_ITEM_NAME] for n in names][:_MAX_ITEMS]
+        if fixed["items"] != names:
+            reasons.append(_REVIEW_ITEMS)  # 빈 칸만 뺐으면 내용이 그대로라 묻지 않는다
+    for name in fields:
+        if name in _DISPLAY_DEFAULTS:
+            fixed[name] = _DISPLAY_DEFAULTS[name]
+    if reasons:
+        prior = fixed.get("review_reason")
+        fixed["needs_review"] = True
+        fixed["review_reason"] = " ".join(dict.fromkeys([*([prior] if prior else []), *reasons]))
+    return fixed
+
+
+def _unread(entry_id: str, *, kind: str) -> dict:
+    return {
+        "id": entry_id,
+        "kind": kind,
+        "title": "읽지 못한 칸" if kind == "meal" else "읽지 못한 항목",
+        "date": None,
+        "all_day": True,
+        "items": [],
+        "needs_review": True,
+        "past": False,
+        "review_reason": "이 항목은 읽지 못했어요.",
+    }
+
+
+def _servable(run: PhotoRun, entries: list[dict]) -> list[dict]:
+    """🚨 화면에 나가는 항목은 저장 검증을 반드시 통과한다 — 웹이 그대로 되돌려 보내도 400 이 없다.
+
+    - 걸린 칸은 고친다: 날짜는 비우고, 제목 · 준비물은 자르거나 빈 것을 뺀다. 고쳤으면 확인을
+      받는다. 확인이 필요한 항목은 보호자가 시트에서 확인하기 전에는 저장 대상이 아니다
+      (web `photo-review`).
+    - 🚨 날짜가 걸린 급식은 읽지 못한 칸으로 돌린다. 날짜를 비운 급식을 확인하면 commit 이 run 의
+      날짜(`MealSlot.serve_date`, 범위 밖)로 저장하기 때문이다.
+    - 🚨 고친 뒤에도 저장 키가 하나도 안 나오는 급식은 읽지 못한 칸으로 돌린다 — 화면에 남는
+      급식은 `meal_row` 가 None 이 아니다.
+    - 그래도 걸리면 그 항목은 "읽지 못한 것" 으로만 보이고 저장 대상에서 빠진다(전체를 막지 않는다).
+    - 🚨 로그에는 항목 id 와 칸 이름만 남긴다. 원문 · 제목 글자는 남기지 않는다 (§2 개인정보).
+    """
+    meal_unread = sum(1 for e in entries if e["id"].startswith("pe_meal_unread_"))
+    other_unread = 0
+    out: list[dict] = []
+    for entry in entries:
+        fields = _commit_errors(entry)
+        if not fields and not _keyless_meal(run, entry):
+            out.append(entry)
+            continue
+        entry_id = entry["id"]
+        log.warning(
+            "사진 run %s 항목 %s 이 저장 검사에 걸렸다 — 칸 %s",
+            run.run_id,
+            entry_id,
+            ",".join(fields) or "menu_keys",
+        )
+        fixed = _fix(entry, fields)
+        is_meal = entry_id in run.meals
+        keyless = _keyless_meal(run, fixed)
+        if _commit_errors(fixed) or (is_meal and fixed["date"] is None) or keyless:
+            run.items.pop(entry_id, None)
+            run.meals.pop(entry_id, None)
+            kind = "meal" if entry.get("kind") == "meal" else "info"
+            if kind == "meal":
+                new_id, meal_unread = f"pe_meal_unread_{meal_unread}", meal_unread + 1
+            else:
+                new_id, other_unread = f"pe_unread_{other_unread}", other_unread + 1
+            if is_meal and not _commit_errors(fixed) and not keyless:
+                # 날짜만 걸린 급식 — 무엇이었는지는 보이게 둔다
+                fixed = {**fixed, "id": new_id, "date": None, "needs_review": True}
+            else:
+                fixed = _unread(new_id, kind=kind)
+        out.append(fixed)
+    return _within_commit_size(run, out)
+
+
+def _keyless_meal(run: PhotoRun, entry: dict) -> bool:
+    """저장 대상 급식인데 제목에서 저장 키가 하나도 안 나오는가 — commit 이 422 다(`meal_row`)."""
+    title = entry.get("title")
+    return entry["id"] in run.meals and not (isinstance(title, str) and meal_menu_keys(title))
+
+
+def _within_commit_size(run: PhotoRun, entries: list[dict]) -> list[dict]:
+    """확인한 항목이 한 번에 저장할 수 있는 수를 넘으면 넘는 것은 확인을 받는다.
+
+    그대로 보내면 400 이다 (`PhotoCommitRequest.entries` 상한).
+    """
+    checked = [e for e in entries if not e["needs_review"]]
+    if len(checked) <= MAX_COMMIT_ENTRIES:
+        return entries
+    over = {id(e) for e in checked[MAX_COMMIT_ENTRIES:]}
+    log.warning(
+        "사진 run %s 확인한 항목 %d건 — %d건을 확인 필요로 돌렸다",
+        run.run_id,
+        len(checked),
+        len(over),
+    )
+    return [
+        {**e, "needs_review": True, "review_reason": _REVIEW_TOO_MANY} if id(e) in over else e
+        for e in entries
+    ]
 
 
 def photo_job(run: PhotoRun, *, data: bytes, received_at: datetime, declared_lane: str):
@@ -302,6 +560,11 @@ def photo_job(run: PhotoRun, *, data: bytes, received_at: datetime, declared_lan
 
     async def run_job(channel: RunChannel) -> None:
         channel.publish(("step", {"index": 1, "total": 2, "label": "사진에서 글자를 찾고 있어요"}))
+        # 식단표면 표 읽기가 1~2분 더 걸린다. 같은 1단계의 문구만 바꿔 다시 보낸다 — 칸 수는 그대로.
+        # 🚨 읽기 스레드에서 불린다. publish 는 스레드에 안전하지 않아 이벤트 루프로 넘긴다.
+        #    끝 신호(timeout 등) 뒤에 늦게 오면 publish 가 버린다
+        loop = asyncio.get_running_loop()
+        meal_step = ("step", {"index": 1, "total": 2, "label": "급식표를 날짜별로 읽고 있어요"})
         try:
             async with asyncio.timeout(PHOTO_READ_DEADLINE_SECONDS):
                 reading = await asyncio.to_thread(
@@ -311,6 +574,7 @@ def photo_job(run: PhotoRun, *, data: bytes, received_at: datetime, declared_lan
                     meal_deadline=time.monotonic()
                     + PHOTO_READ_DEADLINE_SECONDS
                     - PHOTO_MEAL_MARGIN_SECONDS,
+                    on_meal_plan=lambda: loop.call_soon_threadsafe(channel.publish, meal_step),
                 )
         except entrypoint.UnreadablePhoto:
             channel.publish(sse.failed_event("unparsable", ""))
@@ -448,7 +712,8 @@ def _whole_day(day: date) -> dict:
 
 
 def meal_row(slot: MealSlot, *, title: str, day: date | None) -> NewDaycareMeal | None:
-    keys = tuple(k for k in (normalize_menu_key(n) for n in title.split(",")) if k)
+    # 괄호 안 음식 이름("떡(꿀설기)" 의 꿀설기)도 키로 싣는다 — 판정이 "꿀" 을 보게 (#908)
+    keys = meal_menu_keys(title)
     if not keys:
         return None
     return NewDaycareMeal(serve_date=day or slot.serve_date, meal_slot=slot.slot, menu_keys=keys)

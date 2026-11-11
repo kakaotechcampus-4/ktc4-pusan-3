@@ -9,10 +9,11 @@
 """
 
 import base64
+import calendar
 import json
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from functools import cache
 
@@ -29,6 +30,7 @@ from app.providers.meal_plan.schema import (
     MealPlanSource,
     UnparsedCell,
 )
+from app.providers.model_errors import MODEL_CALL_FAILURES
 from app.providers.streaming import collect
 
 log = logging.getLogger(__name__)
@@ -175,32 +177,125 @@ def parse_output(content: str) -> OcrOutput:
         raise RuntimeError(f"모델 응답이 JSON 이 아님 — 파싱 실패: {e}") from e
     if isinstance(data, dict) and len(data) == 1 and isinstance(next(iter(data.values())), dict):
         (data,) = data.values()  # OcrOutput 은 필수 키가 5개라 1개짜리는 항상 겹이다
+    if isinstance(data, dict) and isinstance(data.get("days"), list):
+        data = _set_aside_bad_days(data)
     try:
         return OcrOutput.model_validate(data)
     except ValidationError as e:
         raise RuntimeError(f"모델 응답을 급식표로 파싱 실패: {e.errors()[:3]}") from e
 
 
-def merge_outputs(parts: Sequence[OcrOutput]) -> MealPlanJSON:
+@dataclass(frozen=True)
+class MissedRange:
+    """호출이 실패해 읽지 못한 날짜 범위. `timed_out` 이면 사진 탓이 아니라 시간이 모자랐다."""
+
+    first: int
+    last: int
+    timed_out: bool = False
+
+
+@dataclass(frozen=True)
+class ReadParts:
+    """날짜 범위별 호출 결과. 합치기 전이다.
+
+    연월은 부르는 쪽(코드)이 정해 `merge_outputs` 에 준다. 한쪽 호출만 실패했으면 성공한 쪽은
+    `outputs` 에, 실패한 범위는 `missed` 에 있다. `ranges` 는 나눠 부른 날짜 범위 전부다(성패와
+    무관, 한 번에 불렀으면 빈 튜플) — 한 구간이 덜 읽혔는지 셀 때 쓴다(`rules/meal_plan_coverage`).
+    """
+
+    outputs: tuple[OcrOutput, ...]
+    missed: tuple[MissedRange, ...] = ()
+    ranges: tuple[tuple[int, int], ...] = ()
+
+
+def _set_aside_bad_days(data: dict) -> dict:
+    """규칙에 맞지 않는 날(1~31 밖)은 그 날만 못 읽은 칸으로 돌린다 — 호출 전체를 버리지 않는다.
+
+    응답 스키마(strict)는 `day` 를 정수로만 묶어서 0 · 32 같은 값이 온다. 프롬프트 · 스키마를
+    바꾸지 않고(지문이 바뀐다) 여기서 가른다. 그 날 읽은 원문은 확인 화면에 싣는다.
+    """
+    good, bad = [], []
+    for day in data["days"]:
+        try:
+            MealDay.model_validate(day)
+        except ValidationError:
+            bad.append(day)
+        else:
+            good.append(day)
+    if not bad:
+        return data
+    cells = list(data.get("unparsed") or [])
+    for day in bad:
+        number = day.get("day") if isinstance(day, dict) else None
+        cells.append({"raw": _raw_of_dict(day), "why": f"날짜 칸({number}일)을 읽지 못했어요."})
+    return {**data, "days": good, "unparsed": cells}
+
+
+def _raw_of_dict(day: object) -> str | None:
+    """검증 전의 날 하나에서 메뉴 원문만 꺼낸다. 모양이 어긋난 곳은 건너뛴다."""
+    meals = day.get("meals") if isinstance(day, dict) else None
+    raws = [
+        item["raw"]
+        for meal in (meals if isinstance(meals, list) else [])
+        if isinstance(meal, dict) and isinstance(meal.get("items"), list)
+        for item in meal["items"]
+        if isinstance(item, dict) and isinstance(item.get("raw"), str)
+    ]
+    return ", ".join(raws) or None
+
+
+def merge_outputs(
+    parts: Sequence[OcrOutput],
+    *,
+    year_month: str | None = None,
+    missed: Sequence[MissedRange] = (),
+) -> MealPlanJSON:
     """날짜 범위별 호출 결과를 한 달치 `MealPlanJSON` 으로 합친다.
 
-    같은 날짜가 두 번 오면 앞 호출을 남기고 뒤 것은 검수 플래그로 남긴다.
+    `year_month` 를 주면 모델이 낸 값 대신 그 연월을 쓴다. 🚨 운영(사진)은 언제나 준다 — 연도는
+    모델이 아니라 코드가 정한다 (`agents/notice_ocr.read_photo` · `rules/meal_plan_month`).
+
+    🚨 한 칸이 어긋났다고 한 달 표를 버리지 않는다. 어긋난 날만 못 읽은 칸(`unparsed`)으로 돌린다.
+    - 같은 날짜가 두 번 오면 앞 호출을 남기고, 뒤 것은 읽은 원문과 함께 못 읽은 칸으로 남긴다.
+    - 그 달에 없는 날(2월 30일)은 날짜를 잘못 읽은 것이다. 저장하지 않고 못 읽은 칸으로 남긴다.
+    - 호출이 실패한 범위(`missed`)는 "○일~○일 급식은 읽지 못했어요" 못 읽은 칸 하나로 남긴다.
+    표 전체가 실패하는 것은 연월을 쓸 수 없을 때뿐이다 — 어느 달인지 모르면 날짜를 하나도 못 쓴다.
     """
     first = parts[0]
+    chosen = year_month or first.year_month
+    try:
+        MealPlanJSON(source=MealPlanSource.IMAGE, year_month=chosen, days=[])
+    except ValidationError as e:
+        raise RuntimeError(f"모델 응답이 급식표 규칙에 맞지 않음: {e.errors()[:3]}") from e
+    year, month = (int(x) for x in chosen.split("-"))
+    last = calendar.monthrange(year, month)[1]
+
     seen: set[int] = set()
-    days, dupes = [], []
+    days, dupes, outside = [], [], []
     for day in sorted((d for p in parts for d in p.days), key=lambda d: d.day):
+        if day.day > last:
+            outside.append(day)
+            continue
         (dupes if day.day in seen else days).append(day)
         seen.add(day.day)
-    unparsed = [u for p in parts for u in p.unparsed]
+    unparsed = _unique_cells(u for p in parts for u in p.unparsed)
     unparsed += [
-        UnparsedCell(day=d.day, why="호출 간 중복 날짜 — 뒤 호출 결과를 버림") for d in dupes
+        UnparsedCell(day=d.day, raw=_raw_of(d), why="같은 날짜가 두 번 읽혀 앞의 것만 남겼어요.")
+        for d in dupes
     ]
+    unparsed += [
+        UnparsedCell(
+            raw=_raw_of(d),
+            why=f"{month}월에는 없는 {d.day}일 칸이에요. 날짜를 잘못 읽었을 수 있어요.",
+        )
+        for d in outside
+    ]
+    unparsed += [_missed_cell(r, last) for r in missed]
     notes = " / ".join(n for n in (p.notes for p in parts) if n) or None
     try:
         return MealPlanJSON(
             source=MealPlanSource.IMAGE,
-            year_month=first.year_month,
+            year_month=chosen,
             institution_name=first.institution_name,
             days=days,
             unparsed=unparsed,
@@ -208,6 +303,39 @@ def merge_outputs(parts: Sequence[OcrOutput]) -> MealPlanJSON:
         )
     except ValidationError as e:
         raise RuntimeError(f"모델 응답이 급식표 규칙에 맞지 않음: {e.errors()[:3]}") from e
+
+
+def _missed_cell(missed: MissedRange, last: int) -> UnparsedCell:
+    span = f"{missed.first}일~{min(missed.last, last)}일 급식은 읽지 못했어요."
+    if missed.timed_out:
+        # 시간이 모자랐다. 사진 탓이 아니라서 다시 찍으라고 하지 않는다 (photo_run._MEAL_TIMED_OUT)
+        return UnparsedCell(
+            why=f"{span} 시간이 오래 걸려 끝내지 못했어요. 잠시 뒤 다시 올려 주세요."
+        )
+    return UnparsedCell(why=f"{span} 더 밝게 다시 찍어 주세요.")
+
+
+def _raw_of(day: MealDay) -> str | None:
+    """그 날 읽은 메뉴 원문 — 못 읽은 칸으로 돌릴 때 보호자가 무엇을 버렸는지 보게 한다."""
+    return ", ".join(item.raw for meal in day.meals for item in meal.items) or None
+
+
+def _unique_cells(cells: Iterable[UnparsedCell]) -> list[UnparsedCell]:
+    """같은 못 읽은 칸은 처음 것 하나만 남긴다.
+
+    날짜 없는 열(생일식단)은 날짜 범위를 나눈 호출마다 다 낸다 — 이유(`why`) 문구는 호출마다
+    달라서 날짜 · 끼니 · 원문이 같으면 같은 칸이다. 원문이 없으면 같은 칸인지 몰라 남긴다.
+    """
+    seen: set[tuple] = set()
+    unique: list[UnparsedCell] = []
+    for cell in cells:
+        key = (cell.day, cell.meal_type, cell.raw)
+        if cell.raw:
+            if key in seen:
+                continue
+            seen.add(key)
+        unique.append(cell)
+    return unique
 
 
 def _until(stream, deadline: float):
@@ -268,6 +396,14 @@ class ImageOcrMealPlanReader:
         )
 
     def read(self, data: bytes, *, mime_type: str) -> MealPlanJSON:
+        """모델이 낸 연월 그대로 합친다 — 평가 스크립트용.
+
+        운영은 `read_parts` 뒤 연월을 코드가 정한다 (`agents/notice_ocr.read_photo`).
+        """
+        parts = self.read_parts(data, mime_type=mime_type)
+        return merge_outputs(parts.outputs, missed=parts.missed)
+
+    def read_parts(self, data: bytes, *, mime_type: str) -> ReadParts:
         if mime_type not in SUPPORTED_MIME:
             raise ValueError(f"지원하지 않는 이미지 형식: {mime_type}")
         ranges: tuple[tuple[int, int] | None, ...] = self._day_ranges or (None,)
@@ -275,7 +411,30 @@ class ImageOcrMealPlanReader:
             raise RuntimeError(
                 f"호출 상한 {self._max_calls}회 — 이번 읽기에 {len(ranges)}회 필요, 시작하지 않음"
             )
-        return merge_outputs([self._call(data, mime_type, r) for r in ranges])
+        # 🚨 한쪽 호출이 실패해도 다른 쪽은 부르고, 성공한 쪽은 버리지 않는다 (§2 부분 결과).
+        #    기한이 지났으면 뒤 호출은 `_call` 이 시작하지 않는다 — 비용이 늘지 않는다
+        outputs: list[OcrOutput] = []
+        missed: list[MissedRange] = []
+        errors: list[Exception] = []
+        for day_range in ranges:
+            try:
+                outputs.append(self._call(data, mime_type, day_range))
+            except MODEL_CALL_FAILURES as e:
+                if day_range is None:
+                    raise
+                # 메시지에 메뉴가 실릴 수 있어 종류만 남긴다 (CLAUDE.md §2 개인정보)
+                log.warning("meal_ocr range=%s 실패 (%s)", day_range, type(e).__name__)
+                errors.append(e)
+                missed.append(
+                    MissedRange(*day_range, timed_out=isinstance(e, ReadDeadlineExceeded))
+                )
+        if not outputs:
+            raise errors[0]
+        return ReadParts(
+            outputs=tuple(outputs),
+            missed=tuple(missed),
+            ranges=tuple(r for r in ranges if r is not None),
+        )
 
     def _call(
         self, image_bytes: bytes, mime_type: str, day_range: tuple[int, int] | None

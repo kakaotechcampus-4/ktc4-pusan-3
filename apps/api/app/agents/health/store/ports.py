@@ -30,7 +30,6 @@ from app.agents.common.ports import (
     ConsentReader,
     SafetyLookupError,  # noqa: F401 — context.py · inmemory.py 가 여기서 가져간다
 )
-from app.agents.health.places.ports import FacilitySource
 from app.core.medication_draft import TimingAnchor, scheduled_time_of
 
 # health_safety 의 kind · status 와 같은 값. 어긋나면 어댑터 테스트가 잡는다
@@ -271,6 +270,3 @@ class HealthPorts:
     medication: MedicationReader
     medication_writer: MedicationWriter
     child: ChildBasicReader
-    # 병원 찾기 어댑터(국립중앙의료원). api 가 서버 시작 때 만든 것을 받는다 — 없으면(키 없음 ·
-    # 테스트 · eval) 병원 찾기가 `place.unavailable` 로 닫힌다
-    places: FacilitySource | None = None

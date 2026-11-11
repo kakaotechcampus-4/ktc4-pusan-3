@@ -235,14 +235,8 @@ access · 1회용 코드 · 가입 대기표, 보관 기간(1년)이 끝난 동�
 35일이 지난 삭제 이력(`deletion_log`), 90일이 지난 LLM 사용량(`llm_usage`)을 지운다.
 로그에는 지운 건수만 남고, 실패하면 위의 Discord 알림으로 온다.
 
-서버 준비 — cron 은 서버 시계를 따른다. `timedatectl` 이 UTC 면 아래처럼 19시(= 한국 04시),
-Asia/Seoul 이면 `0 4 * * *` 로 `crontab -e`:
-
-```
-0 19 * * * docker exec ktc4-api uv run --no-sync python -m app.workers.cleanup >> /var/tmp/ktc4-cleanup.log 2>&1
-```
-
-넣은 뒤 같은 명령을 한 번 손으로 돌려 `만료된 로그인 행 정리: session N건 …` 줄이 찍히면 된다.
+cron 줄(04시)은 prod 배포가 건다 — 아래 [worker cron 은 배포가 건다](#worker-cron-은-배포가-건다).
+처음 걸린 뒤 같은 명령을 한 번 손으로 돌려 `만료된 로그인 행 정리: session N건 …` 줄이 찍히면 된다.
 LLM 사용량 정리는 `90일 지난 LLM 사용량 정리: N건` 줄로 본다.
 로컬에서는 개발 DB 를 상대로 `uv run python -m app.workers.cleanup`.
 
@@ -253,13 +247,7 @@ LLM 사용량 정리는 `90일 지난 LLM 사용량 정리: N건` 줄로 본다.
 [`app/workers/profile_recompute.py`](app/workers/profile_recompute.py) 를 돌려 날짜로 바뀐 상태를 맞춘다 (#636).
 같은 날 두 번 돌아도 결과가 같다. 실패하면 Discord 알림으로 온다.
 
-cleanup(19시) 과 겹치지 않게 UTC 20시(= 한국 05시), 서버 시계가 Asia/Seoul 이면 `0 5 * * *`:
-
-```
-0 20 * * * docker exec ktc4-api uv run --no-sync python -m app.workers.profile_recompute >> /var/tmp/ktc4-profile-recompute.log 2>&1
-```
-
-넣은 뒤 같은 명령을 한 번 손으로 돌려 `기억 상태 다시 계산: 아이 N명 · 기억 N건 · 바뀜 N건 …` 줄이 찍히면 된다.
+cron 줄(cleanup 과 겹치지 않게 05시)은 prod 배포가 건다. 처음 걸린 뒤 같은 명령을 한 번 손으로 돌려 `기억 상태 다시 계산: 아이 N명 · 기억 N건 · 바뀜 N건 …` 줄이 찍히면 된다.
 처음 한 번은 그동안 밀린 만큼 "바뀜" 이 크게 나온다.
 
 ### 일정 알림 발송 (1분마다)
@@ -267,13 +255,27 @@ cleanup(19시) 과 겹치지 않게 UTC 20시(= 한국 05시), 서버 시계가 
 서버의 cron 이 1분마다 [`app/workers/reminder_dispatch.py`](app/workers/reminder_dispatch.py) 를 api 컨테이너
 안에서 돌린다 — 울릴 시각이 지난 10분 안인 일정 알림을 FCM 으로 보낸다. 겹쳐 돌아도 같은 알림을 두 번 보내지
 않는다. 결정 · FCM 키 준비는 [`docs/notification/reminder-v1.md`](../../docs/notification/reminder-v1.md).
-
-```
-* * * * * docker exec ktc4-api uv run --no-sync python -m app.workers.reminder_dispatch >> /var/tmp/ktc4-reminder.log 2>&1
-```
+cron 줄은 prod 배포가 건다.
 
 보낼 알림이 있었던 회차에만 `일정 알림 발송: 맡음 N · 보냄 N …` 한 줄이 찍힌다(건수만). `FCM_SERVICE_ACCOUNT_FILE` 이
 비어 있으면 매번 경고 한 줄만 남기고 아무것도 맡지 않는다.
+
+### worker cron 은 배포가 건다
+
+손으로 거는 cron 은 빠뜨려도 아무 오류가 없다 (#718). 그래서 prod 배포(`deploy.sh`)가 성공한 뒤
+[`deploy/scripts/worker-cron.sh`](../../deploy/scripts/worker-cron.sh) 가 ubuntu 사용자의 crontab 에 위 세 줄을 맞춘다.
+시각은 서버 시계(Asia/Seoul) 기준이고, 줄 내용은 그 스크립트가 정본이다.
+
+- 같은 worker 줄(주석 아님)이 있으면 그대로 둔다 — 다시 배포해도 줄이 늘지 않고, 손으로 바꾼 시각도 남는다.
+- 넣은 뒤 다시 읽어 worker 마다 한 줄인지 본다. 없거나 둘 이상이면 배포가 빨간불로 끝난다(새 버전은 떠 있다).
+- 주석으로 꺼 둔 줄은 없는 것으로 보고 다시 켠다. 잠깐 끄려면 그 스크립트의 `LINES` 에서 빼고 배포한다.
+- dev 스택(`ktc4-dev-api`)에는 아직 걸지 않는다.
+
+서버에서 확인 (SSM · root 셸에서도 ubuntu 것을 읽는다):
+
+```
+sudo crontab -u ubuntu -l | grep -v '^#' | grep -c 'ktc4-api .*app.workers'   # → 3
+```
 
 ---
 

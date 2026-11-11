@@ -43,6 +43,7 @@ from app.agents.health.readouts import (
     MED_WHICH_UNCLEAR,
     NOTICE_NO_ACTIVE_MED,
     NOTICE_SIGNATURE,
+    PLACE_PORTAL,
     READOUTS,
     SAFETY_UNAVAILABLE,
     SYMPTOM_REPEAT,
@@ -865,6 +866,18 @@ def no_active_med() -> Callable[[Ran], Verdict]:
         result, verdict = _facts(ran)
         if result is not None and result.readouts != (READOUTS.render(NOTICE_NO_ACTIVE_MED),):
             verdict.failures.append("notice.no_active_med 문구가 글자 그대로 나가지 않았다")
+        return verdict
+
+    return judge
+
+
+def place_portal() -> Callable[[Ran], Verdict]:
+    """문 연 병원 — 병원을 찾지 않고 응급의료포털 · 119 안내 한 줄만 나간다 (#926)."""
+
+    def judge(ran: Ran) -> Verdict:
+        result, verdict = _facts(ran)
+        if result is not None and result.readouts != (READOUTS.render(PLACE_PORTAL),):
+            verdict.failures.append("place.portal 문구가 글자 그대로 나가지 않았다")
         return verdict
 
     return judge

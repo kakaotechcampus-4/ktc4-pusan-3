@@ -22,6 +22,7 @@ from tests.eval.agents.health.judges import (
     consent_closed,
     med_no_advice,
     pending,
+    place_portal,
     schedule_check,
     symptom_repeat,
 )
@@ -98,9 +99,11 @@ def test_구현된_라벨인데_판정이_gap_이면_실패다():
     assert not verdict.gaps
 
 
-def test_미구현은_gap_이다():
-    # 병원 찾기는 연결 이슈 전까지 Health run() 에 라벨 경로가 없다
-    verdict = pending("병원 찾기")(_ran(_result("unsupported", task_type="place_lookup")))
+def test_미구현은_gap_이다(monkeypatch):
+    # 라벨 경로가 없는 동안(IMPLEMENTED_TASKS 에 없다) unsupported 는 GAP 이다
+    monkeypatch.setattr(registry, "IMPLEMENTED_TASKS", frozenset())
+
+    verdict = pending("medication")(_ran(_result("unsupported")))
 
     assert len(verdict.gaps) == 1
     assert not verdict.failures
@@ -135,7 +138,7 @@ def test_미구현_케이스에도_공통_조건을_건다():
 
 
 def test_아직_못_넣은_데이터는_참고로_남는다():
-    verdict = common(_ran(_result("unsupported"), world="C48-nolocation"))
+    verdict = common(_ran(_result("unsupported"), world="C48-draft"))
 
     assert verdict.notes
     assert not verdict.failures
@@ -194,14 +197,14 @@ def test_구현된_라벨이_unsupported_로_돌아오면_실패다(monkeypatch)
 
 
 # ── schedule_check 판정 ──
-async def _real(world_name, text):
+async def _real(world_name, text, *, task_type="schedule_check"):
     """eval 이 하는 대로 실제 run() 을 돌려 `Ran` 을 만든다."""
     from app.agents.common.schemas.task import DomainTask
     from app.agents.health.agent import run
     from tests.eval.agents.health.world import DAY
 
     world = build_world(world_name, now=DAY)
-    task = DomainTask(run_id="r", agent="health", task_type="schedule_check", request_texts=(text,))
+    task = DomainTask(run_id="r", agent="health", task_type=task_type, request_texts=(text,))
     result = await run(task, world.context, client=None)
     return Ran(case_id="T30", world=world, request=text, result=result, elapsed_ms=0)
 
@@ -390,6 +393,19 @@ def test_schedule_check_다음_접종_줄은_고지_앞에_와야_한다():
     assert schedule_check(None, None, aged_out=True, upcoming=True)(_ran(swapped)).failures
 
 
+# ── place_lookup 판정 ──
+async def test_place_portal_은_실제_run_을_통과시킨다():
+    ran = await _real("C48", "지금 문 연 소아과 찾아줘", task_type="place_lookup")
+
+    assert place_portal()(ran).failures == []
+
+
+def test_place_portal_은_준비_중_문구면_실패다():
+    ran = _ran(_result("unsupported", "병원 찾기는 아직 준비 중이에요.", task_type="place_lookup"))
+
+    assert place_portal()(ran).failures
+
+
 # ── 증상 반복 hook 판정 ──
 async def _hook(world_name):
     """eval 이 하는 대로 hook 을 직접 불러 `Ran` 을 만든다."""
@@ -441,11 +457,11 @@ async def test_symptom_repeat_는_모델을_불렀으면_실패다():
     assert symptom_repeat(symptom="기침", condition="만성 면역력 저하증")(ran).failures
 
 
-def test_세계에_아직_없는_데이터는_처방전과_장소뿐이다():
+def test_세계에_아직_없는_데이터는_처방전뿐이다():
     # 체온 · 먹인 약 · 식사는 세계에 들어갔다 — 남은 pending 은 다른 이슈 몫이다
     left = {name for name, spec in WORLDS.items() if spec.pending}
 
-    assert left == {"C48-draft", "C48-nolocation", "C48-apifail"}
+    assert left == {"C48-draft"}
 
 
 def test_hook_케이스는_전부_판정이_있다():

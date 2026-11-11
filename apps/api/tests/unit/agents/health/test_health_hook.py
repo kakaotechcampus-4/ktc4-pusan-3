@@ -59,7 +59,7 @@ async def test_사흘_내리면_3일이고_안내가_나간다():
     assert readouts[0].authored_by == "code"
     assert readouts[0].body == READOUTS.render(SYMPTOM_REPEAT, symptom="기침", n="3").body
     assert readouts[0].body == (
-        "최근 1주 동안 '기침'이(가) 3번 기록됐어요. 병원에서 확인해 보시는 게 좋겠어요."
+        "최근 1주 동안 '기침' 기록이 3번 있어요. 병원에서 확인해 보시는 게 좋겠어요."
     )
 
 

@@ -56,7 +56,7 @@ API 모양은 Swagger 가 정본이다. 여기에는 Swagger 가 담지 못하�
 
 `FCM_SERVICE_ACCOUNT_FILE` 이 비어 있으면 배치는 알림을 맡지도 않고 경고 한 줄만 남긴다. 그 사이 시각이 지난 알림은 10분 뒤 울리지 않게 된다.
 
-cron 한 줄 · 확인 방법은 [`apps/api/README.md`](../../apps/api/README.md) "일정 알림 발송".
+cron 한 줄은 prod 배포가 건다(`deploy/scripts/worker-cron.sh` · #718). 확인 방법은 [`apps/api/README.md`](../../apps/api/README.md) "worker cron 은 배포가 건다".
 
 ## 개인정보
 

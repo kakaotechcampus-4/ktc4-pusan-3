@@ -1,4 +1,4 @@
-"""Health tool 표 — 명세 §1 전체를 처음부터 담고, 열리는 것은 구현된 tool 뿐이다."""
+"""Health tool 표 — 만든 tool 만 담고, 열리는 것은 구현된 tool 뿐이다."""
 
 import pytest
 
@@ -21,7 +21,7 @@ from app.agents.health.schemas.task import HealthTaskType
 from app.agents.health.schemas.tool_defs import TOOL_DEFINITIONS
 from tests.unit.agents.health.support import context, gate
 
-# Health_Tool_명세.md §1 의 "모델 tool" · "코드 tool" 칸
+# Health_Tool_명세.md §1 의 "모델 tool" · "코드 tool" 칸 중 만든 것만 (#926)
 SPEC_MODEL = {
     "visit_summary": {
         "search_health_observations",
@@ -44,32 +44,23 @@ SPEC_CODE = {
     "visit_summary": {
         "collect_meals",
         "collect_medication_checks",
-        "load_health_safety",
         "normalize_symptom_term",
         "group_symptom_episodes",
         "build_fever_timeline",
         "get_next_dose",
-        "get_health_phrase",
     },
     "schedule_check": {
         "compute_checkup_schedule",
         "compute_vaccine_schedule",
         "summarize_checkup_context",
-        "get_health_phrase",
     },
-    "place_lookup": {"find_pediatric_places"},
+    "place_lookup": set(),
     "medication": {
         "resolve_dose_timing",
         "normalize_symptom_term",
         "get_next_dose",
-        "lookup_prescription_draft",
     },
-    "care_handoff": {
-        "search_medication_schedules",
-        "load_health_safety",
-        "compose_daycare_med_notice",
-        "build_emergency_card",
-    },
+    "care_handoff": {"search_medication_schedules"},
 }
 
 
@@ -77,8 +68,28 @@ def test_모델_tool_표가_명세_1절과_같다():
     assert {t.value: set(v) for t, v in MODEL_TOOLS.items()} == SPEC_MODEL
 
 
-def test_코드_tool_표가_명세_1절과_같다():
+def test_코드_tool_표는_만든_tool_만_담는다():
     assert {t.value: set(v) for t, v in CODE_TOOLS.items()} == SPEC_CODE
+
+
+def test_코드_tool_이름은_전부_코드에_있다():
+    # 명세 이름만 표에 남고 함수가 없는 줄이 다시 생기지 않게 (#926)
+    import importlib
+    import pkgutil
+
+    import app.agents.health as health
+
+    # 다른 모듈에서 가져온 이름은 세지 않는다 — 그 모듈에서 정의된 함수만
+    defined: set[str] = set()
+    for module in pkgutil.walk_packages(health.__path__, f"{health.__name__}."):
+        namespace = vars(importlib.import_module(module.name))
+        defined |= {
+            n
+            for n, v in namespace.items()
+            if callable(v) and getattr(v, "__module__", None) == module.name
+        }
+
+    assert set().union(*CODE_TOOLS.values()) <= defined
 
 
 def test_출력_tool_은_모델_tool_안에_있다():
@@ -149,12 +160,13 @@ def test_복약의_읽기_전용_출구는_출력_tool_이다():
     assert {"show_dose_status", "defer_dose_question"} <= OUTPUT_TOOLS[HealthTaskType.MEDICATION]
 
 
-def test_구현된_라벨은_schedule_check_medication_care_handoff_visit_summary_이다():
+def test_구현된_라벨은_다섯_라벨_전부다():
     assert IMPLEMENTED_TASKS == {
         HealthTaskType.SCHEDULE_CHECK,
         HealthTaskType.MEDICATION,
         HealthTaskType.CARE_HANDOFF,
         HealthTaskType.VISIT_SUMMARY,
+        HealthTaskType.PLACE_LOOKUP,
     }
 
 

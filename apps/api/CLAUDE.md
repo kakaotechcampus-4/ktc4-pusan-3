@@ -102,8 +102,7 @@ import-linter 설정은 아직 없다 — API CI(`ci-api.yml`)에도 들어 있�
 - **허용**: core, 사용하는 외부 SDK·HTTP 클라이언트
 - **금지**: api, domains, agents, infra import
 - Agent 포트가 받는 모양을 integration 이 만들어야 하면 그 모양은 `core` 에 둔다 — 날씨 어댑터는
-  `core/weather_raw.py` 의 원문 DTO 를 싣고, 해석은 Activity `weather.py` 가 한다. 병원 어댑터
-  (`integrations/hospital/`)도 `core/hospital_raw.py` 를 싣고 "지금 진료 중" 은 Health 가 판정한다.
+  `core/weather_raw.py` 의 원문 DTO 를 싣고, 해석은 Activity `weather.py` 가 한다.
 - 인증 라우터는 카카오 integration을 호출할 수 있지만, 카카오 응답 모양을 다른 도메인으로
   퍼뜨리지 않는다.
 
