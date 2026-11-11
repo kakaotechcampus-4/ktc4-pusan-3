@@ -24,6 +24,7 @@ import time
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 from prometheus_client import CollectorRegistry, Summary, disable_created_metrics, make_wsgi_app
+from prometheus_client.exposition import ThreadingWSGIServer
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 log = logging.getLogger(__name__)
@@ -107,7 +108,14 @@ def start_metrics_server(port: int, allowed_ip: str) -> WSGIServer | None:
         return metrics_app(environ, start_response)
 
     try:
-        server = make_server("0.0.0.0", port, guarded, handler_class=_QuietHandler)  # noqa: S104
+        # 요청마다 스레드 — 한 연결이 아무것도 안 보내고 붙잡아도 Alloy 수집이 막히지 않는다
+        server = make_server(
+            "0.0.0.0",  # noqa: S104
+            port,
+            guarded,
+            server_class=ThreadingWSGIServer,
+            handler_class=_QuietHandler,
+        )
     except OSError as exc:
         log.warning("메트릭 창구를 :%d 에 못 열었다 — 메트릭만 빈다 (%s)", port, type(exc).__name__)
         return None

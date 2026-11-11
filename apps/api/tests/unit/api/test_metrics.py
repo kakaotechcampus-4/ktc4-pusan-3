@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import socket
 import urllib.error
 import urllib.request
 
@@ -149,3 +150,20 @@ def test_포트를_못_잡아도_api_는_뜬다():
         assert start_metrics_server(first.server_port, "127.0.0.1") is None
     finally:
         first.shutdown()
+
+
+def test_연결만_붙잡는_곳이_있어도_수집은_된다():
+    """edge 의 다른 컨테이너가 연결만 열고 안 보내도 Alloy 가 긁을 수 있어야 한다 (#980 리뷰).
+
+    한 번에 하나만 받는 서버면 시간 초과로 실패해 `up == 0` 이 거짓으로 운다.
+    """
+    server = start_metrics_server(0, "127.0.0.1")
+    assert server is not None
+    idle = socket.create_connection(("127.0.0.1", server.server_port))
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/metrics"
+        with urllib.request.urlopen(url, timeout=2) as r:
+            assert r.status == 200
+    finally:
+        idle.close()
+        server.shutdown()
