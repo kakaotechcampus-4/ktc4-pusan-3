@@ -45,6 +45,9 @@ nutrient.today_empty:
 nutrient.daycare_amount_unknown:
   kind: nutrient
   template: "급식은 메뉴만 알고 먹은 양은 몰라서 참고만 했어요."
+nutrient.daycare_unread:
+  kind: nutrient
+  template: "어린이집 급식표는 지금 불러오지 못해서 급식표를 빼고 봤어요."
 nutrient.appearance:
   kind: nutrient_analysis
   template: "기록된 {days}일 중 {group} 나온 날은 {count}일이에요."
@@ -111,6 +114,9 @@ daycare.out_of_range:
 closed.no_daycare:
   kind: closed
   template: "등록된 기관 급식 정보가 없어요."
+closed.daycare_unread:
+  kind: closed
+  template: "급식 정보를 지금 불러오지 못했어요. 잠시 뒤 다시 물어봐 주세요."
 daycare.not_found:
   kind: daycare
   template: "급식 정보를 못 찾았어요."
@@ -174,6 +180,9 @@ meal.request_conflict:
 meal.request_age_block:
   kind: notice
   template: "요청하신 {food}{은는} {when} 먹이지 않아서 빼고 골랐어요."
+meal.daycare_unread:
+  kind: notice
+  template: "오늘 어린이집 급식은 확인하지 못해서, 급식과 겹치는 메뉴가 있을 수 있어요."
 meal.nutrient_basis:
   kind: notice
   template: "기록된 {days}일 중 {group} 나온 날은 {count}일이라, {group} 든 메뉴를 더 넣었어요."

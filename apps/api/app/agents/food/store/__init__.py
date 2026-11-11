@@ -22,6 +22,7 @@ from app.agents.food.store.inmemory import (
 from app.agents.food.store.ports import (
     ChildProfileReader,
     ConsentReader,
+    DaycareLookupError,
     DaycareMealRow,
     DaycareMealStore,
     DaycareSlot,
@@ -49,6 +50,7 @@ from app.agents.food.store.ports import (
 __all__ = [
     "ChildProfileReader",
     "ConsentReader",
+    "DaycareLookupError",
     "DaycareMealRow",
     "DaycareMealStore",
     "DaycareSlot",

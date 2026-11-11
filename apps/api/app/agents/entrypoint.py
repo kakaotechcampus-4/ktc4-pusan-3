@@ -48,6 +48,7 @@ from app.agents.curator.embedding.judge import IdentityJudge
 from app.agents.food.context import FoodContext
 from app.agents.food.store import InMemoryFoodDocs, InMemoryProfile, unwired_ports
 from app.agents.food.store.ports import (
+    DaycareMealStore,
     MenuCatalogStore,
     RecipeCatalogStore,
     SuggestionHistoryReader,
@@ -332,6 +333,7 @@ async def handle_input(
     recent_turns: LoadRecentTurns | None = None,
     food_catalog: MenuCatalogStore | None = None,
     food_recipes: RecipeCatalogStore | None = None,
+    food_daycare: DaycareMealStore | None = None,
     food_suggestions: SuggestionHistoryReader | None = None,
     food_safety: FoodSafetyReader | None = None,
     activity_safety: ActivitySafetyReader | None = None,
@@ -394,9 +396,11 @@ async def handle_input(
       읽어 두게 하는 콜백이다 (#535). 안 넘기면(테스트 · eval) 읽지 않는다.
     - recent_turns 는 후속 질문으로 보이는 입력일 때만 부르는 앞 대화 조회 콜백이다. 러너가
       `agent_ports.recent_turns_loader` 로 만든다. 안 넘기면(테스트 · eval · 05) 앞 대화 없이 돈다.
-    - food_catalog · food_recipes · food_suggestions 는 api 가 넘긴 Food 카탈로그 · 추천 이력
-      어댑터다(`domains/food` · `domains/suggestion` 의 `agent_reader`). 안 넘기면(테스트 · eval)
-      빈 InMemory 다. 문서 행은 어댑터가 아니라 yaml 의 검수된 시드를 항상 읽는다.
+    - food_catalog · food_recipes · food_suggestions · food_daycare 는 api 가 넘긴 Food 카탈로그 ·
+      추천 이력 · 급식 어댑터다(`domains/food` · `domains/suggestion` · `domains/daycare_meal` 의
+      `agent_reader`). 안 넘기면(테스트 · eval) 빈 InMemory 다 — 급식은 빈 메모리라 급식 조회 ·
+      고치기가 `closed.no_daycare` 로 닫힌다. 문서 행은 어댑터가 아니라 yaml 의 검수된 시드를
+      항상 읽는다.
     - food_safety · activity_safety · growth_safety 는 api 가 넘긴 `health_safety` 어댑터다
       (`DbSafetyReader`, #405 · #460). 같은 객체여도 Food 는 `food_safety`, Activity 는
       `activity_safety`, Growth 는 `growth_safety` 로 읽는다 — 읽는 행이 다르다. 안 넘기면(테스트 ·
@@ -444,6 +448,7 @@ async def handle_input(
         domain_store=domain_store,
         food_catalog=food_catalog,
         food_recipes=food_recipes,
+        food_daycare=food_daycare,
         food_suggestions=food_suggestions,
         food_safety=food_safety,
         activity_safety=activity_safety,
@@ -521,6 +526,7 @@ async def suggest(
     store: MemoryStore | None = None,
     food_catalog: MenuCatalogStore | None = None,
     food_recipes: RecipeCatalogStore | None = None,
+    food_daycare: DaycareMealStore | None = None,
     food_suggestions: SuggestionHistoryReader | None = None,
     food_safety: FoodSafetyReader | None = None,
     activity_safety: ActivitySafetyReader | None = None,
@@ -556,6 +562,7 @@ async def suggest(
         domain_store=domain_store,
         food_catalog=food_catalog,
         food_recipes=food_recipes,
+        food_daycare=food_daycare,
         food_suggestions=food_suggestions,
         food_safety=food_safety,
         activity_safety=activity_safety,
@@ -690,6 +697,7 @@ def _domain_contexts(
     activity_events: EventSource | None = None,
     food_catalog: MenuCatalogStore | None = None,
     food_recipes: RecipeCatalogStore | None = None,
+    food_daycare: DaycareMealStore | None = None,
     food_suggestions: SuggestionHistoryReader | None = None,
     food_safety: FoodSafetyReader | None = None,
     activity_safety: ActivitySafetyReader | None = None,
@@ -730,6 +738,7 @@ def _domain_contexts(
     for name, port in (
         ("catalog", food_catalog),
         ("recipes", food_recipes),
+        ("daycare", food_daycare),
         ("suggestions", food_suggestions),
         ("safety", food_safety),
     ):
