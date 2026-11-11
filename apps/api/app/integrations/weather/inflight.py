@@ -34,6 +34,14 @@ class Inflight[K: Hashable, V]:
             task.add_done_callback(lambda done: self._settle(key, done))
         return await asyncio.shield(task)
 
+    async def aclose(self) -> None:
+        """받는 중인 조회를 끊고 끝날 때까지 기다린다 — 어댑터가 닫힐 때(앱 종료). 남기면 루프가
+        닫힌 뒤 "Task was destroyed but it is pending" 이 남는다 (#964 리뷰)."""
+        tasks = list(self._tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
     def _settle(self, key: K, done: asyncio.Task[V]) -> None:
         if self._tasks.get(key) is done:
             del self._tasks[key]

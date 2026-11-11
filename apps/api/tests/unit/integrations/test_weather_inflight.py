@@ -209,3 +209,16 @@ class TestInflight:
         assert await inflight.run("k", fetch) == "값"
         assert await inflight.run("k", fetch) == "다음 값"
         assert len(inflight) == 0
+
+
+@each
+async def test_닫으면_받는_중인_조회를_끊고_남기지_않는다(name):
+    server = Failing(gate=asyncio.Event())
+    make, call = CASES[name]
+    src = make(httpx.MockTransport(server))
+    waiting = asyncio.create_task(call(src, 0))
+    await asyncio.sleep(0)  # 조회가 시작되게 한다
+    await src.aclose()
+    assert len(src._inflight) == 0
+    with pytest.raises((asyncio.CancelledError, UpstreamUnavailable)):
+        await waiting

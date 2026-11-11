@@ -83,6 +83,8 @@ class KmaUv:
         self._inflight: Inflight[tuple[str, str], UvRow] = Inflight()
 
     async def aclose(self) -> None:
+        # 클라이언트를 닫기 전에 — 받는 중인 조회가 닫힌 클라이언트를 쓰지 않게 (#964 리뷰)
+        await self._inflight.aclose()
         await self._client.aclose()
 
     async def uv(self, *, grid: WeatherGrid, day: date) -> str | None:

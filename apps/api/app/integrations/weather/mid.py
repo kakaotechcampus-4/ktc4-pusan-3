@@ -67,6 +67,8 @@ class KmaMidForecast:
         self._inflight: Inflight[tuple[str, str], dict[str, Any]] = Inflight()
 
     async def aclose(self) -> None:
+        # 클라이언트를 닫기 전에 — 받는 중인 조회가 닫힌 클라이언트를 쓰지 않게 (#964 리뷰)
+        await self._inflight.aclose()
         await self._client.aclose()
 
     async def forecast(self, *, grid: WeatherGrid, day: date) -> RawForecast:
@@ -115,7 +117,9 @@ class KmaMidForecast:
         items = (body.get("items") or {}).get("item") or []
         if not items or not isinstance(items[0], dict):
             raise UpstreamUnavailable("중기예보 행이 없다")
-        # 발표가 바뀌면 옛 발표는 버린다 — 구역 10곳 × 발표 1개만 둔다
+        # 발표가 바뀌면 옛 발표는 버린다 — 구역 10곳 × 발표 1개만 둔다. 발표가 바뀌는 순간 옛 · 새
+        # 발표 조회가 같이 돌면 늦게 끝난 쪽이 다른 쪽 캐시를 지울 수 있다 — 다음 호출이 다시 부를
+        # 뿐이라 둔다 (#964 리뷰)
         self._cache = {k: v for k, v in self._cache.items() if k[1] == tm}
         self._cache[key] = items[0]
         return items[0]
