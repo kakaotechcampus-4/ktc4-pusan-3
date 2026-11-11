@@ -215,7 +215,7 @@ Agent 별 설계는 [Supervisor](https://kakaotechcampus-4.github.io/ktc4-pusan-
 | 사진은 화면이 **S3 에 바로** 올린다 | 업로드가 API 서버를 거치지 않는다. 서버는 읽을 때만 내려받고 바로 지운다 |
 | 배포는 **OIDC + Systems Manager** | 저장소에 서버 열쇠를 두지 않는다 |
 
-서버 구성은 [배포 문서 · 한눈에](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#한눈에)에, 되돌리는 법은 [롤백](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#롤백--무엇이-되돌아가고-무엇이-안-되돌아가나)에, 상태를 DB 로 옮긴 이유는 [설계 결정 §2](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#2-워커를-늘리기-위한-상태-저장소--redis-가-더-잘-맞는-도구인데-postgresql-을-골랐다)에 있습니다.
+내부 주소 · 버킷 정책 · 권한까지 그린 자세한 구성도는 [배포 문서 · 한눈에](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#한눈에)에, 되돌리는 법은 [롤백](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#롤백--무엇이-되돌아가고-무엇이-안-되돌아가나)에, 상태를 DB 로 옮긴 이유는 [설계 결정 §2](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#2-워커를-늘리기-위한-상태-저장소--redis-가-더-잘-맞는-도구인데-postgresql-을-골랐다)에 있습니다.
 
 ### 운영하면서 지켜보는 것
 

@@ -4,6 +4,10 @@
 
 ## 한눈에
 
+[![아이캐치 AWS 인프라 구성도 — 서울 리전의 EC2 한 대 위에 prod · dev 두 compose 프로젝트가 뜨고, Caddy 가 두 환경을 함께 받는다. 배포는 GitHub Actions 가 OIDC 로 IAM 역할을 받아 Systems Manager 로 deploy.sh 를 실행한다. S3 버킷은 사진 임시 보관과 DB 백업 둘이다.](../assets/architecture-detail.png)](../assets/architecture-detail.png)
+
+그림을 누르면 원본 크기로 열린다. VPC · 서브넷 · 보안 그룹 규칙은 저장소에 적혀 있지 않아 단일 퍼블릭 서브넷 구성으로 그렸다.
+
 ```
 develop push ─┐                                    ┌─ dev  (dev.icatch.ai.kr · api.dev.icatch.ai.kr)
               ├─ API CI + Web CI ─ 통과 ─ deploy.sh ┤
