@@ -9,7 +9,6 @@
 <a href="https://play.google.com/store/apps/details?id=kr.ai.icatch"><img alt="Google Play 에서 받기" src="https://play.google.com/intl/en_us/badges/static/images/badges/ko_badge_web_generic.png" height="80"></a>
 <a href="https://icatch.ai.kr"><img alt="웹에서 바로 쓰기" src="docs/assets/readme/btn-web.png" height="80"></a>
 
-<a href="https://youtu.be/EAYOg7bfxaI"><img alt="소개 영상 42초" src="docs/assets/readme/btn-video.png" height="56"></a>
 <a href="https://kakaotechcampus-4.github.io/ktc4-pusan-3/"><img alt="개발 문서" src="docs/assets/readme/btn-docs.png" height="56"></a>
 <a href="https://api.icatch.ai.kr/docs"><img alt="API 문서" src="docs/assets/readme/btn-api.png" height="56"></a>
 
@@ -25,7 +24,7 @@
 | **가족과&nbsp;같이&nbsp;봅니다** | 초대 코드로 다른 보호자를 부르면 같은 아이의 기록과 일정을 함께 봅니다 |
 | **중요한&nbsp;것은&nbsp;사람이&nbsp;정합니다** | 알레르기는 코드가 막고, 일정과 건강 기록은 보호자가 승인해야 들어갑니다 |
 
-<!-- 시연 영상(제출물)이 올라오면 위 링크 줄의 "소개 영상" 뒤에 시연 영상 링크를 더한다 -->
+<!-- 시연 영상(제출물)이 올라오면 위 작은 버튼 줄 맨 앞에 "시연 영상" 버튼을 더한다 (원본: my-notes 의 buttons.html) -->
 
 ## 목차
 
