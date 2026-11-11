@@ -25,8 +25,9 @@ from tests.integration.api.conftest import Bearer, issue_bearer, link_child
 
 
 def _affinity(child_id: uuid.UUID, domain: MemoryDomain, key: str) -> ProfileAffinity:
+    # polarity — confirmed 로 바꾸는 테스트가 있다. NULL 이면 CHECK 에 걸린다
     return ProfileAffinity(
-        child_id=child_id, merge_key=key, domain=domain, last_observed_on=today_kst()
+        child_id=child_id, merge_key=key, domain=domain, polarity=1, last_observed_on=today_kst()
     )
 
 
@@ -132,7 +133,7 @@ async def _linked(
     """기억 1건 + (linked 면) 묶인 active 기록 1건. 마지막 기록은 days_ago 일 전이다."""
     day = today_kst() - timedelta(days=days_ago)
     affinity = ProfileAffinity(
-        child_id=cid, merge_key=key, domain=MemoryDomain.FOOD, last_observed_on=day
+        child_id=cid, merge_key=key, domain=MemoryDomain.FOOD, polarity=1, last_observed_on=day
     )
     session.add(affinity)
     await session.flush()

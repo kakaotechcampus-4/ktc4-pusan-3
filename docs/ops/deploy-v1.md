@@ -81,8 +81,8 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 360초 — 옛 api dra
     - 🚨 헬퍼 함수 안 연산에 단 `# expand-ok:` 는 그 헬퍼의 **모든 호출**에 통한다. 넓히기 표시를 단 헬퍼는 넓히기에만
       쓴다 — 같은 `_swap()` 으로 값 빼기까지 하면 빼기도 같이 넘어간다
   - 못 보는 것: SQL 을 함수 반환값 · 문자열 덧셈으로 만든 것, 원문 SQL 의 `ADD COLUMN … NOT NULL`(DEFAULT 없음),
-    원문 SQL 로 CHECK 를 지우고 다시 만드는 것(`DROP CONSTRAINT` + `ADD CONSTRAINT … CHECK`). 새 unique 제약처럼
-    의미를 봐야 하는 것도 이 검사 밖이다
+    원문 SQL 로 CHECK 를 지우고 다시 만드는 것(`DROP CONSTRAINT` + `ADD CONSTRAINT … CHECK`). 새 unique · CHECK 제약처럼
+    의미를 봐야 하는 것도 이 검사 밖이다 — 직전 코드가 쓰는 값을 막으면 조이기라 두 번에 나눈다 (`496fd5c10cd1`, #287)
   - 🚨 **contract PR 은 앞 PR 이 prod(main) 에 배포된 뒤에 develop 에 머지한다.** 표시는 배포 순서를 확인하지 못한다.
     둘이 develop 에 따로 머지돼도 develop → main 한 번에 같이 실리면, prod 헬스 실패 때 앞 PR 이전 이미지로
     롤백되고 그 이미지는 지운 컬럼을 읽는다.

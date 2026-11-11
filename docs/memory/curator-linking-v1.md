@@ -60,7 +60,8 @@ Profile 은 대상 하나에 대한 선호 · 기피다. 그래서 Profile 의 `
 - 관찰은 그대로 남는다 — 도메인 Agent 가 최근 14일 근거(티어 3)로 쓴다
 - 방향을 모르는(`NULL`) Profile 은 관찰이 쌓여도 `confirmed` 로 올리지 않는다 (`recompute_profile`)
 - 관찰의 `polarity` 를 고치는 경로는 지금 없다(Memory 고치기 도구에 칸이 없다). `0` 으로 잘못 저장된 관찰은 지우고 다시 기록해야 한다
-- DB 제약과 이미 있던 `0` Profile 정리는 **다음 배포(contract PR)** 에서 한다. 배포가 롤백되면 직전 코드가 새 스키마 위에서 도는데, 이 코드가 먼저 나가 있어야 직전 코드도 `0` Profile 을 만들지 않는다 ([deploy-v1.md](../ops/deploy-v1.md) 롤백 절)
+- DB 도 막는다 — `profile_affinity` 의 `polarity IS NULL OR polarity IN (-1, 1)` · `state <> 'confirmed' OR polarity IS NOT NULL`, 관찰 네 표의 `polarity IN (-1, 0, 1)` (마이그레이션 `496fd5c10cd1`). 그 마이그레이션이 이미 있던 `0` Profile 을 지우고 묶인 관찰의 연결을 끊는다 — `NULL` 로 바꾸면 되묻기(`pick_followup`) 대상이 되어서다
+- 제약은 위 코드가 prod 에 나간 **다음 배포(contract)** 에서 건다. 배포가 롤백되면 직전 코드가 새 스키마 위에서 도는데, 직전 코드가 이미 `0` Profile 을 만들지 않아야 제약에 걸리지 않는다 ([deploy-v1.md](../ops/deploy-v1.md) 롤백 절)
 
 **대가** — 보호자가 좋다 · 싫다를 말하지 않은 "자주 하는 것" 은 Profile 이 되지 않고, 14일이 지나면 근거에서도 빠진다. 모델이 싫어함을 빼먹어 `0` 으로 저장된 관찰도 집계에서 빠진다(전에도 `-1` Profile 에는 안 들어갔다). Memory Agent 가 `polarity` 를 읽는 정확도는 따로 잰다.
 

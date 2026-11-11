@@ -52,6 +52,7 @@ async def _affinity(session, child_id, key, state, last_observed_on):
         merge_key=key,
         domain=MemoryDomain.FOOD,
         state=state,
+        polarity=1,  # confirmed 는 NULL 을 받지 않는다 (CHECK profile_affinity_confirmed_polarity)
         last_observed_on=last_observed_on,
     )
     session.add(row)

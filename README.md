@@ -262,11 +262,19 @@ Agent 별 설계는 [Supervisor](https://kakaotechcampus-4.github.io/ktc4-pusan-
 | --- | --- | --- | --- |
 | 다시 누른 한 줄이 [**두 번 저장**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#1-중복-요청-방어--프로세스-메모리에서-redis-로-그리고-redis-가-죽으면-막는다)된다 | 저장은 됐는데 응답만 사라졌다 | `Idempotency-Key` 를 Redis 에 기억. Redis 가 죽으면 메모리로 넘기지 않고 503 | 같은 키 10번 → 저장 1건 |
 | 같은 키가 [**동시에**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/workers-2-check-v1/#①-처음-보는-키가-동시에-오면-중복-저장된다) 오면 못 막는다 | 키 읽기와 쓰기가 따로였다 (워커 2개 실험에서 발견) | `SET NX` 한 번으로 합쳤다 | 동시 8개 × 300번, 중복 0 |
-| [**재배포**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#drain--옛-api-가-하던-일을-끝내고-내려간다-882) 중 요청이 502, 돌던 요청은 사라진다 | 컨테이너가 한 번에 하나만 뜬다 | 돌던 요청은 끝내고 내려가고, 새 요청은 프록시가 붙잡는다 | 돌던 요청 정리 110초 < 강제 종료 120초 < 프록시가 기다리는 150초 |
+| 깨진 [**재생 값**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/troubles-v1/#4-깨진-idempotency-재생-값--24시간-막힘을-재시도-한-번으로)이 같은 키 재시도를 24시간 막는다 | `json.loads` 실패가 500 으로 올라갔다 | 키를 지우고 이번만 503 | 막힘 24시간 → 재시도 1번 |
+| 워커를 늘리면 [**메모리 상태가 사라진다**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/troubles-v1/#1-프로세스-메모리-상태--redis-로-갔다가-postgresql-로) | 되묻기 · SSE · 한도를 프로세스 메모리에 뒀다 | Redis 가 아니라 PostgreSQL UNLOGGED 표 4개로 | 서버 2개에 동시에 보낸 답 10개 중 202 는 1개 |
+| [**재배포**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/troubles-v1/#2-재배포-drain--단일-컨테이너--caddy-대기-vs-bluegreen) 중 요청이 502, 돌던 요청은 사라진다 | 컨테이너가 한 번에 하나만 뜬다 | 돌던 요청은 끝내고 내려가고, 새 요청은 프록시가 붙잡는다 | 돌던 요청 정리 110초 < 강제 종료 120초 < 프록시가 기다리는 150초 |
+| 기억이 시간이 지나도 [**강등되지 않는다**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/troubles-v1/#3-기억-감쇠가-동작하지-않음--그리고-드러난-경합--교착) | 재계산이 새 기록 · 고치기 때만 불렸다 | 하루 1회 재계산 + 행 잠금 · 아이 잠금 먼저 | 숨어 있던 lost update · 교착 재현 후 제거 |
+| 기록과 질문이 섞인 한 줄의 [**commit 경계**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/troubles-v1/#5-복합-발화의-트랜잭션-경계--썼다는-어디까지인가) | 추천이 실패해도 기록은 남아야 한다 | 단계마다 commit, "썼다" 는 보호자 말을 반영한 저장만 | 저장한 run 은 failed 대신 done + partial |
+| 기록을 없애는 [**길이 둘**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/troubles-v1/#6-잘못된-기록과-대화-삭제--같은-뜻-다른-결과)이고 결과가 다르다 | "잘못된 기록" 은 숨기고, 대화 삭제는 지웠다 | 삭제로 통일 · 지우는 함수 하나 · 잠금 순서 하나 | PR 4개로 나눠 머지 |
 | 계란과 달걀을 [**다른 것**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#3-같은-대상인지-판단--임베딩-유사도에서-llm-판정으로)으로 본다 | 임베딩 유사도가 뜻이 아니라 글자를 따라갔다 (0.20) | "같은 대상인가" 만 묻는 LLM 판정 | 유사도는 후보 추리기에만 |
 | 긴 입력에서 [**출력이 잘린다**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#5-한-줄-입력-상한--2000자에서-500자로) | 1,000자부터 Supervisor 출력이 상한에 걸렸다 | 길이별로 재서 500자로 | 긴 글은 사진 읽기로 |
+| Memory 가 [**저장하지 않고 "기록했어요"**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/troubles-v1/#7-memory-가-저장하지-않고-기록했어요-라고-답한다) 라고 답한다 | 저장했다는 주장을 말투 패턴으로 잡아서, 새 말투가 나오면 샜다 | 말투 대신 tool 쓰기 성공으로 판정. 다시 확인은 쓰기 0건일 때만 | 거짓 저장 47/200 → 0/200 |
+| [**근거 검사를 더하자 억지 추천**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/troubles-v1/#8-근거-검사를-더하자-억지-추천이-늘었다)이 늘었다 | 관련성 낱말 검사와 함께 바꾼 지시가 모델을 시드 예시 쪽으로 끌어당겼다 | 되돌리고, 놀이를 정해 물으면 그 요청에 맞춰 낸다 | 예시를 베낀 일반 추천 40% → 14% |
+| 알레르기를 [**막으면 새고, 풀면 오탐**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/troubles-v1/#9-알레르기를-막으면-새고-풀면-오탐이-난다)이 난다 | 놀이 문장에서 알레르기 이름을 글자로 찾았다 ("장난감 자동차" → 감자, 쿠키는 통과) | 후보에 foods 칸을 두고 Food 메뉴 판정으로 거른다. 알레르기는 여전히 모델에 넘기지 않는다 | 알레르기 음식에 닿는 추천 17 → 3 (54케이스) |
 
-굵은 글자를 누르면 그 일의 계기 · 비교 · 대가로 갑니다. 전체는 [설계 결정 8개와 그 밖의 변경](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/)에 있습니다.
+굵은 글자를 누르면 그 일의 계기 · 비교 · 대가로 갑니다. 이슈 · PR 에서 오간 논의는 [만들면서 부딪힌 것](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/troubles-v1/)에, 원래 계획을 바꾼 결정은 [설계 결정 8개와 그 밖의 변경](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/)에 있습니다.
 
 ## 정말 그렇게 움직이는지 쟀습니다
 

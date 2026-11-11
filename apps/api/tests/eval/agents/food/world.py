@@ -138,8 +138,10 @@ class WorldSpec:
     # 날의 절반 미만으로 나온다. sparse_veg_unknown 은 거기에 식품군을 모르는 메뉴가 낀 날을 더한다.
     # few 는 기록이 4행 · 2일뿐인 아이(출현은 말하지만 10행에 못 미친다)
     meals: str = "default"
-    # True 면 먹은 메뉴의 menu_catalog 행(식품군)을 채운다. 비어 있으면 영양 판정이 메뉴를 하나도
-    # 못 읽어(appearance_ready=False) 부족 식품군 가중 · 오늘 겹침 가중이 돌지 않는다
+    # True 면 먹은 메뉴의 menu_catalog 행(식품군)을 채운다. 비어 있으면 단일 식품 표
+    # (reference/plain_food_groups.yaml)에 있는 이름만 식품군을 알아서, 기본 식단(meals="default")은
+    # 식품군을 아는 메뉴가 절반에 못 미쳐 appearance_ready=False 다 — 부족 식품군 가중 · 오늘 겹침
+    # 가중이 돌지 않는다
     catalog: bool = False
 
 
