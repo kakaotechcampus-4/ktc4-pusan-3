@@ -40,7 +40,7 @@ from app.domains.run_hold.repository import (
     set_payload,
     share_holder_child,
 )
-from app.rules.menu_key import normalize_menu_key
+from app.rules.menu_key import meal_menu_keys
 
 log = logging.getLogger(__name__)
 
@@ -684,7 +684,8 @@ def _whole_day(day: date) -> dict:
 
 
 def meal_row(slot: MealSlot, *, title: str, day: date | None) -> NewDaycareMeal | None:
-    keys = tuple(k for k in (normalize_menu_key(n) for n in title.split(",")) if k)
+    # 괄호 안 음식 이름("떡(꿀설기)" 의 꿀설기)도 키로 싣는다 — 판정이 "꿀" 을 보게 (#908)
+    keys = meal_menu_keys(title)
     if not keys:
         return None
     return NewDaycareMeal(serve_date=day or slot.serve_date, meal_slot=slot.slot, menu_keys=keys)

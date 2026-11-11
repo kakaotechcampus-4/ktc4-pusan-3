@@ -8,6 +8,11 @@
 번호는 판정에 쓰지 않는다. 떼지 않으면 "카레라이스(2.5.6)" 가 카탈로그에서 안 찾아져 영양 계산에서
 빠진다.
 
+급식표 저장 키(`meal_menu_keys`)만 괄호 안 음식 이름을 키로 하나 더 싣는다. "떡(꿀설기)" 의 키가
+"떡" 하나면 알레르기 · 월령 판정이 "꿀" 을 못 본다. `normalize_menu_key` 는 바꾸지 않는다 — Food
+Agent 여러 곳이 같은 함수로 급식표 · 보호자 말 · 영양DB 의 키를 맞추므로, 바꾸면 이미 맞던 키가
+어긋난다. 결정은 meal-plan-pipeline-v1 결정 ⑤.
+
 순수 함수. 표준 라이브러리만 쓴다 (apps/api/CLAUDE.md 레이어 경계).
 """
 
@@ -81,3 +86,120 @@ def menu_display_name(raw: str) -> str:
     text = _EMPTY_PARENS.sub("", text)
     text = _SPACES.sub(" ", text)
     return text.strip(_NAME_EDGE)
+
+
+# ── 급식표 저장 키 — 괄호 안 음식 이름까지 (#908) ──
+
+_OPENERS = "(["
+_CLOSERS = ")]"
+# 괄호 안에서 음식 이름을 나누는 자리
+_INNER_SPLIT = re.compile(r"[,/·&]|또는")
+# 원산지 — "국내산" · "호주산" · "쌀:국내산"(→ "쌀국내산")
+_ORIGIN_WORD = "원산지"
+_ORIGIN_END = "산"
+_LETTER = re.compile(r"[가-힣a-z]")
+# 분량 — 숫자와 단위만. normalize 뒤라 "1/2" 는 "12", "200 ml" 은 "200ml" 이다
+_AMOUNT = re.compile(
+    r"(?:\d+|g|kg|ml|l|cc|개|쪽|장|조각|알|컵|공기|인분|큰술|작은술|스푼|그릇|접시|봉|팩|줄|마리|반)+"
+)
+_AMOUNT_MARK = re.compile(r"\d|반")
+# 크기 · 표시 낱말. 이것과 정확히 같을 때만 뺀다 ("소고기" 는 남는다).
+# 군 · 구운 · 찐 · 삶은 은 조리법을 바꿔 적은 괄호다 ("찐(군)감자" · "삶은(구운)달걀")
+_MARK_WORDS = frozenset(
+    {
+        "소", "중", "대", "특", "선택", "자율", "자율배식", "대체", "대체식", "행사", "행사식",
+        "친환경", "무농약", "유기농", "무항생제", "완제품", "냉동", "수제", "추가", "제공", "제외",
+        "미제공", "군", "구운", "찐", "삶은",
+    }
+)  # fmt: skip
+
+
+def meal_menu_keys(title: str) -> tuple[str, ...]:
+    """급식 항목 제목(메뉴 이름을 ", " 로 이은 글) → `daycare_meal.menu_keys`.
+
+    괄호 밖 쉼표에서만 메뉴를 나눈다 — "샐러드(사과, 배)" 는 한 메뉴다. 메뉴마다 괄호 밖 키
+    (`normalize_menu_key(메뉴)`, 예전과 같은 키)를 먼저 싣고, 괄호 안을 `,` `/` `·` `&` "또는" 에서
+    나눠 음식 이름을 키로 더한다. 순서를 지키고 겹친 키는 한 번만 싣는다.
+
+    `normalize_menu_key` 를 바꾸지 않고 여기서만 더한다. 괄호 밖 키는 그대로라 카탈로그 · 영양
+    계산이 찾던 키가 바뀌지 않고, 괄호 안 키는 판정이 이름으로 한 번 더 본다(카탈로그에 없으면
+    "확인 못 함").
+
+    🚨 괄호 안에서 빼는 것은 음식이 아닌 것이 분명한 조각뿐이다 — 원산지("국내산"), 분량("1/2" ·
+       "200ml" · "반공기"), 크기 · 표시 낱말과 정확히 같은 것("소" · "자율배식"). 애매하면 남긴다.
+       남기면 "확인 못 함" 으로 한 번 더 보게 되고, 지우면 알레르기를 놓친다. "꿀" · "잣" 같은
+       한 글자 음식, 숫자 없는 단위 한 글자("알")도 남는다.
+
+    보호자가 화면에서 제목을 고칠 수 있어 괄호가 어긋나도 예외를 내지 않는다. 안 닫힌 괄호는 그
+    메뉴 끝까지를 괄호 안으로 보고, 짝 없는 닫는 괄호는 무시한다.
+    """
+    text = unicodedata.normalize("NFKC", title)
+    keys: list[str] = []
+    for menu in _split_menus(text):
+        keys.append(normalize_menu_key(menu))
+        for inner in _bracket_groups(menu):
+            keys.extend(
+                key
+                for key in (normalize_menu_key(part) for part in _INNER_SPLIT.split(inner))
+                if not _is_not_food(key)
+            )
+    return tuple(dict.fromkeys(key for key in keys if key))
+
+
+def _split_menus(text: str) -> list[str]:
+    """짝이 맞는 괄호 밖 쉼표에서 나눈다. 안 닫힌 괄호는 쉼표를 막지 않는다."""
+    covered = [False] * len(text)
+    opened: list[int] = []
+    for i, ch in enumerate(text):
+        if ch in _OPENERS:
+            opened.append(i)
+        elif ch in _CLOSERS and opened:
+            start = opened.pop()
+            covered[start : i + 1] = [True] * (i + 1 - start)
+    menus: list[str] = []
+    start = 0
+    for i, ch in enumerate(text):
+        if ch == "," and not covered[i]:
+            menus.append(text[start:i])
+            start = i + 1
+    menus.append(text[start:])
+    return menus
+
+
+def _bracket_groups(menu: str) -> list[str]:
+    """메뉴 하나의 괄호 안 글. 겹친 괄호는 나누는 자리로 바꾸고, 안 닫힌 괄호는 끝까지다."""
+    groups: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for ch in menu:
+        if ch in _OPENERS:
+            if depth:
+                current.append(",")
+            depth += 1
+        elif ch in _CLOSERS:
+            if not depth:
+                continue
+            depth -= 1
+            if depth:
+                current.append(",")
+            else:
+                groups.append("".join(current))
+                current = []
+        elif depth:
+            current.append(ch)
+    if depth:
+        groups.append("".join(current))
+    return groups
+
+
+def _is_not_food(key: str) -> bool:
+    """괄호 안 조각이 음식이 아닌 것이 분명한가. 정규화한 키로 본다."""
+    if not key:
+        return True
+    if key.endswith(_ORIGIN_END) or _ORIGIN_WORD in key:
+        return True
+    if not _LETTER.search(key):
+        return True
+    if _AMOUNT.fullmatch(key) and _AMOUNT_MARK.search(key):
+        return True
+    return key in _MARK_WORDS

@@ -9,7 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from app.rules.menu_key import is_nutrition_line, menu_display_name, normalize_menu_key
+from app.rules.menu_key import (
+    is_nutrition_line,
+    meal_menu_keys,
+    menu_display_name,
+    normalize_menu_key,
+)
 
 
 @pytest.mark.parametrize(
@@ -268,3 +273,125 @@ def test_정답셋_두_벌의_메뉴는_하나도_걸러지지_않는다() -> No
 
     assert len(_fixture_raws()) == 178
     assert [raw for raw in raws if is_nutrition_line(raw)] == []
+
+
+# ── 급식표 저장 키 — 괄호 안 음식 이름도 키로 싣는다 (`meal_menu_keys`) ──
+# `normalize_menu_key` 는 괄호 안을 통째로 지운다. "떡(꿀설기)" 의 키가 "떡" 만 되면 알레르기 ·
+# 월령 판정이 "꿀" 을 못 본다. 메뉴 이름은 전부 지어낸 것이다.
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("떡(꿀설기)", ("떡", "꿀설기")),
+        ("빵(우유카스텔라), 우유", ("빵", "우유카스텔라", "우유")),
+        ("백김치(백깍두기)", ("백김치", "백깍두기")),  # 대체 메뉴
+        ("생선(고등어)구이", (normalize_menu_key("생선(고등어)구이"), "고등어")),
+        ("샐러드(사과, 배), 김치", ("샐러드", "사과", "배", "김치")),  # 괄호 안 쉼표에서 안 자른다
+        ("과일(사과/배)", ("과일", "사과", "배")),
+        ("과일(사과 또는 배)", ("과일", "사과", "배")),
+        ("과일(사과·배&귤)", ("과일", "사과", "배", "귤")),
+        ("떡(꿀)", ("떡", "꿀")),  # 한 글자 음식은 남는다
+        ("과자(잣, 밤, 콩, 팥, 깨, 게)", ("과자", "잣", "밤", "콩", "팥", "깨", "게")),
+        ("두부조림[콩]", ("두부조림", "콩")),  # 대괄호도 같다
+        ("떡（꿀설기）", ("떡", "꿀설기")),  # 전각 괄호
+        ("(꿀설기)", ("꿀설기",)),  # 괄호 밖이 비어도 괄호 안은 남는다
+        ("백김치(백김치)", ("백김치",)),  # 중복은 한 번
+        ("떡(꿀설기), 떡(꿀설기)", ("떡", "꿀설기")),
+        # 겹친 괄호 — 괄호 밖 키는 `normalize_menu_key` 그대로다(겹친 괄호를 다 못 지운다)
+        (
+            "수프(감자(국내산), 양파)",
+            (normalize_menu_key("수프(감자(국내산), 양파)"), "감자", "양파"),
+        ),
+    ],
+)
+def test_급식표_저장_키는_괄호_안_음식_이름을_더한다(title: str, expected: tuple[str, ...]) -> None:
+    assert meal_menu_keys(title) == expected
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("닭고기(국내산)", ("닭고기",)),  # 원산지
+        ("쇠고기(호주산)", ("쇠고기",)),
+        ("백미밥(쌀:국내산)", ("백미밥",)),
+        ("돼지고기(원산지 표시)", ("돼지고기",)),
+        ("백미밥(1/2)", ("백미밥",)),  # 분량
+        ("우유(200ml)", ("우유",)),
+        ("귤(2개)", ("귤",)),
+        ("밥(반공기)", ("밥",)),
+        ("떡(소)", ("떡",)),  # 크기 · 표시 낱말
+        ("국수(자율배식)", ("국수",)),
+        ("찐(군)감자", (normalize_menu_key("찐(군)감자"),)),  # 조리법을 바꿔 적은 괄호
+        ("삶은(구운)달걀", (normalize_menu_key("삶은(구운)달걀"),)),
+        ("카레라이스(2.5.6)", ("카레라이스",)),  # 알레르기 번호
+        ("죽(  )", ("죽",)),
+    ],
+)
+def test_괄호_안_원산지_분량_표시는_키가_되지_않는다(title: str, expected: tuple[str, ...]) -> None:
+    assert meal_menu_keys(title) == expected
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("떡(소고기)", ("떡", "소고기")),  # 낱말과 정확히 같을 때만 뺀다
+        ("떡(대추)", ("떡", "대추")),
+        ("전(알)", ("전", "알")),  # 숫자 없는 단위 한 글자는 애매하다 — 남긴다
+    ],
+)
+def test_애매한_괄호_안은_남긴다(title: str, expected: tuple[str, ...]) -> None:
+    assert meal_menu_keys(title) == expected
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "빵(우유카스텔라",
+        "빵)우유(",
+        "((떡))",
+        "",
+        ",,,",
+        "(",
+        ")",
+        "[)",
+        "떡(꿀, 우유",
+        "(((",
+        ")))",
+    ],
+)
+def test_괄호가_어긋나도_예외_없이_키를_낸다(title: str) -> None:
+    keys = meal_menu_keys(title)
+
+    assert all(keys)
+    assert len(keys) == len(set(keys))
+
+
+def test_안_닫힌_괄호는_그_메뉴_끝까지_괄호_안이다() -> None:
+    unclosed = normalize_menu_key("빵(우유카스텔라")
+
+    assert meal_menu_keys("빵(우유카스텔라") == (unclosed, "우유카스텔라")
+    assert meal_menu_keys("빵(우유카스텔라, 우유") == (unclosed, "우유카스텔라", "우유")
+    assert meal_menu_keys("((떡))") == ("떡",)
+
+
+def _old_meal_row_keys(title: str) -> tuple[str, ...]:
+    """#908 전 `photo_run.meal_row` 의 식 그대로."""
+    return tuple(k for k in (normalize_menu_key(n) for n in title.split(",")) if k)
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        *(menu_display_name(raw) for raw in _fixture_raws() if "(" not in raw and "[" not in raw),
+        *(menu_display_name(raw) for raw in DEMO_RAWS if "(" not in raw and "[" not in raw),
+        "된장찌개, 백미밥1/2, 깍두기",
+        "경기도과일 또는 고구마우유죽",
+        "치킨가스&소스",
+        "우유 2,5",
+        ", 미역국,, ",
+        "",
+    ],
+)
+def test_괄호_없는_제목은_예전과_같은_키(title: str) -> None:
+    assert meal_menu_keys(title) == _old_meal_row_keys(title)
