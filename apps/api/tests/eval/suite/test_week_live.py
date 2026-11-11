@@ -150,12 +150,11 @@ async def _run_week(
     reset_process_state()
     monday = simulation_monday(datetime.now(KST).date())
     rainy = {step_day(monday, f"{day} 00:00"): _HEAVY_RAIN for day in case.world.rain_days}
-    state_keys = ("activity_weather", "activity_events", "health_places")
+    state_keys = ("activity_weather", "activity_events")
     missing = object()
     old_state = {k: getattr(app.state, k, missing) for k in state_keys}
     app.state.activity_weather = InMemoryWeather(forecasts=rainy, uv="4")
     app.state.activity_events = None
-    app.state.health_places = None
     failures: list[str] = []
     seeded_recipes: list[tuple[str, str]] = []
     world: tuple[uuid.UUID, dict[str, Login]] | None = None

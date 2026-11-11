@@ -2,10 +2,11 @@
 
 어떤 tool을 사용할 수 있는지는 모델이 직접 판단하지 않고 이 코드에서 결정한다.
 
-표는 Health_Tool_명세.md §1 전체를 처음부터 담는다 — 다음 이슈들이 표를 고치지 않고 정의와
-핸들러만 더하게 하려는 것이다. **실제로 열리는 것은 구현된 tool 뿐이다**: `tools_for` 는 표에 있는
-이름 중 `TOOL_HANDLERS` 에도 있는 것만 내고, 라벨이 `IMPLEMENTED_TASKS` 에 없으면 아무것도 열지
-않는다.
+표는 만든 tool 만 담는다(#926) — 명세 §1 이름만 있고 코드가 없는 줄은 두지 않는다. 투약의뢰서 ·
+응급 카드(`labels/handoff.py`), 안전 조회(`context.build_gate`), 고정 문구(`READOUTS`)는 라벨
+경로 안에서 바로 하므로 tool 로 두지 않는다. **실제로 열리는 것은 구현된 tool 뿐이다**: `tools_for`
+는 표에 있는 이름 중 `TOOL_HANDLERS` 에도 있는 것만 내고, 라벨이 `IMPLEMENTED_TASKS` 에 없으면
+아무것도 열지 않는다.
 
 task별 모델 tool (코드 tool 은 모델에 노출하지 않는다 — 노출하면 Gate 를 우회할 수 있다)
 
@@ -25,8 +26,8 @@ hook(`check_symptom_repetition` · `lookup_condition_guidance` · `check_infant_
 
 닫힘은 하나다 — 건강정보 동의가 없으면 **전 라벨**이 `blocked.consent` 로 닫힌다. 다루는 값이 전부
 민감정보라 예외를 두지 않는다. 안전 조회 실패(`safety_ok=False`)로는 닫지 않는다 — 진료 준비는
-경고 줄을 붙여 진행하고, 응급 카드는 알레르기 칸에 조회 실패를 적는다. 위치 없음 · 복약 0건 ·
-체온 0건처럼 라벨 안의 닫힘은 각 라벨 경로가 맡는다.
+경고 줄을 붙여 진행하고, 응급 카드는 알레르기 칸에 조회 실패를 적는다. 복약 0건 · 체온 0건처럼
+라벨 안의 닫힘은 각 라벨 경로가 맡는다.
 """
 
 from collections.abc import Awaitable, Callable, Collection
@@ -84,18 +85,16 @@ MODEL_TOOLS: dict[HealthTaskType, frozenset[str]] = {
     HealthTaskType.CARE_HANDOFF: frozenset(),
 }
 
-# 명세 §1 "코드 tool" 칸. 모델에게 보이지 않고 코드가 정해진 지점에서 직접 부른다
+# 코드가 정해진 지점에서 직접 부르는 tool. 모델에게 보이지 않는다 (명세 §1 "코드 tool" 중 만든 것)
 CODE_TOOLS: dict[HealthTaskType, frozenset[str]] = {
     HealthTaskType.VISIT_SUMMARY: frozenset(
         {
             "collect_meals",
             "collect_medication_checks",
-            "load_health_safety",
             "normalize_symptom_term",
             "group_symptom_episodes",
             "build_fever_timeline",
             "get_next_dose",
-            "get_health_phrase",
         }
     ),
     HealthTaskType.SCHEDULE_CHECK: frozenset(
@@ -103,26 +102,17 @@ CODE_TOOLS: dict[HealthTaskType, frozenset[str]] = {
             "compute_checkup_schedule",
             "compute_vaccine_schedule",
             "summarize_checkup_context",
-            "get_health_phrase",
         }
     ),
-    HealthTaskType.PLACE_LOOKUP: frozenset({"find_pediatric_places"}),
+    HealthTaskType.PLACE_LOOKUP: frozenset(),
     HealthTaskType.MEDICATION: frozenset(
         {
             "resolve_dose_timing",
             "normalize_symptom_term",
             "get_next_dose",
-            "lookup_prescription_draft",
         }
     ),
-    HealthTaskType.CARE_HANDOFF: frozenset(
-        {
-            "search_medication_schedules",
-            "load_health_safety",
-            "compose_daycare_med_notice",
-            "build_emergency_card",
-        }
-    ),
+    HealthTaskType.CARE_HANDOFF: frozenset({"search_medication_schedules"}),
 }
 
 # 라벨이 아니라 Memory 저장 직후 pipeline 이 부른다
@@ -159,6 +149,7 @@ IMPLEMENTED_TASKS: frozenset[HealthTaskType] = frozenset(
         HealthTaskType.MEDICATION,
         HealthTaskType.CARE_HANDOFF,
         HealthTaskType.VISIT_SUMMARY,
+        HealthTaskType.PLACE_LOOKUP,
     }
 )
 

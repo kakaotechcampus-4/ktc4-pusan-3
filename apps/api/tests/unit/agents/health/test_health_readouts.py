@@ -32,7 +32,6 @@ KINDS = {
     "prescription_draft",
     "blocked",
     "symptom_timeline",
-    "place_list",
     "caution",
     "notice",
     "unsupported",
@@ -45,8 +44,8 @@ def doc_constants() -> dict[str, str]:
     return dict(_ROW.findall(section))
 
 
-def test_명세의_문구는_75개다():
-    assert len(doc_constants()) == 75
+def test_명세의_문구는_74개다():
+    assert len(doc_constants()) == 74
 
 
 class TestDocParity:

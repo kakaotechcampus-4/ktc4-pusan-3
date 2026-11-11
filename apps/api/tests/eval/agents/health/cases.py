@@ -45,6 +45,7 @@ from tests.eval.agents.health.judges import (
     memory_given,
     no_active_med,
     pending,
+    place_portal,
     schedule_check,
     symptom_repeat,
     visit_no_record,
@@ -667,9 +668,14 @@ CASES: list[Case] = [
         judge=checkup_context(ghostwrite=True),
     ),
     # ── 병원 찾기 ──
-    _case("T41", P, "C48", "평일 주간 → 소아청소년과 거리순 ≤5"),
-    _case("T41-nolocation", P, "C48-nolocation", "위치 허용 안내"),
-    _case("T41-apifail", P, "C48-apifail", "place.unavailable 글자 그대로"),
+    _case("T41", P, "C48", "응급의료포털 · 119 안내 글자 그대로 · 모델 0회", judge=place_portal()),
     _closed("T41-noconsent", P),
-    _case("T42", P, "C48", "달빛어린이병원 → 응급의료기관", night=True),
+    _case(
+        "T42",
+        P,
+        "C48",
+        "야간에도 같은 응급의료포털 · 119 안내 · 모델 0회",
+        judge=place_portal(),
+        night=True,
+    ),
 ]

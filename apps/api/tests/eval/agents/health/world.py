@@ -242,8 +242,6 @@ WORLDS: dict[str, WorldSpec] = {
     ),
     "C48-norecord": WorldSpec(observations=(_OLD_COUGH,)),
     "C48-draft": WorldSpec(pending="처방전 경로 — 묶음 밖"),
-    "C48-nolocation": WorldSpec(pending="위치 · 장소 포트 — Health-7"),
-    "C48-apifail": WorldSpec(pending="위치 · 장소 포트 — Health-7"),
     # 읽으면 안 된다는 걸 보려고 알레르기를 둔다 — 동의가 없으면 읽기 횟수가 0 이어야 한다
     "C48-noconsent": WorldSpec(consent=False, safety=(_PEANUT,)),
     "C48-safetyfail": WorldSpec(

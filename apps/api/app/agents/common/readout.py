@@ -1,7 +1,7 @@
 """읽기 전용 출력. 저장하지 않고 그 세션에서만 산다.
 
 피드백·만료·승인이 없는 일회성 출력이라 `suggestion` 과 성격이 다르다.
-성장 추이 서술, 검진 안내, 미지원 안내, 병원 목록이 여기 해당한다.
+성장 추이 서술, 검진 안내, 미지원 안내가 여기 해당한다.
 """
 
 from dataclasses import dataclass, field
@@ -29,7 +29,7 @@ class Readout:
     "또래보다 작아요" 같은 판정을 붙이는 것을 막는다. **모델 입력에도 넣지 않는다.**
     """
 
-    kind: str  # growth_delta · symptom_timeline · place_list · unsupported …
+    kind: str  # growth_delta · symptom_timeline · unsupported …
     body: str
     title: str = ""
     authored_by: AuthoredBy = "model"

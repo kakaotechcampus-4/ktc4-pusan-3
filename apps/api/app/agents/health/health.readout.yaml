@@ -242,14 +242,11 @@ visit.med_check:
 visit.meal:
   kind: symptom_timeline
   template: "{day} {text}"
-place.unavailable:
-  kind: place_list
-  template: "병원 정보를 불러오지 못했어요. 응급 시 119에 연락하세요."
-# 위치 약관에 병원 찾기 목적이 들어가기 전까지 `place_lookup` 이 이 문구로 닫힌다.
-# 위치를 받는 연결이 들어오면 이 문구와 키를 함께 지운다. 문구는 PM 확인 대상이다
-place.preparing:
-  kind: unsupported
-  template: "병원 찾기는 아직 준비 중이에요."
+# 병원 찾기는 하지 않는다 (#926). 문 연 병원을 물으면 공식 창구와 119 를 알려 주고 끝난다.
+# e-gen 은 국립중앙의료원 중앙응급의료센터가 운영한다. 문구는 PM 확인 대상이다
+place.portal:
+  kind: notice
+  template: "지금 문 연 병원은 응급의료포털(www.e-gen.or.kr)에서 찾을 수 있어요. 급하면 119에 전화하세요."
 # 스토어 건강 앱 선언 때문에 복약을 꺼 둔 동안(`registry.MEDICATION_ENABLED`) `medication` 라벨이 이 문구로
 # 닫힌다 (#923). 용량 · 간격 질문도 이 라벨로 오므로 처방한 곳에 확인하라는 안내를 같이 싣는다.
 # 복약을 다시 켜면 이 문구와 키를 함께 지운다. 문구는 PM 확인(#923)

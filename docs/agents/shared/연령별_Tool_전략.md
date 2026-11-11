@@ -108,7 +108,7 @@ tools_for(task_type, gate: Gate) -> tuple[str, ...]
 
 | tool | `min_month` | 비고 |
 | --- | --- | --- |
-| 진료 요약 tool 전체 · `medication` tool 전체 · `find_pediatric_places` | 0 | 연령 무관 |
+| 진료 요약 tool 전체 · `medication` tool 전체 | 0 | 연령 무관 |
 | `compute_checkup_schedule` · `compute_vaccine_schedule` | 0 | 72개월 이상은 "대상 종료" 문구로 전환 |
 
 연령이 여는 tool은 없고, **연령이 계산 방식을 바꾼다.**
