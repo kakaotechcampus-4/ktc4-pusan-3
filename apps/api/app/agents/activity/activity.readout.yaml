@@ -52,6 +52,10 @@ events.no_new:
   kind: notice
   template: 앞에서 보여 드린 행사 말고는 그날 열리는 행사를 더 찾지 못했어요.
 
+events.pending:
+  kind: notice
+  template: 행사 일정을 아직 확인하고 있어서 이번 추천에는 행사를 넣지 못했어요. 잠시 뒤에 다시 물어봐 주세요.
+
 place.location_missing:
   kind: notice
   template: "위치를 허용하거나 지역(예: 부산 해운대구)을 말씀해 주시면 행사 · 장소도 찾아볼게요."
