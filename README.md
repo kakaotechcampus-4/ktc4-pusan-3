@@ -146,18 +146,7 @@
 
 ### 한 줄이 지나가는 길
 
-```mermaid
-flowchart TD
-    IN["보호자의 한 줄<br/>저녁에 계란말이 또 먹었어. 어젯밤엔 자다가 기침 몇 번 했어"]
-    IN --> SUP["① 인식 · Supervisor<br/>안전 사전검사(규칙) → 의도 분류"]
-    SUP --> MEM["② 기록 · Memory Agent<br/>식사 1건 + 건강 1건으로 나눠 바로 저장"]
-    MEM -. "저장 뒤" .-> CUR["Curator<br/>같은 대상끼리 묶고, 서로 다른 날수를 세어 승격"]
-    MEM -- "요청이 있으면" --> DOM["③ 행동 · 도메인 Agent 최대 2개<br/>기억을 직접 검색 → 후보 → 알레르기 필터(코드)"]
-    DOM --> OUT["④ 결과<br/>추천 + 추천 이유 + 사용한 기록 N건"]
-    OUT --> GATE{"되돌릴 수 없는가?"}
-    GATE -- "예" --> HUMAN["사람이 승인"]
-    GATE -- "아니오" --> SHOW["바로 표시"]
-```
+<img src="docs/assets/readme/pipeline.png" width="100%" alt="보호자의 한 줄이 지나가는 다섯 단계. 1 인식(Supervisor) — 위험 신호를 규칙으로 먼저 보고 기록인지 요청인지 가른다. 2 기록(Memory Agent) — 식사 1건과 건강 1건으로 나눠 바로 저장한다. 저장 뒤 Curator 가 같은 대상끼리 묶고 서로 다른 날수를 세어 기억으로 올린다. 3 행동(도메인 Agent 최대 2개) — 요청이 있으면 기억을 검색해 후보를 만들고 알레르기 필터를 지난 것만 남긴다. 4 결과 — 추천, 추천 이유, 사용한 기록 N건. 5 승인 — 되돌릴 수 없는 것만 사람에게 묻는다.">
 
 | 이렇게 만들었다 | 왜 |
 | --- | --- |
@@ -254,11 +243,7 @@ make web-install && make web-dev             # 웹 → http://localhost:3000
 | 실서버 e2e | `make web-e2e-live` | [Live E2E CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-e2e-live.yml) · 100% |
 | AI 품질 (실제 모델) | `make eval` | 손으로 돌린다 |
 
-```mermaid
-flowchart LR
-    F["feature/*"] -- "PR · 리뷰 · 필수 검사" --> D["develop"] -- "자동" --> DEV["dev 서버"]
-    D -- "주 1회 멘토 리뷰 PR" --> M["main"] -- "자동" --> PROD["운영 서버"]
-```
+<img src="docs/assets/readme/deploy-flow.png" width="100%" alt="feature 브랜치는 PR · 리뷰 · 필수 검사를 거쳐 develop 에 들어가고, develop 은 dev 서버에 자동 배포된다. develop 은 주 1회 멘토 리뷰 PR 로 main 에 들어가고, main 은 운영 서버에 자동 배포된다.">
 
 배포가 도는 순서는 [배포 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/)에 있습니다.
 
