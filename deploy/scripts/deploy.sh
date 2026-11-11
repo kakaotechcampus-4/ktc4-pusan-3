@@ -209,6 +209,9 @@ if "${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 360; then
       log "🟠 Alloy 검사 · 기동 실패 — 배포는 성공이다. 떠 있던 Alloy 는 옛 설정으로 돌고(없으면 메트릭이 빈다), 재시작되면 깨진 설정을 읽는다. deploy/alloy/config.alloy 를 고쳐 다시 배포한다"
       echo "$out" | tail -n 20
     fi
+    # worker cron 줄 (#718) — 손으로 걸면 빠뜨려도 조용하다. 새 버전은 이미 떠 있으니 롤백하지 않고 빨간불로만 끝낸다.
+    # Caddy reload 보다 먼저 — reload 가 실패해 exit 1 로 끝나도 cron 은 걸린다.
+    bash deploy/scripts/worker-cron.sh 9<&- || { log "🔴 worker cron 등록 · 확인 실패 — 새 버전은 떠 있다. 위 줄을 본다"; cron_rc=1; }
     # Caddyfile 은 up 만으로 다시 읽히지 않는다 (Caddy 설정이 그대로면 컨테이너를 다시 안 만든다).
     # 이번 up 이 Caddy 를 새로 만들었으면 관리 포트(2019)가 몇 초 늦게 열린다 — 리허설에서 바로 부르면
     # connection refused 였다. 몇 번 다시 해 본다.
@@ -234,7 +237,7 @@ if "${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 360; then
     done || true
   done
   docker image prune -f >/dev/null || true
-  exit 0
+  exit "${cron_rc:-0}"
 fi
 
 log "🔴 새 버전 헬스 실패"
