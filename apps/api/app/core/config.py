@@ -69,6 +69,13 @@ class Settings(AgentLLMSettings):
     # 서버는 뜬다. 🚨 비밀 — 응답 · 로그에 싣지 않는다. 켜는 법 · 본문은 README "로그와 알림".
     ALERT_WEBHOOK_URL: str = ""
 
+    # 요청 수 · 응답 코드 · 응답 시간 창구 (#975, app/api/metrics.py). 0 이면 열지 않는다
+    # — 로컬 · 테스트. 🚨 :8000 과 다른 포트여야 한다 — Caddy 는 :8000 만 넘겨서 인터넷에
+    # 안 열린다. 배포는 compose 가 9100.
+    METRICS_PORT: int = 0
+    # 메트릭 창구가 받는 단 하나의 주소 — Alloy 의 edge 고정 주소 (docker-compose.deploy.yml)
+    METRICS_ALLOWED_IP: str = "172.30.0.11"
+
     # --- 카카오 OAuth (#34) — 명세 docs/api/auth-kakao-v1.md §11 ---
     #
     # 🚨 local 에서만 Optional 이다. 서버(prod · dev)는 없으면 뜨지 않는다 (#97 · #310).
