@@ -154,7 +154,9 @@ def meal_menu_keys(title: str) -> tuple[str, ...]:
     text = unicodedata.normalize("NFKC", title)
     spans = [match.span() for match in _BRACKETS.finditer(text)]
     keys: list[str] = []
-    next_span = 0  # 구간 · 메뉴 모두 앞에서부터 차례다. 구간은 쉼표를 넘지 않아 한 메뉴 안에 든다
+    # 구간 · 메뉴 모두 앞에서부터 차례다. 메뉴를 나누는 쉼표는 구간 밖에서만 고르므로
+    # (구간 안에 쉼표가 있어도) 구간 하나는 한 메뉴 안에 든다
+    next_span = 0
     for menu_start, menu_end in _menu_ranges(text, spans):
         keys.append(normalize_menu_key(text[menu_start:menu_end]))
         while next_span < len(spans) and spans[next_span][1] <= menu_end:
