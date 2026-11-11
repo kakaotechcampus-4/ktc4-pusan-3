@@ -85,6 +85,8 @@ def check_expect(trace: Trace, expect: Expect, *, today: date) -> list[Miss]:
             misses.append(Miss("삭제 후보 제안 없음", "no_proposal"))
         elif not expect.delete_proposed and trace.delete_proposed:
             misses.append(Miss("삭제 후보 제안이 나왔다"))
+    if expect.questions_min is not None and len(trace.questions) < expect.questions_min:
+        misses.append(Miss(f"되묻기 {len(trace.questions)}개 < {expect.questions_min}"))
     if expect.questions_max is not None and len(trace.questions) > expect.questions_max:
         misses.append(Miss(f"되묻기 {len(trace.questions)}개 > {expect.questions_max}"))
     texts = trace.output_texts()

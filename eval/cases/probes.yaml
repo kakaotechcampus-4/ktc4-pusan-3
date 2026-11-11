@@ -12,10 +12,12 @@
     - say: 오늘 점심은 밥 반 공기 먹었고 어린이집에서 블록놀이 했대. 다음 주 수요일 오후 3시에 치과 예약 있어
   expect:
     # 11-11 PM 결정 — food 1행을 기대하지 않는다. "밥" 은 끼니 이름이라 create_observation_food 가 받지 않는다
-    # (MEAL_SLOTS). 음식 이름이 없는 끼니는 한 번 묻거나 생활 기록으로 남긴다 (#929 B · #841 의 W-A mon-breakfast 와 같은 방향)
+    # (MEAL_SLOTS). "밥 반 공기 먹었고" 는 오늘 한 번 조금 먹었다는 말이라 무엇을 먹었는지 한 번 묻는다
+    # (#929 B · #950). 생활 기록(routine)은 투정 · 거부 · 경향일 때만이라 여기서는 미달이다
     saved: { min_rows: 1, domains: [activity] }
     event_drafts_min: 1
-    questions_max: 1  # 무엇을 먹었는지 묻더라도 하나만
+    questions_min: 1  # 무엇을 먹었는지 묻는다
+    questions_max: 1  # 하나만
     never_say: ["등록했어요", "등록해 두었"]  # P 에서 일정 행(I7)은 늘 0 이라 문구로 본다(P-REC-05 와 같다)
     tools: { must: { create_observation_activity: 1, create_event: 1 } }
 
