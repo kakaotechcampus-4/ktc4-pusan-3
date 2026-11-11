@@ -351,9 +351,12 @@ function isEmptyHome(data: HomeResponse): boolean {
  */
 function HomeBody({ data, medications }: { data: HomeResponse; medications: ReactNode }) {
   // 🚨 기억이 0건이면 빈 상태다. 경보가 아니라 건수를 그대로 보여준다 (문서 §7).
+  // 🚨 오늘 줄(급식 · 일정)은 기록 0건이어도 빈 상태 위에 선다 — 급식표만 올린 보호자에게 급식이 안 보였다.
+  //    먹일 약과 같은 자리다. 빈 상태는 그대로 두어 "쌓인 기록 0건" 을 가리지 않는다 (docs/web/screen-rules-v1.md §7).
   if (isEmptyHome(data)) {
     return (
       <div className="flex flex-col gap-6">
+        <TodaySection today={data.today} />
         {medications}
         <EmptyState
           data-tour="empty"
@@ -372,19 +375,7 @@ function HomeBody({ data, medications }: { data: HomeResponse; medications: Reac
     <div className="flex flex-col gap-6">
       <Counts week={data.week_count} upcoming={data.upcoming_count} />
 
-      {data.today.length > 0 ? (
-        <Section label="오늘" tour="today">
-          <Card className="flex flex-col gap-3">
-            {data.today.map((item) =>
-              item.kind === "meal" ? (
-                <TodayRow key={item.title} icon={Utensils} title={item.title} note={item.origin} />
-              ) : (
-                <TodayRow key={item.event_id} icon={CalendarDays} title={item.title} />
-              ),
-            )}
-          </Card>
-        </Section>
-      ) : null}
+      <TodaySection today={data.today} />
 
       {medications}
 
@@ -489,12 +480,36 @@ function Count({ value, label }: { value: number; label: string }) {
   );
 }
 
+/**
+ * "오늘" — 급식(끼니마다 한 줄) 다음에 일정. 순서와 글자는 서버가 정한다. 줄이 없으면 구역을 세우지 않는다.
+ * 🚨 급식 줄은 저장된 그대로의 기록이다 — 알레르기 판정 · "맞춤" 같은 문구를 화면이 붙이지 않는다 (최상위 §2).
+ * 급식 줄의 key 는 제목이다 — 서버가 끼니 이름을 앞에 붙여 하루 안에서 겹치지 않는다.
+ */
+function TodaySection({ today }: { today: HomeResponse["today"] }) {
+  if (today.length === 0) return null;
+  return (
+    <Section label="오늘" tour="today">
+      <Card className="flex flex-col gap-3">
+        {today.map((item) =>
+          item.kind === "meal" ? (
+            <TodayRow key={item.title} icon={Utensils} title={item.title} note={item.origin} />
+          ) : (
+            <TodayRow key={item.event_id} icon={CalendarDays} title={item.title} />
+          ),
+        )}
+      </Card>
+    </Section>
+  );
+}
+
 function TodayRow({ icon, title, note }: { icon: LucideIcon; title: string; note?: string }) {
   return (
     <div className="flex items-center gap-3">
       <IconTile icon={icon} />
       <div className="min-w-0">
-        <p className="text-body-sm text-ink">{title}</p>
+        {/* 🚨 `wrap-anywhere` — 메뉴 키는 띄어쓰기 · 괄호를 뺀 한 덩어리라 길다. 전역이 `keep-all` 이라 끊을 자리가 없으면
+            카드 밖으로 넘쳐 페이지가 가로로 밀린다. `break-words` 는 최소 폭을 줄이지 못한다 (event-draft-card 와 같다). */}
+        <p className="text-body-sm text-ink wrap-anywhere">{title}</p>
         {note ? <p className="text-caption text-ink-subtle mt-0.5">{note}</p> : null}
       </div>
     </div>

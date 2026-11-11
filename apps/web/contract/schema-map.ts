@@ -111,6 +111,7 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   HomeResponse: "HomeResponse",
   HighlightOut: "HomeResponse.highlight",
   AgentPromptOut: "HomeResponse.agent_prompts[]",
+  TodayMealOut: "HomeResponse.today[]<kind=meal>",
   TodayEventOut: "HomeResponse.today[]<kind=event>",
   CreateInputRequest: "CreateInputRequest",
   InputLocation: "InputLocation",

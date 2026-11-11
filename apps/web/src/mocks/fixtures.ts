@@ -906,14 +906,20 @@ export const staleSuggestion: Suggestion = {
 
 /* ── 홈 ───────────────────────────────────────────────────────────────── */
 
+/** 오늘 급식 줄. 메뉴는 지어낸 값이다 (최상위 §9). */
+const todayMeals: HomeResponse["today"] = [
+  { kind: "meal", title: "점심 · 잡곡밥, 소고기미역국, 김, 두부조림", origin: "기관 급식표" },
+  { kind: "meal", title: "오후 간식 · 감자, 보리차", origin: "기관 급식표" },
+];
+
 export const home: HomeResponse = {
   observation_count: observations.length + 1,
   week_count: 4,
   upcoming_count: 1,
-  today: [
-    { kind: "meal", title: "급식 · 미역국, 김, 두부조림", origin: "어린이집" },
-    { kind: "event", event_id: "e_3", title: "내일 물놀이 · 준비물 3개" },
-  ],
+  // 🚨 급식 줄은 서버(`apps/api/app/api/v1/routers/home.py` 의 `today_meals`)가 보내는 모양 그대로다 — 끼니마다 한 줄,
+  //    "끼니 이름 · 메뉴 키" · 오전 간식 → 점심 → 오후 간식 순으로 일정 줄 앞에 선다. 메뉴는 저장된 메뉴 키라 띄어쓰기 ·
+  //    괄호가 빠진 이름이다. 판정 문구는 없다.
+  today: [...todayMeals, { kind: "event", event_id: "e_3", title: "내일 물놀이 · 준비물 3개" }],
   highlight: {
     text: "계란 반찬을 찾은 지 5일째예요.",
     state_reason: "서로 다른 3일에 기록됐어요",
@@ -935,6 +941,29 @@ export const emptyHome: HomeResponse = {
   today: [],
   highlight: null,
   agent_prompts: [],
+};
+
+/** 🚨 기록 0건인데 오늘 급식은 있다 (`empty_meal`) — 급식표만 올린 새 보호자. 빈 상태 위에 "오늘" 구역이 선다. */
+export const emptyMealHome: HomeResponse = { ...emptyHome, today: todayMeals };
+
+/**
+ * 띄어쓰기 없는 긴 메뉴 키 · 긴 일정 제목 (`home_long_title`). 메뉴 키는 급식표 이름에서 띄어쓰기 · 괄호를 뺀
+ * 한 덩어리라 길게 이어진다 (서버 `rules/menu_key.py`). 지어낸 값이다.
+ */
+export const longTitleHome: HomeResponse = {
+  ...home,
+  today: [
+    {
+      kind: "meal",
+      title: "점심 · 잡곡밥, 소고기버섯들깨미역국과애호박새우젓두부조림한상차림세트",
+      origin: "기관 급식표",
+    },
+    {
+      kind: "event",
+      event_id: "e_3",
+      title: "가을운동회겸학부모참여수업준비물안내및전달사항확인과귀가시간변경알림",
+    },
+  ],
 };
 
 /* ── 캘린더 초안 (승인 게이트 ㉠) ─────────────────────────────────────── */

@@ -38,7 +38,7 @@
 | `menu_catalog` | 동기화 배치 (`integrations`) · 캐시 미스는 Food 요청 중 외부 조회 뒤 백엔드 어댑터가 없을 때만 INSERT (§1) | Food | 메뉴 카탈로그 — 급식 · 기록 · 영양 판정. 영양DB 결과 + 사람이 넣은 행 |
 | `recipe_catalog` | 레시피 배치 (`integrations`) (§1-1) | Food (식단 추천 후보 풀) | 레시피 카탈로그 — 추천 후보. 레시피 재료 + 영양 |
 | `menu_alias` | 동기화 배치 (`integrations`) | Food | 표기 사전 |
-| **`daycare_meal`** | 최초 적재는 OCR·급식 배치(INSERT) · 이후 갱신·삭제는 **Food** | Food | **도메인 전용** — 아무도 안 읽는다 |
+| **`daycare_meal`** | 최초 적재는 OCR·급식 배치(INSERT) · 이후 갱신·삭제는 **Food** | Food · 03 홈 API(오늘 급식 줄, 읽기만) | **도메인 전용** — 다른 Agent 는 안 읽는다. 홈은 그날 행을 있는 그대로 보여 줄 뿐 판정 · 쓰기가 없다 |
 | `nutrient_reference` | 마이그레이션 시드 | Food | 참조 상수 |
 | `food_doc` | 마이그레이션 시드 | Food | 문서 행 |
 | `allergen_term` | 마이그레이션 시드 | Food · **Health** | 공유 참조 |
