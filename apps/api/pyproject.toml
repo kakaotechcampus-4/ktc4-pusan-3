@@ -28,6 +28,7 @@ dependencies = [
     "python-multipart>=0.0.33",
     "pillow-heif>=1.8.1",
     "boto3>=1.43.123",
+    "prometheus-client>=0.26.0",
 ]
 
 [dependency-groups]

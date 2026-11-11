@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from app.api import health, llm_usage_writer, startup_report
 from app.api.cors import register_cors
 from app.api.errors import register_error_handlers
+from app.api.metrics import MetricsMiddleware, start_metrics_server
 from app.api.openapi import install_openapi
 from app.api.runs import hold_purge, registry
 from app.api.v1.router import v1_router
@@ -111,6 +112,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 만료된 되묻기 맥락을 1분마다 지운다 (#877). 처리방침이 "15분 안에 지운다" 라
     # 하루 배치로는 늦다
     hold_purger = asyncio.create_task(hold_purge.run_purger(), name="run-hold-purger")
+    # 메트릭 창구 (#975) — import 가 아니라 여기서 연다. 테스트 · 스크립트도 app.main 을 import 한다
+    metrics_server = (
+        start_metrics_server(settings.METRICS_PORT, settings.METRICS_ALLOWED_IP)
+        if settings.METRICS_PORT
+        else None
+    )
     try:
         yield
     finally:
@@ -130,6 +137,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for client in (weather, events):
             if client is not None:
                 await client.aclose()
+        if metrics_server is not None:
+            metrics_server.shutdown()
 
 
 app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
@@ -141,6 +150,9 @@ register_error_handlers(app)
 # 브라우저에서 다른 오리진의 이 API 를 부를 수 있게 한다 (이슈 #34).
 # 허용 오리진은 CORS_ALLOW_ORIGINS 환경변수에서만 오고, * 는 부팅에서 막힌다.
 register_cors(app)
+
+# 요청 수 · 응답 코드 · 응답 시간 (#975, app/api/metrics.py). 창구는 lifespan 에서 연다.
+app.add_middleware(MetricsMiddleware)
 
 # 헬스체크는 /api/v1 밖에 둔다.
 # API 계약서 §01: "경로는 모두 /api/v1 하위 · 인증 예외 없음".
