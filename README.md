@@ -6,6 +6,8 @@
 
 **한 줄만 남기면, 우리 아이에게 맞는 다음 할 일로 돌아오는 육아 비서**
 
+일과 육아를 함께 하는 보호자를 위해 만들었습니다. 카카오 계정으로 로그인하면 바로 쓸 수 있습니다.
+
 <a href="https://play.google.com/store/apps/details?id=kr.ai.icatch"><img alt="Google Play 에서 받기" src="https://play.google.com/intl/en_us/badges/static/images/badges/ko_badge_web_generic.png" height="80"></a>
 <a href="https://icatch.ai.kr"><img alt="웹에서 바로 쓰기" src="docs/assets/readme/btn-web.png" height="80"></a>
 
@@ -45,8 +47,8 @@
 
 | | 불편 | 아이캐치는 |
 | :---: | --- | --- |
-| **적을&nbsp;때** | 식사 · 수면 · 건강 칸을 골라 항목을 하나씩 채워야 한다 | 가족에게 말하듯 **한 줄**만 남긴다. 나눠 담는 일은 AI 가 한다 |
-| **적은&nbsp;뒤** | 기록이 쌓이기만 하고 쓸 데가 없다 | 쌓인 기록이 **우리 아이에게 맞는 추천**이 되어 돌아온다 |
+| **적&#8288;을&nbsp;때** | 식사 · 수면 · 건강 칸을 골라 항목을 하나씩 채워야 한다 | 가족에게 말하듯 **한 줄**만 남긴다. 나눠 담는 일은 AI 가 한다 |
+| **적&#8288;은&nbsp;뒤** | 기록이 쌓이기만 하고 쓸 데가 없다 | 쌓인 기록이 **우리 아이에게 맞는 추천**이 되어 돌아온다 |
 
 보호자는 이미 매일 아이 이야기를 하고 있습니다. 배우자에게, 가족 채팅방에.
 아이캐치는 새 습관을 요구하지 않고 그 한 줄을 받는 곳만 바꿉니다.
@@ -56,79 +58,40 @@
 
 | | 그때그때 묻는 챗봇 | 아이캐치 |
 | :---: | --- | --- |
-| **아이를 아는가** | 물을 때마다 아이 이야기를 다시 설명한다 | 적어 둔 한 줄이 아이의 기억으로 쌓여 있다 |
-| **왜 이 답인가** | 근거를 알 수 없다 | 추천마다 사용한 기록이 붙는다 |
-| **틀릴 때** | 그럴듯하게 틀린다 | 알레르기와 날짜는 코드가 막고, 근거가 없으면 일반 추천이라고 밝힌다 |
+| **아&#8288;이&#8288;를&nbsp;아&#8288;는&#8288;가** | 물을 때마다 아이 이야기를 다시 설명한다 | 적어 둔 한 줄이 아이의 기억으로 쌓여 있다 |
+| **왜&nbsp;이&nbsp;답&#8288;인&#8288;가** | 근거를 알 수 없다 | 추천마다 사용한 기록이 붙는다 |
+| **틀&#8288;릴&nbsp;때** | 그럴듯하게 틀린다 | 알레르기와 날짜는 코드가 막고, 근거가 없으면 일반 추천이라고 밝힌다 |
 
 ## 한 줄이 추천이 되기까지
 
-한 줄을 처음부터 끝까지 따라가 봅니다.
+> 저녁에 계란말이 또 먹었어. 어젯밤엔 자다가 기침 몇 번 했어
+
+보호자가 적는 것은 이 한 줄이 전부입니다. 이 한 줄이 추천이 되기까지를 화면 네 장으로 따라갑니다.
 
 <table>
 <tr>
-<td width="250" align="center"><img src="docs/assets/readme/01-write.png" width="220" alt="홈 화면 아래 입력 칸에 한 줄을 적은 모습"></td>
-<td>
-
-**① 말하듯 한 줄 적습니다**
-
-> 저녁에 계란말이 또 먹었어. 어젯밤엔 자다가 기침 몇 번 했어
-
-칸을 고르지 않습니다. 식사인지 건강인지, 오늘 일인지 어제 일인지 나누지 않고 생각나는 대로 적습니다.
-
-말로 해도 되고, 알림장이나 식단표는 사진으로 찍으면 됩니다.
-
-</td>
+<th width="25%">① 말하듯 적습니다</th>
+<th width="25%">② 나눠서 저장합니다</th>
+<th width="25%">③ 추천으로 돌아옵니다</th>
+<th width="25%">④ 중요한 것만 묻습니다</th>
 </tr>
 <tr>
-<td width="250" align="center"><img src="docs/assets/readme/02-saved.png" width="220" alt="한 줄이 식사 기록 1건과 건강 기록 1건으로 저장된 화면"></td>
-<td>
-
-**② AI 가 나눠서 저장합니다**
-
-한 줄이 기록 두 건이 됐습니다. 계란말이는 오늘의 식사 기록으로, 기침은 어제의 건강 기록으로 들어갑니다.
-
-그 아래 **"기억이 자랐어요"** 가 이 앱의 중심입니다. 계란 반찬을 찾은 날이 서로 다른 3일이 됐다는 뜻입니다.
-한 번 적었다고 "계란을 좋아한다" 고 정하지 않습니다. 같은 날 세 번 적어도 하루로 셉니다.
-
-</td>
+<td align="center"><img src="docs/assets/readme/01-write.png" width="180" alt="홈 화면 아래 입력 칸에 한 줄을 적은 모습"></td>
+<td align="center"><img src="docs/assets/readme/02-saved.png" width="180" alt="한 줄이 식사 기록 1건과 건강 기록 1건으로 저장된 화면"></td>
+<td align="center"><img src="docs/assets/readme/03-suggest.png" width="180" alt="추천 이유와 사용한 기록 3건이 달린 저녁 추천 카드"></td>
+<td align="center"><img src="docs/assets/readme/04-approve.png" width="180" alt="찾은 일정을 캘린더에 넣을지 묻는 화면"></td>
 </tr>
 <tr>
-<td width="250" align="center"><img src="docs/assets/readme/03-suggest.png" width="220" alt="사용한 기록 3건이 달린 저녁 추천 카드"></td>
-<td>
-
-**③ 기록이 추천으로 돌아옵니다**
-
-저장 화면의 "오늘 저녁 같이 정하기" 를 누르거나 "오늘 저녁 뭐 해 주지?" 라고 적으면, 쌓인 기록에서 답을 찾습니다.
-
-> 계란말이에 시금치를 조금 섞어 보세요
-
-추천마다 **왜 이것인지**와 **어떤 기록을 썼는지**가 붙습니다. 이 카드는 기록 3건을 썼습니다.
-적어 둔 것이 여기서 쓰입니다. 근거가 보이니, 틀린 추천은 틀렸다고 알아볼 수 있습니다.
-
-</td>
-</tr>
-<tr>
-<td width="250" align="center"><img src="docs/assets/readme/04-approve.png" width="220" alt="찾은 일정을 캘린더에 넣을지 묻는 화면"></td>
-<td>
-
-**④ 중요한 것만 묻습니다**
-
-적은 말에서 일정을 찾으면 초안을 만들어 보여 줍니다. 넣기 전까지는 캘린더에 들어가지 않습니다.
-
-기록은 묻지 않고 바로 저장하고, 일정처럼 되돌리기 어려운 것만 확인을 받습니다.
-확인이 많아지면 한 줄로 줄인 보람이 없기 때문입니다.
-
-</td>
+<td valign="top">칸을 고르지 않습니다. 말로 해도 되고, 알림장은 사진으로 찍어도 됩니다</td>
+<td valign="top">식사 1건과 건강 1건이 됐습니다. 계란 반찬을 찾은 날은 서로 다른 3일째입니다</td>
+<td valign="top">"오늘 저녁 뭐 해 주지?" 라고 물으면 쌓인 기록에서 답을 찾습니다</td>
+<td valign="top">일정은 넣기 전까지 캘린더에 들어가지 않습니다</td>
 </tr>
 </table>
 
-<div align="center">
-
-| 적기도 귀찮은 날에는 사진으로 | 지나간 날은 캘린더에서 |
-| :---: | :---: |
-| <img src="docs/assets/readme/05-photo.png" width="200" alt="알림장 사진을 읽어 일정과 준비물로 정리한 화면"> | <img src="docs/assets/readme/06-calendar.png" width="200" alt="일정과 기록이 날짜별로 모인 캘린더"> |
-| 알림장 · 식단표를 읽어 먼저 보여 주고<br>확인한 것만 저장합니다 | 승인한 일정과 그날의 기록이<br>날짜별로 모입니다 |
-</div>
+- **한 번 적었다고 성향으로 정하지 않습니다.** ② 의 "기억이 자랐어요" 는 계란 반찬을 찾은 날이 서로 다른 3일이 됐다는 뜻입니다. 같은 날 세 번 적어도 하루로 셉니다.
+- **근거가 보이니 틀린 추천을 알아볼 수 있습니다.** ③ 의 추천마다 왜 이것인지와 어떤 기록을 썼는지가 붙습니다. 적어 둔 것이 여기서 쓰입니다.
+- **묻는 것은 되돌리기 어려운 것뿐입니다.** 기록은 묻지 않고 바로 저장합니다. 확인이 많아지면 한 줄로 줄인 보람이 없기 때문입니다.
 
 ## 기록이 쌓일수록 추천이 달라집니다
 
@@ -182,7 +145,7 @@
 | 이렇게 만들었다 | 왜 |
 | --- | --- |
 | **모델보다 규칙이 먼저** | 위험 · 응급 신호 검사는 Supervisor 앞에 있다. 검사를 못 하면 모델을 부르지 않고 멈춘다 |
-| **역할마다 모델을 따로** | Supervisor · Memory · 도메인 Agent 가 각자 키 · 모델 · 추론 강도를 갖는다. 비우면 Memory 의 값을 따른다 |
+| **역할마다 모델을 바꿀 수 있게** | Supervisor · Memory · 도메인 Agent 가 각자 키 · 모델 · 추론 강도 설정을 갖는다. 지금은 다섯 역할이 같은 모델을 쓰고, 사진 읽기만 다른 모델을 쓴다 |
 | **저장이 검색보다 먼저** | 방금 저장한 기록이 같은 요청의 추천 근거로 잡혀야 한다. 그래서 백엔드와 AI 를 한 서비스로 묶었다 |
 | **20초를 넘기면 부분 결과** | Agent 하나가 늦거나 실패해도 끝난 쪽은 먼저 보여 준다 |
 | **성향은 규칙이 올린다** | 기억은 `candidate` 로 시작하고 반복 집계를 거쳐야 `confirmed` 가 된다. LLM 은 이 상태를 쓰지 못한다 |
@@ -237,6 +200,8 @@ Agent 별 설계는 [Supervisor](https://kakaotechcampus-4.github.io/ktc4-pusan-
 <br><sub>Grafana Cloud 대시보드. 서버 자원과 Caddy 가 받은 요청을 60초마다 모읍니다.</sub>
 </div>
 
+아이의 기록 가운데 무엇이 외부 모델로 나가는지는 [외부 LLM 으로 나가는 아이 정보](https://kakaotechcampus-4.github.io/ktc4-pusan-3/safety/llm-inputs-v1/)에, 얼마나 보관하고 언제 지우는지는 [개인정보 보관 · 삭제 기준](https://kakaotechcampus-4.github.io/ktc4-pusan-3/safety/retention-v1/)에 적었습니다.
+
 오류 추적 SaaS 는 쓰지 않았습니다. 로그 줄에는 보호자가 적은 원문이 들어갈 수 있어서, 그 내용이 밖으로 나가는 도구는 고르지 않았습니다.
 그래서 알림에는 값이 아니라 종류와 위치만 싣고, 원문이 든 로그는 서버 안(journald)에만 둡니다. LLM 호출도 같습니다. 호출마다 어느 run 이 어느 모델을 얼마나 썼는지는 DB 에 남기지만, 프롬프트와 응답은 남기지 않습니다.
 
@@ -248,7 +213,7 @@ Agent 별 설계는 [Supervisor](https://kakaotechcampus-4.github.io/ktc4-pusan-
 | --- | --- | --- | --- |
 | 다시 누른 한 줄이 [**두 번 저장**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#1-중복-요청-방어--프로세스-메모리에서-redis-로-그리고-redis-가-죽으면-막는다)된다 | 저장은 됐는데 응답만 사라졌다 | `Idempotency-Key` 를 Redis 에 기억. Redis 가 죽으면 메모리로 넘기지 않고 503 | 같은 키 10번 → 저장 1건 |
 | 같은 키가 [**동시에**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/workers-2-check-v1/#①-처음-보는-키가-동시에-오면-중복-저장된다) 오면 못 막는다 | 키 읽기와 쓰기가 따로였다 (워커 2개 실험에서 발견) | `SET NX` 한 번으로 합쳤다 | 동시 8개 × 300번, 중복 0 |
-| [**재배포**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#drain--옛-api-가-하던-일을-끝내고-내려간다-882) 중 요청이 502, 돌던 요청은 사라진다 | 컨테이너가 한 번에 하나만 뜬다 | 돌던 요청은 끝내고 내려가고, 새 요청은 프록시가 붙잡는다 | 110초 < 120초 < 150초로 맞물림 |
+| [**재배포**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#drain--옛-api-가-하던-일을-끝내고-내려간다-882) 중 요청이 502, 돌던 요청은 사라진다 | 컨테이너가 한 번에 하나만 뜬다 | 돌던 요청은 끝내고 내려가고, 새 요청은 프록시가 붙잡는다 | 돌던 요청 정리 110초 < 강제 종료 120초 < 프록시가 기다리는 150초 |
 | 계란과 달걀을 [**다른 것**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#3-같은-대상인지-판단--임베딩-유사도에서-llm-판정으로)으로 본다 | 임베딩 유사도가 뜻이 아니라 글자를 따라갔다 (0.20) | "같은 대상인가" 만 묻는 LLM 판정 | 유사도는 후보 추리기에만 |
 | 긴 입력에서 [**출력이 잘린다**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#5-한-줄-입력-상한--2000자에서-500자로) | 1,000자부터 Supervisor 출력이 상한에 걸렸다 | 길이별로 재서 500자로 | 긴 글은 사진 읽기로 |
 
@@ -266,6 +231,8 @@ Agent 별 설계는 [Supervisor](https://kakaotechcampus-4.github.io/ktc4-pusan-
 <td align="center" width="25%"><h3>68 / 69</h3><b>급식표 끼니 읽기</b><br><sub>정답 1장 × 5회 · 틀린 메뉴가 한 번도 붙지 않은 끼니</sub></td>
 </tr>
 </table>
+
+응답 시간도 같은 실행에서 쟀습니다. 기록만 하는 한 줄은 중앙값 4.4초, 기록과 요청이 섞인 한 줄은 느린 쪽 5% 가 15.2초였고, 20초를 넘겨 부분 결과로 바뀐 실행은 143번 가운데 없었습니다 ([비용 · 지연](eval/results/2026-11-10.md#비용--지연)).
 
 실패한 2개의 원인은 [기준선 결과 · 실패 분석](eval/results/2026-11-10.md#실패-분석)에, 절대 규칙을 코드로 판정하는 방법은 [eval 문서 §3-2 불변식 14개](https://kakaotechcampus-4.github.io/ktc4-pusan-3/eval/eval-v1/#3-2-불변식-14개--2-를-코드로-판정한다)에, 남은 1칸은 [장애 점검표 · 메울 구멍](eval/faults.md#메울-구멍)에, 급식표를 잰 방법은 [급식표 OCR 평가 §1 측정 이력](docs/agents/eval/MEAL_OCR_EVAL.md#1-측정-이력)에 있습니다.
 
@@ -291,7 +258,9 @@ cp apps/web/.env.example apps/web/.env.local # 다른 터미널에서
 make web-install && make web-dev             # 웹 → http://localhost:3000
 ```
 
-모델 키는 `MEMORY_API_KEY` · `MEMORY_BASE_URL` · `MEMORY_MODEL` 세 개만 채우면 나머지 역할이 그 값을 따라갑니다. OpenAI 호환 엔드포인트면 됩니다.
+모델 키는 `MEMORY_API_KEY` · `MEMORY_BASE_URL` · `MEMORY_MODEL` 세 개만 채우면 Agent 역할(Supervisor · Food · Activity · Growth · Health)이 그 값을 따라갑니다. OpenAI 호환 엔드포인트면 됩니다. 임베딩과 사진 읽기는 키가 따로이고, 비우면 그 기능만 꺼집니다.
+
+웹에서 API 를 부르려면 `apps/api/.env` 의 `CORS_ALLOW_ORIGINS` 에 `http://localhost:3000` 을 넣습니다.
 
 로그인에는 카카오 키가 필요합니다. 키가 없거나 백엔드 없이 화면만 보려면 `apps/web/.env.local` 에서 `NEXT_PUBLIC_API_MOCKING=enabled` 로 바꿉니다.
 
@@ -303,6 +272,8 @@ make web-install && make web-dev             # 웹 → http://localhost:3000
 | 실서버 e2e | `make web-e2e-live` | [Live E2E CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-e2e-live.yml) · 100% |
 | AI 품질 전체 (실제 모델) | `make eval` | 손으로 돌린다 |
 | AI 품질, 바뀐 Agent 만 | PR 에서 자동 | [Agent live eval](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-agent-live.yml) · 프롬프트나 tool spec 이 바뀐 Agent 를 실제 모델로 3회 |
+
+성공률은 develop 브랜치에서 돈 실행만 세었고, 새 push 로 취소된 실행은 뺐습니다.
 
 <img src="docs/assets/readme/deploy-flow.png" width="100%" alt="feature 브랜치는 PR · 리뷰 · 필수 검사를 거쳐 develop 에 들어가고, develop 은 dev 서버에 자동 배포된다. develop 은 주 1회 멘토 리뷰 PR 로 main 에 들어가고, main 은 운영 서버에 자동 배포된다.">
 
@@ -329,7 +300,7 @@ make web-install && make web-dev             # 웹 → http://localhost:3000
 | --- | --- |
 | Agent 를 어떻게 설계했나 | [Supervisor](https://kakaotechcampus-4.github.io/ktc4-pusan-3/agents/supervisor-agent-v1/) · [Memory](https://kakaotechcampus-4.github.io/ktc4-pusan-3/agents/memory-agent-v1/) · [Curator](https://kakaotechcampus-4.github.io/ktc4-pusan-3/memory/curator-linking-v1/) · [공통 규약](https://kakaotechcampus-4.github.io/ktc4-pusan-3/agents/shared/Agent_공통규약/) |
 | 왜 그렇게 바꿨나 | [설계 결정 8개](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/) |
-| 요구사항 · 구조 · 범위 밖 | 테크스펙의 [요구사항](docs/overview/tech-spec.md#요구사항) · [아키텍처 설계](docs/overview/tech-spec.md#아키텍처-설계) · [스펙 아웃](docs/overview/tech-spec.md#스펙-아웃) · [서비스 기획](docs/overview/service-plan.md) |
+| 처음 기획은 어땠나 | [서비스 기획](docs/overview/service-plan.md) · [테크스펙 (기획 당시)](docs/overview/tech-spec.md) |
 | API 는 어떻게 생겼나 | [Swagger](https://api.icatch.ai.kr/docs) — 서버 코드에서 만들어지는 계약 정본 |
 | AI 품질을 어떻게 쟀나 | [eval 문서 · 한 화면 요약](https://kakaotechcampus-4.github.io/ktc4-pusan-3/eval/eval-v1/#0-한-화면-요약) · [결과](eval/results/2026-11-10.md#헤드라인-810--판정-못-함-0--불안정-1--미실행-0) |
 | 서버를 어떻게 굴리나 | [배포](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#한눈에) · [로그 · 알림](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/logging-alerts-v1/#1-결정) · [전체 문서 사이트](https://kakaotechcampus-4.github.io/ktc4-pusan-3/) |
