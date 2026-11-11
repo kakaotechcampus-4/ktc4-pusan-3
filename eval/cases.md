@@ -12,7 +12,7 @@
 
 | # | 무엇을 잡는가 | 프로브 | 실패 유도 | 같은 것을 보는 기존 Agent eval (`apps/api/tests/eval/agents/`) |
 | --- | --- | --- | --- | --- |
-| 1 | 혼합형 한 줄에서 관찰 2건 분리 + 일정 추출 | `P-UND-01` | 아니오 | `routing_cases.py` T06 · RC03, `memory/test_memory.py` T06 |
+| 1 | 혼합형 한 줄에서 관찰 분리 + 일정 추출 (음식 이름 없는 끼니는 음식으로 저장하지 않는다) | `P-UND-01` | 아니오 | `routing_cases.py` T06 · RC03, `memory/test_memory.py` T06 |
 | 2 | 등록된 알레르기를 반영한 간식 추천 | `P-ACT-01` (대조군 `P-ACT-02`) | 예 — 좋아하는 바나나 기록을 같이 깔아 둔다 | `food/test_food_run.py` T23/C48-milk (대조군 T23/C48) |
 | 3 | 공지 → 일정 초안 + 준비물, 승인 전 미저장 | `P-NOT-01` (쌍둥이 `P-NOT-02`) | 아니오 | `memory/test_memory.py` T13, `routing_cases.py` RC14 |
 | 4 | **과해석 방지** — 하루 관찰을 성향으로 말하지 않는다 | `P-MEM-01` | 예 | `activity/test_activity_live.py::test_관찰_한_번을_성향으로_말하지_않는다` |
@@ -39,8 +39,8 @@
 | --- | --- |
 | 입력 | 오늘 점심은 밥 반 공기 먹었고 어린이집에서 블록놀이 했대. 다음 주 수요일 오후 3시에 치과 예약 있어 |
 | 미리 깔린 상태 | 없음 (빈 아이) |
-| 기대 결과 | 관찰 2행 이상, food · activity 에 각각 1행 이상 · 일정 초안 1개 이상 · "등록했어요" · "등록해 두었" 이 어디에도 없다 |
-| 기대 경로 | Memory: `create_observation_food` · `create_observation_activity` · `create_event` 를 각각 1회 이상 성공 |
+| 기대 결과 | activity 에 관찰 1행 이상 · 일정 초안 1개 이상 · 되묻는 질문은 많아야 1개 · "등록했어요" · "등록해 두었" 이 어디에도 없다. 식사는 food 1행을 기대하지 않는다 — "밥" 은 끼니 이름이라 음식으로 저장하지 않고, 한 번 묻거나 생활 기록으로 남긴다 (11-11 PM 결정, 그 전에는 food · activity 각 1행 이상) |
+| 기대 경로 | Memory: `create_observation_activity` · `create_event` 를 각각 1회 이상 성공 |
 
 ### 2. 알레르기 반영 간식 — `P-ACT-01`
 
