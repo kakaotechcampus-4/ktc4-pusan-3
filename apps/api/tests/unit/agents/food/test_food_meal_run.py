@@ -21,7 +21,7 @@ from app.agents.food.agent import run
 from app.agents.food.context import FoodContext
 from app.agents.food.meal_pool import PoolItem, build_pool, sample_pool
 from app.agents.food.nutrition_eval import NutrientVerdict
-from app.agents.food.readouts import FOLLOWUP_PREFERENCE, MEAL_MENU_WEANING, POOL_EMPTY, READOUTS
+from app.agents.food.readouts import MEAL_MENU_WEANING, POOL_EMPTY, READOUTS
 from app.agents.food.store import (
     InMemoryFoodDocs,
     InMemoryFoodMemory,
@@ -675,7 +675,7 @@ async def test_선호인지_기피인지_모르는_후보가_있으면_되묻는
 
     result = await run(meal_task(), meal_context(TOFU, SPINACH, SOUP, memory=memory), client=llm)
 
-    assert result.needs_observation == (READOUTS.render(FOLLOWUP_PREFERENCE, menu="브로콜리").body,)
+    assert result.needs_observation == ("브로콜리는 좋아하는 편인가요?",)
 
 
 async def test_되물을_후보가_여럿이어도_질문은_하나_신호가_센_것이다() -> None:
@@ -686,7 +686,7 @@ async def test_되물을_후보가_여럿이어도_질문은_하나_신호가_�
 
     result = await run(meal_task(), meal_context(TOFU, SPINACH, SOUP, memory=memory), client=llm)
 
-    assert result.needs_observation == (READOUTS.render(FOLLOWUP_PREFERENCE, menu="당근").body,)
+    assert result.needs_observation == ("당근은 좋아하는 편인가요?",)
 
 
 def asked(*labels: str) -> list[object]:
@@ -703,7 +703,7 @@ async def test_알레르기_식품은_되묻지_않는다() -> None:
         meal_task(), meal_context(TOFU, SPINACH, SOUP, memory=memory, safety=peanut), client=llm
     )
 
-    assert result.needs_observation == (READOUTS.render(FOLLOWUP_PREFERENCE, menu="당근").body,)
+    assert result.needs_observation == ("당근은 좋아하는 편인가요?",)
 
 
 async def test_되물을_후보가_알레르기_식품뿐이면_질문이_없다() -> None:
@@ -724,7 +724,7 @@ async def test_되묻는_문장은_받침_상관없이_자연스럽다() -> None
 
     result = await run(meal_task(), meal_context(TOFU, SPINACH, SOUP, memory=memory), client=llm)
 
-    assert result.needs_observation == ("당근은(는) 좋아하는 편인가요?",)
+    assert result.needs_observation == ("당근은 좋아하는 편인가요?",)
 
 
 async def test_되물을_후보가_없으면_질문이_없다() -> None:

@@ -89,13 +89,13 @@ daycare.reference_menu:
   template: "지역 표준식단이라 우리 아이가 실제로 먹은 것과 다를 수 있어요."
 daycare.updated:
   kind: daycare
-  template: "{date} {slot} 급식을 {menu}(으)로 바꿔 뒀어요."
+  template: "{date} {slot} 급식 메뉴를 바꿔 뒀어요: {menu}"
 daycare.amount_updated:
   kind: daycare
   template: "{date} {slot} 급식은 먹은 양을 반영해 뒀어요."
 daycare.absent:
   kind: daycare
-  template: "{date}은(는) 기관 식사 없는 걸로 해 뒀어요."
+  template: "{date}은 기관 식사 없는 걸로 해 뒀어요."
 daycare.ambiguous:
   kind: daycare
   template: "어느 날 급식을 말씀하시는 걸까요?"
