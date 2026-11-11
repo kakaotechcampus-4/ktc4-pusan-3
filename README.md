@@ -1,6 +1,8 @@
 <div align="center">
 
-<img src="docs/assets/readme/banner.png" width="100%" alt="아이캐치 — 육아를 가장 많이 아는 AI가 아니라, 우리 아이를 가장 오래 알아온 AI">
+<a href="https://youtu.be/EAYOg7bfxaI"><img src="docs/assets/readme/intro-video.jpg" width="100%" alt="아이캐치 소개 영상 (42초) — 누르면 유튜브에서 재생됩니다"></a>
+
+<h1>아이캐치</h1>
 
 **한 줄만 남기면, 우리 아이에게 맞는 다음 할 일로 돌아오는 육아 비서**
 
@@ -13,6 +15,19 @@
 </div>
 
 <!-- 시연 영상(제출물)이 올라오면 위 링크 줄의 "소개 영상" 뒤에 시연 영상 링크를 더한다 -->
+
+## 목차
+
+1. [육아 기록은 귀찮고, 적어도 돌아오는 게 없었습니다](#육아-기록은-귀찮고-적어도-돌아오는-게-없었습니다)
+2. [한 줄이 추천이 되기까지](#한-줄이-추천이-되기까지)
+3. [기록이 쌓일수록 추천이 달라집니다](#기록이-쌓일수록-추천이-달라집니다)
+4. [그래도 AI 에게 맡기지 않은 것이 있습니다](#그래도-ai-에게-맡기지-않은-것이-있습니다)
+5. [어떻게 만들었나](#어떻게-만들었나) — [한 줄이 지나가는 길](#한-줄이-지나가는-길) · [돌아가는 곳](#돌아가는-곳) · [운영하면서 지켜보는 것](#운영하면서-지켜보는-것)
+6. [만들면서 부딪힌 것](#만들면서-부딪힌-것)
+7. [정말 그렇게 움직이는지 쟀습니다](#정말-그렇게-움직이는지-쟀습니다)
+8. [직접 돌려 보기](#직접-돌려-보기)
+9. [만든 사람들](#만든-사람들)
+10. [더 궁금하면](#더-궁금하면)
 
 ## 육아 기록은 귀찮고, 적어도 돌아오는 게 없었습니다
 
@@ -95,10 +110,6 @@
 | :---: | :---: |
 | <img src="docs/assets/readme/05-photo.png" width="200" alt="알림장 사진을 읽어 일정과 준비물로 정리한 화면"> | <img src="docs/assets/readme/06-calendar.png" width="200" alt="일정과 기록이 날짜별로 모인 캘린더"> |
 | 알림장 · 식단표를 읽어 먼저 보여 주고<br>확인한 것만 저장합니다 | 승인한 일정과 그날의 기록이<br>날짜별로 모입니다 |
-
-<a href="https://youtu.be/EAYOg7bfxaI"><img src="https://img.youtube.com/vi/EAYOg7bfxaI/maxresdefault.jpg" width="480" alt="아이캐치 소개 영상 (42초)"></a>
-<br><sub>처음부터 끝까지 움직이는 모습은 소개 영상으로 (42초)</sub>
-
 </div>
 
 ## 기록이 쌓일수록 추천이 달라집니다
@@ -124,6 +135,8 @@
 </tr>
 </table>
 
+근거가 없을 때 추천을 멈추지 않고 일반 추천을 내기로 한 이유는 [설계 결정 §8](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#8-근거가-없을-때--추천하지-않는다-에서-일반-추천임을-밝히고-낸다-로)에 있습니다.
+
 ## 그래도 AI 에게 맡기지 않은 것이 있습니다
 
 저녁 메뉴는 틀려도 한 끼입니다. 알레르기와 일정은 그렇지 않습니다.
@@ -140,7 +153,7 @@
 > [!IMPORTANT]
 > 진단하지 않습니다. 한 번의 관찰로 아이의 성향을 확정하지 않습니다. 근거가 없으면 일반 추천이라고 밝힙니다.
 
-규칙 전체는 [CLAUDE.md §2 · §3](CLAUDE.md)에, 기록 저장에 왜 확인을 받지 않는지는 [설계 결정 §7](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/)에 있습니다.
+규칙 전체는 CLAUDE.md 의 [§2 절대 규칙](CLAUDE.md#2-절대-규칙)과 [§3 자율성 경계](CLAUDE.md#3-자율성-경계--누가-무엇을-하는가)에, 기록 저장에 왜 확인을 받지 않는지는 [설계 결정 §7](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#7-저장하기-전-승인--뺐다)에 있습니다.
 
 ## 어떻게 만들었나
 
@@ -156,7 +169,7 @@
 | **20초를 넘기면 부분 결과** | Agent 하나가 늦거나 실패해도 끝난 쪽은 먼저 보여 준다 |
 | **성향은 규칙이 올린다** | 기억은 `candidate` 로 시작하고 반복 집계를 거쳐야 `confirmed` 가 된다. LLM 은 이 상태를 쓰지 못한다 |
 
-Agent 별 설계 · 프롬프트 · 측정은 [개발 문서 사이트](https://kakaotechcampus-4.github.io/ktc4-pusan-3/)에 있습니다.
+Agent 별 설계는 [Supervisor](https://kakaotechcampus-4.github.io/ktc4-pusan-3/agents/supervisor-agent-v1/) · [Memory](https://kakaotechcampus-4.github.io/ktc4-pusan-3/agents/memory-agent-v1/) · [Curator](https://kakaotechcampus-4.github.io/ktc4-pusan-3/memory/curator-linking-v1/) · [Activity](https://kakaotechcampus-4.github.io/ktc4-pusan-3/agents/activity/activity-agent-v1/) 문서에, Agent 가 함께 지키는 약속은 [공통 규약](https://kakaotechcampus-4.github.io/ktc4-pusan-3/agents/shared/Agent_공통규약/)에 있습니다.
 
 ### 돌아가는 곳
 
@@ -184,7 +197,7 @@ Agent 별 설계 · 프롬프트 · 측정은 [개발 문서 사이트](https://
 | 사진은 화면이 **S3 에 바로** 올린다 | 업로드가 API 서버를 거치지 않는다. 서버는 읽을 때만 내려받고 바로 지운다 |
 | 배포는 **OIDC + Systems Manager** | 저장소에 서버 열쇠를 두지 않는다 |
 
-서버 구성과 운영 절차는 [배포 · 운영 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/)에 있습니다.
+서버 구성은 [배포 문서 · 한눈에](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#한눈에)에, 되돌리는 법은 [롤백](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#롤백--무엇이-되돌아가고-무엇이-안-되돌아가나)에, 상태를 DB 로 옮긴 이유는 [설계 결정 §2](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#2-워커를-늘리기-위한-상태-저장소--redis-가-더-잘-맞는-도구인데-postgresql-을-골랐다)에 있습니다.
 
 ### 운영하면서 지켜보는 것
 
@@ -209,19 +222,19 @@ Agent 별 설계 · 프롬프트 · 측정은 [개발 문서 사이트](https://
 오류 추적 SaaS 는 쓰지 않았습니다. 로그 줄에는 보호자가 적은 원문이 들어갈 수 있어서, 그 내용이 밖으로 나가는 도구는 고르지 않았습니다.
 그래서 알림에는 값이 아니라 종류와 위치만 싣고, 원문이 든 로그는 서버 안(journald)에만 둡니다. LLM 호출도 같습니다. 호출마다 어느 run 이 어느 모델을 얼마나 썼는지는 DB 에 남기지만, 프롬프트와 응답은 남기지 않습니다.
 
-무엇을 어떻게 알리는지는 [로그 · 알림 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/logging-alerts-v1/)에 있습니다.
+알림을 이렇게 짠 이유는 [로그 · 알림 문서 §1 결정](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/logging-alerts-v1/#1-결정)에, 알림이 못 잡는 것은 [§5](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/logging-alerts-v1/#5-알림이-못-잡는-것)에, 서버 지표는 [§7 Grafana Cloud](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/logging-alerts-v1/#7-서버-메트릭--grafana-cloud-946)에 있습니다.
 
 ## 만들면서 부딪힌 것
 
 | 부딪힌 것 | 원인 | 한 일 | 결과 |
 | --- | --- | --- | --- |
-| 다시 누른 한 줄이 **두 번 저장**된다 | 저장은 됐는데 응답만 사라졌다 | `Idempotency-Key` 를 Redis 에 기억. Redis 가 죽으면 메모리로 넘기지 않고 503 | 같은 키 10번 → 저장 1건 |
-| 같은 키가 **동시에** 오면 못 막는다 | 키 읽기와 쓰기가 따로였다 (워커 2개 실험에서 발견) | `SET NX` 한 번으로 합쳤다 | 동시 8개 × 300번, 중복 0 |
-| **재배포** 중 요청이 502, 돌던 요청은 사라진다 | 컨테이너가 한 번에 하나만 뜬다 | 돌던 요청은 끝내고 내려가고, 새 요청은 프록시가 붙잡는다 | 110초 < 120초 < 150초로 맞물림 |
-| 계란과 달걀을 **다른 것**으로 본다 | 임베딩 유사도가 뜻이 아니라 글자를 따라갔다 (0.20) | "같은 대상인가" 만 묻는 LLM 판정 | 유사도는 후보 추리기에만 |
-| 긴 입력에서 **출력이 잘린다** | 1,000자부터 Supervisor 출력이 상한에 걸렸다 | 길이별로 재서 500자로 | 긴 글은 사진 읽기로 |
+| 다시 누른 한 줄이 [**두 번 저장**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#1-중복-요청-방어--프로세스-메모리에서-redis-로-그리고-redis-가-죽으면-막는다)된다 | 저장은 됐는데 응답만 사라졌다 | `Idempotency-Key` 를 Redis 에 기억. Redis 가 죽으면 메모리로 넘기지 않고 503 | 같은 키 10번 → 저장 1건 |
+| 같은 키가 [**동시에**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/workers-2-check-v1/#①-처음-보는-키가-동시에-오면-중복-저장된다) 오면 못 막는다 | 키 읽기와 쓰기가 따로였다 (워커 2개 실험에서 발견) | `SET NX` 한 번으로 합쳤다 | 동시 8개 × 300번, 중복 0 |
+| [**재배포**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#drain--옛-api-가-하던-일을-끝내고-내려간다-882) 중 요청이 502, 돌던 요청은 사라진다 | 컨테이너가 한 번에 하나만 뜬다 | 돌던 요청은 끝내고 내려가고, 새 요청은 프록시가 붙잡는다 | 110초 < 120초 < 150초로 맞물림 |
+| 계란과 달걀을 [**다른 것**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#3-같은-대상인지-판단--임베딩-유사도에서-llm-판정으로)으로 본다 | 임베딩 유사도가 뜻이 아니라 글자를 따라갔다 (0.20) | "같은 대상인가" 만 묻는 LLM 판정 | 유사도는 후보 추리기에만 |
+| 긴 입력에서 [**출력이 잘린다**](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#5-한-줄-입력-상한--2000자에서-500자로) | 1,000자부터 Supervisor 출력이 상한에 걸렸다 | 길이별로 재서 500자로 | 긴 글은 사진 읽기로 |
 
-계기 · 비교 · 대가는 [설계 결정 8개와 그 밖의 변경](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/)와 [워커 2개로 돌려 본 기록](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/workers-2-check-v1/)에 적었습니다.
+굵은 글자를 누르면 그 일의 계기 · 비교 · 대가로 갑니다. 전체는 [설계 결정 8개와 그 밖의 변경](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/)에 있습니다.
 
 ## 정말 그렇게 움직이는지 쟀습니다
 
@@ -236,11 +249,11 @@ Agent 별 설계 · 프롬프트 · 측정은 [개발 문서 사이트](https://
 </tr>
 </table>
 
-실패한 2개의 원인은 [기준선 결과](eval/results/2026-11-10.md)에, 평가를 짠 방법은 [eval 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/eval/eval-v1/)에, 남은 1칸은 [장애 점검표](eval/faults.md)에, 급식표를 잰 방법은 [급식표 OCR 평가](docs/agents/eval/MEAL_OCR_EVAL.md)에 있습니다.
+실패한 2개의 원인은 [기준선 결과 · 실패 분석](eval/results/2026-11-10.md#실패-분석)에, 절대 규칙을 코드로 판정하는 방법은 [eval 문서 §3-2 불변식 14개](https://kakaotechcampus-4.github.io/ktc4-pusan-3/eval/eval-v1/#3-2-불변식-14개--2-를-코드로-판정한다)에, 남은 1칸은 [장애 점검표 · 메울 구멍](eval/faults.md#메울-구멍)에, 급식표를 잰 방법은 [급식표 OCR 평가 §1 측정 이력](docs/agents/eval/MEAL_OCR_EVAL.md#1-측정-이력)에 있습니다.
 
 > [!NOTE]
 > **아직 못 한 것**
-> - 서버는 한 대, 워커는 1개입니다. 상태를 DB 로 옮겨 늘릴 준비까지만 했습니다.
+> - 서버는 한 대, 워커는 1개입니다. 상태를 DB 로 옮겨 늘릴 준비까지만 했습니다 ([워커 2개로 돌려 본 기록](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/workers-2-check-v1/#결과)).
 > - 10개 시나리오 중 2개가 통과하지 못했습니다(기록과 요청이 섞인 한 줄, 되묻기 답 이어받기). 두 개 모두 원인은 측정 뒤에 고쳤지만([#841](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/841) · [#950](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/950)), 전체를 다시 재지는 않았습니다.
 > - 추천 카드의 채택 · 평가는 아직 아이의 성향에 반영되지 않습니다.
 > - 복약 기록은 스토어 정책 때문에 닫아 두었고, Health Agent 는 추천 없이 기록과 안내만 합니다.
@@ -275,7 +288,7 @@ make web-install && make web-dev             # 웹 → http://localhost:3000
 
 <img src="docs/assets/readme/deploy-flow.png" width="100%" alt="feature 브랜치는 PR · 리뷰 · 필수 검사를 거쳐 develop 에 들어가고, develop 은 dev 서버에 자동 배포된다. develop 은 주 1회 멘토 리뷰 PR 로 main 에 들어가고, main 은 운영 서버에 자동 배포된다.">
 
-배포가 도는 순서는 [배포 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/)에 있습니다.
+배포가 도는 순서는 [배포 문서 · 한눈에](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#한눈에)에, 재배포 중에 돌던 요청을 지키는 방법은 [drain](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#drain--옛-api-가-하던-일을-끝내고-내려간다-882)에 있습니다.
 
 ## 만든 사람들
 
@@ -296,10 +309,11 @@ make web-install && make web-dev             # 웹 → http://localhost:3000
 
 | 궁금한 것 | 여기 |
 | --- | --- |
-| Agent 를 어떻게 설계했나 | [개발 문서 사이트](https://kakaotechcampus-4.github.io/ktc4-pusan-3/) |
+| Agent 를 어떻게 설계했나 | [Supervisor](https://kakaotechcampus-4.github.io/ktc4-pusan-3/agents/supervisor-agent-v1/) · [Memory](https://kakaotechcampus-4.github.io/ktc4-pusan-3/agents/memory-agent-v1/) · [Curator](https://kakaotechcampus-4.github.io/ktc4-pusan-3/memory/curator-linking-v1/) · [공통 규약](https://kakaotechcampus-4.github.io/ktc4-pusan-3/agents/shared/Agent_공통규약/) |
 | 왜 그렇게 바꿨나 | [설계 결정 8개](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/) |
-| 요구사항 · 데이터 모델 · 안전 설계 | [테크스펙](docs/overview/tech-spec.md) · [서비스 기획](docs/overview/service-plan.md) |
+| 요구사항 · 구조 · 범위 밖 | 테크스펙의 [요구사항](docs/overview/tech-spec.md#요구사항) · [아키텍처 설계](docs/overview/tech-spec.md#아키텍처-설계) · [스펙 아웃](docs/overview/tech-spec.md#스펙-아웃) · [서비스 기획](docs/overview/service-plan.md) |
 | API 는 어떻게 생겼나 | [Swagger](https://api.icatch.ai.kr/docs) — 서버 코드에서 만들어지는 계약 정본 |
-| AI 품질을 어떻게 쟀나 | [eval 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/eval/eval-v1/) · [결과](eval/results/2026-11-10.md) |
+| AI 품질을 어떻게 쟀나 | [eval 문서 · 한 화면 요약](https://kakaotechcampus-4.github.io/ktc4-pusan-3/eval/eval-v1/#0-한-화면-요약) · [결과](eval/results/2026-11-10.md#헤드라인-810--판정-못-함-0--불안정-1--미실행-0) |
+| 서버를 어떻게 굴리나 | [배포](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#한눈에) · [로그 · 알림](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/logging-alerts-v1/#1-결정) · [전체 문서 사이트](https://kakaotechcampus-4.github.io/ktc4-pusan-3/) |
 
 <sub>Google Play 및 Google Play 로고는 Google LLC 의 상표입니다.</sub>
