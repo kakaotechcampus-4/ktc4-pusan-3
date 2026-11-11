@@ -56,3 +56,11 @@ def test_우유_알레르기_아이에게_우유가_든_빵은_차단이다() ->
     allergy = _verdict(meal_menu_keys("빵(우유카스텔라)"), entries, birth_date=date(2023, 1, 1))
 
     assert allergy["우유카스텔라"] == "blocked"
+
+
+def test_땅콩_알레르기_아이에게_원산지가_붙은_땅콩은_차단이다() -> None:
+    entries = [SafetyEntry(kind="allergy", label="땅콩", status="active")]
+
+    allergy = _verdict(meal_menu_keys("견과류(땅콩:국내산)"), entries, birth_date=date(2023, 1, 1))
+
+    assert allergy["땅콩"] == "blocked"

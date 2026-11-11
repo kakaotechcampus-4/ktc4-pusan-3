@@ -93,10 +93,18 @@ def menu_display_name(raw: str) -> str:
 _OPENERS = "(["
 _CLOSERS = ")]"
 # 괄호 안에서 음식 이름을 나누는 자리
-_INNER_SPLIT = re.compile(r"[,/·&]|또는")
-# 원산지 — "국내산" · "호주산" · "쌀:국내산"(→ "쌀국내산")
+_INNER_SPLIT = re.compile(r"[,/·&+]|또는")
+# 원산지 — 키 **끝에** 붙은 아는 원산지 낱말만 뗀다. "땅콩국내산" → "땅콩", "국내산" → 버림.
+# 🚨 가운데는 건드리지 않는다 — "된장국산적" 의 "국산" 은 원산지가 아니다.
+# 모르는 나라("땅콩세네갈산")는 떼지 못해 통째로 남는다 — 판정이 이름 속 "땅콩" 을 본다
 _ORIGIN_WORD = "원산지"
-_ORIGIN_END = "산"
+_ORIGIN_PLACES = (
+    "국내", "국", "수입", "외국", "원양", "연근해", "중국", "미국", "호주", "러시아", "베트남",
+    "태국", "칠레", "페루", "캐나다", "브라질", "노르웨이", "뉴질랜드", "인도", "필리핀", "멕시코",
+    "스페인", "아르헨티나",
+)  # fmt: skip
+# 긴 낱말이 먼저 맞게 한다 ("미국산" 이 "국산" 보다 먼저). 끝에서 여러 번 이어져도 다 뗀다
+_ORIGIN_TAIL = re.compile("(?:" + "|".join(sorted(_ORIGIN_PLACES, key=len, reverse=True)) + ")산$")
 _LETTER = re.compile(r"[가-힣a-z]")
 # 분량 — 숫자와 단위만. normalize 뒤라 "1/2" 는 "12", "200 ml" 은 "200ml" 이다
 _AMOUNT = re.compile(
@@ -118,15 +126,18 @@ def meal_menu_keys(title: str) -> tuple[str, ...]:
     """급식 항목 제목(메뉴 이름을 ", " 로 이은 글) → `daycare_meal.menu_keys`.
 
     괄호 밖 쉼표에서만 메뉴를 나눈다 — "샐러드(사과, 배)" 는 한 메뉴다. 메뉴마다 괄호 밖 키
-    (`normalize_menu_key(메뉴)`, 예전과 같은 키)를 먼저 싣고, 괄호 안을 `,` `/` `·` `&` "또는" 에서
-    나눠 음식 이름을 키로 더한다. 순서를 지키고 겹친 키는 한 번만 싣는다.
+    (`normalize_menu_key(메뉴)`, 예전과 같은 키)를 먼저 싣고, 괄호 안을 `,` `/` `·` `&` `+`
+    "또는" 에서 나눠 음식 이름을 키로 더한다. 순서를 지키고 겹친 키는 한 번만 싣는다.
 
     `normalize_menu_key` 를 바꾸지 않고 여기서만 더한다. 괄호 밖 키는 그대로라 카탈로그 · 영양
     계산이 찾던 키가 바뀌지 않고, 괄호 안 키는 판정이 이름으로 한 번 더 본다(카탈로그에 없으면
     "확인 못 함").
 
-    🚨 괄호 안에서 빼는 것은 음식이 아닌 것이 분명한 조각뿐이다 — 원산지("국내산"), 분량("1/2" ·
-       "200ml" · "반공기"), 크기 · 표시 낱말과 정확히 같은 것("소" · "자율배식"). 애매하면 남긴다.
+    괄호 안 조각 끝에 붙은 원산지 낱말("땅콩국내산" 의 "국내산")은 떼고 앞의 음식 이름은 남긴다.
+
+    🚨 괄호 안에서 빼는 것은 음식이 아닌 것이 분명한 조각뿐이다 — 원산지만인 것("국내산"),
+       분량("1/2" · "200ml" · "반공기"), 크기 · 표시 낱말과 정확히 같은 것("소" · "자율배식").
+       애매하면 남긴다. 모르는 나라("땅콩세네갈산")는 떼지 못해 통째로 남는다.
        남기면 "확인 못 함" 으로 한 번 더 보게 되고, 지우면 알레르기를 놓친다. "꿀" · "잣" 같은
        한 글자 음식, 숫자 없는 단위 한 글자("알")도 남는다.
 
@@ -140,8 +151,8 @@ def meal_menu_keys(title: str) -> tuple[str, ...]:
         for inner in _bracket_groups(menu):
             keys.extend(
                 key
-                for key in (normalize_menu_key(part) for part in _INNER_SPLIT.split(inner))
-                if not _is_not_food(key)
+                for key in (_food_key(normalize_menu_key(p)) for p in _INNER_SPLIT.split(inner))
+                if key
             )
     return tuple(dict.fromkeys(key for key in keys if key))
 
@@ -192,14 +203,18 @@ def _bracket_groups(menu: str) -> list[str]:
     return groups
 
 
-def _is_not_food(key: str) -> bool:
-    """괄호 안 조각이 음식이 아닌 것이 분명한가. 정규화한 키로 본다."""
-    if not key:
-        return True
-    if key.endswith(_ORIGIN_END) or _ORIGIN_WORD in key:
-        return True
-    if not _LETTER.search(key):
-        return True
+def _food_key(key: str) -> str | None:
+    """괄호 안 조각(정규화한 키) → 저장할 키. 음식이 아닌 것이 분명하면 None.
+
+    끝에 붙은 원산지 낱말을 떼고 남은 것을 본다. 남은 것이 비거나 글자가 없거나 분량 · 표시
+    낱말이면 None 이다.
+    """
+    if _ORIGIN_WORD in key:
+        return None
+    while (stripped := _ORIGIN_TAIL.sub("", key)) != key:
+        key = stripped
+    if not key or not _LETTER.search(key):
+        return None
     if _AMOUNT.fullmatch(key) and _AMOUNT_MARK.search(key):
-        return True
-    return key in _MARK_WORDS
+        return None
+    return None if key in _MARK_WORDS else key
