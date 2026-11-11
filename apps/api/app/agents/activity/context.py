@@ -10,6 +10,7 @@ LLM이 만들면 안 되는 값(child_id, 월령, 위치 격자)과 날짜 계�
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
 from functools import partial
+from typing import Literal
 from uuid import UUID
 
 from app.agents.activity.areas import Area
@@ -58,6 +59,11 @@ class ActivityRunState:
     no_new_events: bool = False
     # 행사 일정 읽기가 상한 안에 안 끝나 낼 행사가 없었다 — "확인 중" 안내를 붙인다 (#906)
     events_pending: bool = False
+    # 행사를 찾았는데 그날 열리는 행사가 없었다 — 보호자 위치 반경에서("near") · 말한 지역에서
+    # ("area"). 행사 목록을 못 불러왔으면 `events_unavailable`. 행사를 물은 run 이면 결과에 한 줄
+    # 안내를 붙인다 — 말하지 않으면 행사 조회가 고장 난 것처럼 보인다 (`agent._events_notice`)
+    events_none: Literal["near", "area"] | None = None
+    events_unavailable: bool = False
     # run 마감 시각(`time.perf_counter` 기준, `DomainTask.deadline`). 행사 일정 읽기가 남은
     # 시간만큼만 기다린다. None 이면 마감을 모른다(테스트 · eval)
     deadline: float | None = None

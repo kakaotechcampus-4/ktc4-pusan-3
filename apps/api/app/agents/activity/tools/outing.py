@@ -408,6 +408,7 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     try:
         raws = await events.events(ending_on_or_after=context.today)
     except UpstreamUnavailable:
+        context.state.events_unavailable = True
         return fail(
             "query",
             _EVENTS,
@@ -481,6 +482,10 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     if not rows and len(fresh) < len(found):
         # 보여 준 행사를 빼고 남은 것도 연령 · 일정으로 빠졌다 — 새 행사가 없는 것과 같다
         return _no_new_events(context)
+    if not rows:
+        # 그날 열리는 행사가 없다 — 행사를 물은 run 이면 결과에 없다고 알린다
+        # (`agent._events_notice`)
+        context.state.events_none = "area" if context.state.area is not None else "near"
     for row in rows:
         context.state.seen_events.setdefault(row.name, row)
         if context.state.area is not None:

@@ -30,15 +30,19 @@ from app.agents.activity.prompt import (
 from app.agents.activity.readouts import (
     CAUTION_NON_FOOD_ALLERGY,
     EVENTS_NO_NEW,
+    EVENTS_NONE_AREA,
+    EVENTS_NONE_NEAR,
     EVENTS_PENDING,
+    EVENTS_UNAVAILABLE,
     LOCATION_MISSING,
     PLACE_AREA_UNKNOWN,
     READOUTS,
 )
 from app.agents.activity.registry import closed_readout_key, execute_tool, specs_for, tools_for
 from app.agents.activity.result import ToolResult
-from app.agents.activity.rules import asks_outing, normalize_activity
+from app.agents.activity.rules import asks_events, asks_outing, normalize_activity
 from app.agents.activity.schemas.task import task_type_of
+from app.agents.activity.store.ports import EVENT_MAX_RADIUS_M
 from app.agents.activity.tools.docs import search_activity_doc
 from app.agents.activity.tools.filters import request_notices
 from app.agents.activity.tools.outing import (
@@ -176,11 +180,36 @@ async def run(
             *((READOUTS.render(PLACE_AREA_UNKNOWN),) if context.state.area_missed else ()),
             *((READOUTS.render(EVENTS_NO_NEW),) if context.state.no_new_events else ()),
             *((READOUTS.render(EVENTS_PENDING),) if context.state.events_pending else ()),
+            *_events_notice(context),
             *((READOUTS.render(LOCATION_MISSING),) if _location_missing(context, gate) else ()),
             *((notice,) if notice else ()),
         ),
         model_calls=model_calls,
     )
+
+
+def _events_notice(context: ActivityContext) -> tuple[Readout, ...]:
+    """행사를 물었는데 행사 없이 골랐으면 왜인지 한 줄로 — 그날 열리는 행사가 없었다 · 목록을 못
+    불러왔다. 말하지 않으면 행사 조회가 고장 난 것처럼 보인다(11-11 운영).
+
+    - 이번 run 에서 행사를 하나라도 찾았거나, 다른 행사 안내(앞에서 보여 준 것뿐 · 일정 확인 중)가
+      붙으면 붙이지 않는다.
+    - 행사 · 축제 · 공연을 묻지 않았으면 붙이지 않는다 — 나들이를 물어 모델이 알아서 찾아본 run 에
+      "행사가 없어요" 는 묻지 않은 말이다(`rules.asks_events`). 이번 입력의 원문과 해석한 요청을
+      본다.
+    """
+    state = context.state
+    if state.seen_events or state.no_new_events or state.events_pending:
+        return ()
+    if not asks_events((*state.original_texts, *state.request_texts)):
+        return ()
+    if state.events_unavailable:
+        return (READOUTS.render(EVENTS_UNAVAILABLE),)
+    if state.events_none == "area":
+        return (READOUTS.render(EVENTS_NONE_AREA),)
+    if state.events_none == "near":
+        return (READOUTS.render(EVENTS_NONE_NEAR, km=EVENT_MAX_RADIUS_M // 1000),)
+    return ()
 
 
 def _location_missing(context: ActivityContext, gate: Gate) -> bool:
