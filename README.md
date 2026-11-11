@@ -114,9 +114,9 @@
 
 **한두 번 적혔을 때**<br>근거로는 쓰지만 아이의 성향으로 정하지 않습니다.
 
-**서로 다른 날에 반복됐을 때**<br>확정된 기억이 되어 추천의 근거로 먼저 쓰입니다.
+**2주 안에 서로 다른 3일에 적혔을 때**<br>확정된 기억이 되어 추천의 근거로 먼저 쓰입니다.
 
-**오래됐을 때**<br>6개월이 지난 관심은 혼자서는 근거가 되지 못합니다.
+**한동안 다시 적히지 않았을 때**<br>3주 동안 다시 적히지 않은 관심은 보관되어 근거에서 빠집니다. 6개월이 지난 기록은 어떤 경우에도 혼자 근거가 되지 못합니다.
 
 **보호자가 고쳤을 때**<br>"이번만 그랬어요" · "잘못된 기록" 에 따라 기억이 바뀝니다.
 
@@ -146,10 +146,12 @@
 
 ### 한 줄이 지나가는 길
 
-<img src="docs/assets/readme/pipeline.png" width="100%" alt="보호자의 한 줄이 지나가는 다섯 단계. 1 인식(Supervisor) — 위험 신호를 규칙으로 먼저 보고 기록인지 요청인지 가른다. 2 기록(Memory Agent) — 식사 1건과 건강 1건으로 나눠 바로 저장한다. 저장 뒤 Curator 가 같은 대상끼리 묶고 서로 다른 날수를 세어 기억으로 올린다. 3 행동(도메인 Agent 최대 2개) — 요청이 있으면 기억을 검색해 후보를 만들고 알레르기 필터를 지난 것만 남긴다. 4 결과 — 추천, 추천 이유, 사용한 기록 N건. 5 승인 — 되돌릴 수 없는 것만 사람에게 묻는다.">
+<img src="docs/assets/readme/pipeline.png" width="100%" alt="보호자의 한 줄이 지나가는 길. 먼저 안전 사전검사 — 모델을 부르기 전에 위험 · 응급 신호를 규칙으로 보고, 검사를 못 하면 모델을 부르지 않고 멈춘다. 1 인식(Supervisor) — 기록인지 요청인지 가르고 맡길 Agent 를 최대 2개 고른다. 2 기록(Memory Agent) — 식사 1건과 건강 1건으로 나눠 바로 저장한다. 저장 뒤 Curator 가 같은 대상끼리 묶고 서로 다른 날수를 세어 기억으로 올린다. 3 행동(도메인 Agent 최대 2개) — 요청이 있으면 기억을 검색해 후보를 만들고 알레르기 필터를 지난 것만 남긴다. 4 결과 — 추천, 추천 이유, 사용한 기록 N건. 5 승인 — 되돌릴 수 없는 것만 사람에게 묻는다.">
 
 | 이렇게 만들었다 | 왜 |
 | --- | --- |
+| **모델보다 규칙이 먼저** | 위험 · 응급 신호 검사는 Supervisor 앞에 있다. 검사를 못 하면 모델을 부르지 않고 멈춘다 |
+| **역할마다 모델을 따로** | Supervisor · Memory · 도메인 Agent 가 각자 키 · 모델 · 추론 강도를 갖는다. 비우면 Memory 의 값을 따른다 |
 | **저장이 검색보다 먼저** | 방금 저장한 기록이 같은 요청의 추천 근거로 잡혀야 한다. 그래서 백엔드와 AI 를 한 서비스로 묶었다 |
 | **20초를 넘기면 부분 결과** | Agent 하나가 늦거나 실패해도 끝난 쪽은 먼저 보여 준다 |
 | **성향은 규칙이 올린다** | 기억은 `candidate` 로 시작하고 반복 집계를 거쳐야 `confirmed` 가 된다. LLM 은 이 상태를 쓰지 못한다 |
@@ -179,7 +181,7 @@ Agent 별 설계 · 프롬프트 · 측정은 [개발 문서 사이트](https://
 | --- | --- |
 | 모바일은 **웹뷰 껍데기** | 화면이 두 벌이 되면 절대 규칙도 두 곳에서 지켜야 한다 |
 | 벡터 DB 를 따로 두지 않고 **PostgreSQL 한 곳** | 여섯 명이 10주에 운영할 인프라는 적을수록 좋다 |
-| 사진은 화면이 **S3 에 바로** 올린다 | 사진 본문이 API 서버를 거치지 않는다. 서버는 읽자마자 지운다 |
+| 사진은 화면이 **S3 에 바로** 올린다 | 업로드가 API 서버를 거치지 않는다. 서버는 읽을 때만 내려받고 바로 지운다 |
 | 배포는 **OIDC + Systems Manager** | 저장소에 서버 열쇠를 두지 않는다 |
 
 서버 구성과 운영 절차는 [배포 · 운영 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/)에 있습니다.
@@ -219,7 +221,7 @@ Agent 별 설계 · 프롬프트 · 측정은 [개발 문서 사이트](https://
 | 계란과 달걀을 **다른 것**으로 본다 | 임베딩 유사도가 뜻이 아니라 글자를 따라갔다 (0.20) | "같은 대상인가" 만 묻는 LLM 판정 | 유사도는 후보 추리기에만 |
 | 긴 입력에서 **출력이 잘린다** | 1,000자부터 Supervisor 출력이 상한에 걸렸다 | 길이별로 재서 500자로 | 긴 글은 사진 읽기로 |
 
-계기 · 비교 · 대가는 [설계 결정 9개](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/)와 [워커 2개로 돌려 본 기록](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/workers-2-check-v1/)에 적었습니다.
+계기 · 비교 · 대가는 [설계 결정 8개와 그 밖의 변경](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/)와 [워커 2개로 돌려 본 기록](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/workers-2-check-v1/)에 적었습니다.
 
 ## 정말 그렇게 움직이는지 쟀습니다
 
@@ -230,22 +232,22 @@ Agent 별 설계 · 프롬프트 · 측정은 [개발 문서 사이트](https://
 <td align="center" width="25%"><h3>8 / 10</h3><b>기획 때 정한 시나리오</b><br><sub>실제 모델 · 3회 모두 통과해야 통과</sub></td>
 <td align="center" width="25%"><h3>0건</h3><b>절대 규칙 위반</b><br><sub>147 run 을 코드로 판정</sub></td>
 <td align="center" width="25%"><h3>39 / 40</h3><b>장애 점검</b><br><sub>부품 10 × 장애 4 · make test 마다</sub></td>
-<td align="center" width="25%"><h3>178 / 178</h3><b>급식표 메뉴 읽기</b><br><sub>사람이 확정한 정답 1장 · 1회</sub></td>
+<td align="center" width="25%"><h3>68 / 69</h3><b>급식표 끼니 읽기</b><br><sub>정답 1장 × 5회 · 틀린 메뉴가 한 번도 붙지 않은 끼니</sub></td>
 </tr>
 </table>
 
-실패한 2개의 원인은 [기준선 결과](eval/results/2026-11-10.md)에, 평가를 짠 방법은 [eval 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/eval/eval-v1/)에, 남은 1칸은 [장애 점검표](eval/faults.md)에 있습니다.
+실패한 2개의 원인은 [기준선 결과](eval/results/2026-11-10.md)에, 평가를 짠 방법은 [eval 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/eval/eval-v1/)에, 남은 1칸은 [장애 점검표](eval/faults.md)에, 급식표를 잰 방법은 [급식표 OCR 평가](docs/agents/eval/MEAL_OCR_EVAL.md)에 있습니다.
 
 > [!NOTE]
 > **아직 못 한 것**
 > - 서버는 한 대, 워커는 1개입니다. 상태를 DB 로 옮겨 늘릴 준비까지만 했습니다.
-> - 10개 시나리오 중 2개가 통과하지 못했습니다 — 기록과 요청이 섞인 한 줄, 되묻기 답 이어받기.
+> - 10개 시나리오 중 2개가 통과하지 못했습니다(기록과 요청이 섞인 한 줄, 되묻기 답 이어받기). 두 개 모두 원인은 측정 뒤에 고쳤지만([#841](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/841) · [#950](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/950)), 전체를 다시 재지는 않았습니다.
 > - 추천 카드의 채택 · 평가는 아직 아이의 성향에 반영되지 않습니다.
 > - 복약 기록은 스토어 정책 때문에 닫아 두었고, Health Agent 는 추천 없이 기록과 안내만 합니다.
 
 ## 직접 돌려 보기
 
-필요한 것: Docker · Python 3.12 + [uv](https://docs.astral.sh/uv/) · Node + pnpm
+필요한 것: Docker · Python 3.12 + [uv](https://docs.astral.sh/uv/) · Node 24 + pnpm
 
 ```bash
 git clone https://github.com/kakaotechcampus-4/ktc4-pusan-3.git && cd ktc4-pusan-3
@@ -258,7 +260,9 @@ cp apps/web/.env.example apps/web/.env.local # 다른 터미널에서
 make web-install && make web-dev             # 웹 → http://localhost:3000
 ```
 
-백엔드 없이 화면만 보려면 `apps/web/.env.local` 에서 `NEXT_PUBLIC_API_MOCKING=enabled` 로 바꿉니다.
+모델 키는 `MEMORY_API_KEY` · `MEMORY_BASE_URL` · `MEMORY_MODEL` 세 개만 채우면 나머지 역할이 그 값을 따라갑니다. OpenAI 호환 엔드포인트면 됩니다.
+
+로그인에는 카카오 키가 필요합니다. 키가 없거나 백엔드 없이 화면만 보려면 `apps/web/.env.local` 에서 `NEXT_PUBLIC_API_MOCKING=enabled` 로 바꿉니다.
 
 | 무엇을 검사하나 | 명령 | CI · 최근 30일 성공률 |
 | --- | --- | :---: |
@@ -266,7 +270,8 @@ make web-install && make web-dev             # 웹 → http://localhost:3000
 | 웹 단위 · 화면 규칙 e2e | `make web-test` · `make web-e2e` | [Web CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-web.yml) · 96% |
 | 웹 ↔ 서버 계약 | `make web-contract` | [Contract CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-contract.yml) · 100% |
 | 실서버 e2e | `make web-e2e-live` | [Live E2E CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-e2e-live.yml) · 100% |
-| AI 품질 (실제 모델) | `make eval` | 손으로 돌린다 |
+| AI 품질 전체 (실제 모델) | `make eval` | 손으로 돌린다 |
+| AI 품질, 바뀐 Agent 만 | PR 에서 자동 | [Agent live eval](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-agent-live.yml) · 프롬프트나 tool spec 이 바뀐 Agent 를 실제 모델로 3회 |
 
 <img src="docs/assets/readme/deploy-flow.png" width="100%" alt="feature 브랜치는 PR · 리뷰 · 필수 검사를 거쳐 develop 에 들어가고, develop 은 dev 서버에 자동 배포된다. develop 은 주 1회 멘토 리뷰 PR 로 main 에 들어가고, main 은 운영 서버에 자동 배포된다.">
 
@@ -292,7 +297,7 @@ make web-install && make web-dev             # 웹 → http://localhost:3000
 | 궁금한 것 | 여기 |
 | --- | --- |
 | Agent 를 어떻게 설계했나 | [개발 문서 사이트](https://kakaotechcampus-4.github.io/ktc4-pusan-3/) |
-| 왜 그렇게 바꿨나 | [설계 결정 9개](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/) |
+| 왜 그렇게 바꿨나 | [설계 결정 8개](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/) |
 | 요구사항 · 데이터 모델 · 안전 설계 | [테크스펙](docs/overview/tech-spec.md) · [서비스 기획](docs/overview/service-plan.md) |
 | API 는 어떻게 생겼나 | [Swagger](https://api.icatch.ai.kr/docs) — 서버 코드에서 만들어지는 계약 정본 |
 | AI 품질을 어떻게 쟀나 | [eval 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/eval/eval-v1/) · [결과](eval/results/2026-11-10.md) |
