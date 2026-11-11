@@ -127,7 +127,9 @@ def key_set(monkeypatch):
 
 async def _upload(db_client, headers, cid, monkeypatch, reading) -> tuple[str, dict]:
     monkeypatch.setattr(
-        entrypoint, "read_photo", lambda data, *, received_at, meal_deadline=None: reading
+        entrypoint,
+        "read_photo",
+        lambda data, *, received_at, meal_deadline=None, on_meal_plan=None: reading,
     )
     response = await db_client.post(
         PHOTOS.format(cid=cid),
@@ -579,7 +581,7 @@ async def test_S3_에_올린_사진은_열쇠로_읽고_지운다(
     s3_bucket[key] = b"photo-bytes"  # 화면이 S3 에 올렸다
     received: list[bytes] = []
 
-    def read(data, *, received_at, meal_deadline=None):
+    def read(data, *, received_at, meal_deadline=None, on_meal_plan=None):
         received.append(data)
         return _reading()
 
@@ -642,7 +644,9 @@ async def test_저장할_것이_없는_사진은_빈_확인_화면_대신_실패
     headers, _ = bearer
     reading = entrypoint.PhotoReading(notice=replace(_reading().notice, items=()), meal_plan=None)
     monkeypatch.setattr(
-        entrypoint, "read_photo", lambda data, *, received_at, meal_deadline=None: reading
+        entrypoint,
+        "read_photo",
+        lambda data, *, received_at, meal_deadline=None, on_meal_plan=None: reading,
     )
     response = await db_client.post(
         PHOTOS.format(cid=cid),
@@ -662,7 +666,7 @@ async def test_저장할_것이_없는_사진은_빈_확인_화면_대신_실패
 async def test_글자를_못_찾으면_실패로_끝난다(db_client, bearer, cid, key_set, monkeypatch):
     headers, _ = bearer
 
-    def unreadable(data, *, received_at, meal_deadline=None):
+    def unreadable(data, *, received_at, meal_deadline=None, on_meal_plan=None):
         raise entrypoint.UnreadablePhoto("글자를 찾지 못했어요")
 
     monkeypatch.setattr(entrypoint, "read_photo", unreadable)
@@ -836,7 +840,9 @@ async def test_같은_요청을_다시_보내면_새로_올린_사진은_지우�
 ):
     headers, _ = bearer
     monkeypatch.setattr(
-        entrypoint, "read_photo", lambda data, *, received_at, meal_deadline=None: _reading()
+        entrypoint,
+        "read_photo",
+        lambda data, *, received_at, meal_deadline=None, on_meal_plan=None: _reading(),
     )
     idem = {**headers, "Idempotency-Key": str(uuid.uuid4())}
     first_key = (await db_client.post(UPLOADS.format(cid=cid), headers=headers)).json()["key"]
@@ -871,7 +877,7 @@ async def test_recall_이_놓친_같은_키는_사진을_다시_읽지_않고_�
     headers, _ = bearer
     reads: list[bytes] = []
 
-    def read(data, *, received_at, meal_deadline=None):
+    def read(data, *, received_at, meal_deadline=None, on_meal_plan=None):
         reads.append(data)
         return _reading()
 
