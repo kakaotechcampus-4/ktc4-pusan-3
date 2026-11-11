@@ -11,7 +11,6 @@
 Activity `weather.py` 다.
 """
 
-import asyncio
 import logging
 from collections import OrderedDict
 from collections.abc import Callable
@@ -24,6 +23,7 @@ import httpx
 from app.core.weather_raw import UpstreamUnavailable, WeatherGrid
 from app.integrations.weather.areas import nearest_district
 from app.integrations.weather.forecast import DAYTIME_HOUR
+from app.integrations.weather.inflight import Inflight
 from app.integrations.weather.public_data import get_json, result_code
 
 log = logging.getLogger(__name__)
@@ -79,7 +79,8 @@ class KmaUv:
         self._client = httpx.AsyncClient(transport=transport)
         self._now = now or (lambda: datetime.now(KST))
         self._cache: OrderedDict[tuple[str, str], UvRow] = OrderedDict()
-        self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+        # 받는 중인 조회. 이번 주말(토 · 일)은 같은 (시군구, 시)를 동시에 부른다 (#962)
+        self._inflight: Inflight[tuple[str, str], UvRow] = Inflight()
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -102,28 +103,24 @@ class KmaUv:
         if key in self._cache:
             self._cache.move_to_end(key)
             return self._cache[key]
-        lock = self._locks.setdefault(key, asyncio.Lock())
-        try:
-            async with lock:
-                if key in self._cache:
-                    return self._cache[key]
-                payload = await get_json(
-                    self._client,
-                    URL,
-                    {
-                        "pageNo": 1,
-                        "numOfRows": 10,
-                        "dataType": "JSON",
-                        "areaNo": district,
-                        "time": key[1],
-                    },
-                    what="자외선",
-                )
-                row = parse_uv(payload)
-                self._cache[key] = row
-                if len(self._cache) > CACHE_SIZE:
-                    self._cache.popitem(last=False)
-                return row
-        finally:
-            # 실패해도 Lock 을 남기지 않는다 (#328 리뷰)
-            self._locks.pop(key, None)
+        return await self._inflight.run(key, lambda: self._fetch(key))
+
+    async def _fetch(self, key: tuple[str, str]) -> UvRow:
+        district, hour = key
+        payload = await get_json(
+            self._client,
+            URL,
+            {
+                "pageNo": 1,
+                "numOfRows": 10,
+                "dataType": "JSON",
+                "areaNo": district,
+                "time": hour,
+            },
+            what="자외선",
+        )
+        row = parse_uv(payload)
+        self._cache[key] = row
+        if len(self._cache) > CACHE_SIZE:
+            self._cache.popitem(last=False)
+        return row

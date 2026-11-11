@@ -11,7 +11,6 @@
      것은 Activity `weather.py` 다
 """
 
-import asyncio
 import logging
 from collections import OrderedDict
 from collections.abc import Callable
@@ -21,6 +20,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.core.weather_raw import RawAir, UpstreamUnavailable, WeatherGrid
+from app.integrations.weather.inflight import Inflight
 from app.integrations.weather.public_data import get_json, result_code
 from app.integrations.weather.stations_data import STATIONS
 
@@ -97,7 +97,8 @@ class AirKorea:
         self._now = now or (lambda: datetime.now(KST))
         self._stations = stations
         self._cache: OrderedDict[tuple[str, str], RawAir] = OrderedDict()
-        self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+        # 받는 중인 조회. 같은 측정소를 보는 run 끼리 같은 (측정소, 시)를 동시에 부른다 (#962)
+        self._inflight: Inflight[tuple[str, str], RawAir] = Inflight()
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -111,29 +112,24 @@ class AirKorea:
         if key in self._cache:
             self._cache.move_to_end(key)
             return self._cache[key]
-        lock = self._locks.setdefault(key, asyncio.Lock())
-        try:
-            async with lock:
-                if key in self._cache:
-                    return self._cache[key]
-                payload = await get_json(
-                    self._client,
-                    URL,
-                    {
-                        "pageNo": 1,
-                        "numOfRows": 1,
-                        "returnType": "json",
-                        "stationName": station,
-                        "dataTerm": "DAILY",
-                        "ver": "1.0",
-                    },
-                    what="대기질",
-                )
-                air = parse_air(payload)
-                self._cache[key] = air
-                if len(self._cache) > CACHE_SIZE:
-                    self._cache.popitem(last=False)
-                return air
-        finally:
-            # 실패해도 Lock 을 남기지 않는다 (#328 리뷰)
-            self._locks.pop(key, None)
+        return await self._inflight.run(key, lambda: self._fetch(key))
+
+    async def _fetch(self, key: tuple[str, str]) -> RawAir:
+        payload = await get_json(
+            self._client,
+            URL,
+            {
+                "pageNo": 1,
+                "numOfRows": 1,
+                "returnType": "json",
+                "stationName": key[0],
+                "dataTerm": "DAILY",
+                "ver": "1.0",
+            },
+            what="대기질",
+        )
+        air = parse_air(payload)
+        self._cache[key] = air
+        if len(self._cache) > CACHE_SIZE:
+            self._cache.popitem(last=False)
+        return air

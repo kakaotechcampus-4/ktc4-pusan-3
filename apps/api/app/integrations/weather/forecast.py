@@ -9,7 +9,6 @@
 해석("강수없음" · "1.0mm 미만" · 구간 문자열)은 하지 않는다 — Activity `weather.py` 가 한다.
 """
 
-import asyncio
 import logging
 from collections import OrderedDict
 from collections.abc import Callable
@@ -20,6 +19,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.core.weather_raw import RawForecast, UpstreamUnavailable, WeatherGrid
+from app.integrations.weather.inflight import Inflight
 from app.integrations.weather.public_data import get_json, result_code
 
 log = logging.getLogger(__name__)
@@ -118,7 +118,7 @@ class KmaForecast:
         self._now = now or (lambda: datetime.now(KST))
         self._cache: OrderedDict[tuple[int, int, str, str], Slots] = OrderedDict()
         # 받는 중인 발표분. 같은 발표분을 동시에 부르면 이 조회 하나를 결과째(실패도) 같이 기다린다
-        self._inflight: dict[tuple[int, int, str, str], asyncio.Task[Slots]] = {}
+        self._inflight: Inflight[tuple[int, int, str, str], Slots] = Inflight()
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -141,23 +141,8 @@ class KmaForecast:
         if key in self._cache:
             self._cache.move_to_end(key)
             return self._cache[key]
-        # 이번 주말(토 · 일)처럼 같은 발표분을 동시에 부르면 한 번만 받고, 실패도 같이 받는다.
-        # 기다리던 호출이 하나씩 다시 부르면 서버가 느린 날 기다림이 날 수 × 읽기 제한으로
-        # 늘어난다 (#959 리뷰)
-        task = self._inflight.get(key)
-        if task is None:
-            task = asyncio.create_task(self._fetch(key, grid, base_date, base_time))
-            self._inflight[key] = task
-            task.add_done_callback(lambda done: self._settle(key, done))
-        # 한 호출이 취소돼도(run 20초) 같은 조회를 기다리는 다른 호출의 조회는 끊지 않는다
-        return await asyncio.shield(task)
-
-    def _settle(self, key: tuple[int, int, str, str], done: asyncio.Task[Slots]) -> None:
-        # 끝나면 성공이든 실패든 지운다 (#328 리뷰). 기다리던 호출이 모두 취소됐어도 실패를 여기서
-        # 읽어 "아무도 안 본 예외" 경고를 남기지 않는다
-        self._inflight.pop(key, None)
-        if not done.cancelled():
-            done.exception()
+        # 이번 주말(토 · 일)처럼 같은 발표분을 동시에 부르면 한 번만 받고, 실패도 같이 받는다 (#959)
+        return await self._inflight.run(key, lambda: self._fetch(key, grid, base_date, base_time))
 
     async def _fetch(
         self, key: tuple[int, int, str, str], grid: WeatherGrid, base_date: str, base_time: str

@@ -223,12 +223,12 @@ class TestInflight:
         src, _ = source(httpx.Response(500, text="error"))
         with pytest.raises(UpstreamUnavailable):
             await src.forecast(grid=GRID, day=date(2026, 10, 11))
-        assert src._inflight == {}
+        assert len(src._inflight) == 0
 
     async def test_성공하면_받는_중_표시를_남기지_않는다(self):
         src, _ = source(ok())
         await src.forecast(grid=GRID, day=date(2026, 10, 11))
-        assert src._inflight == {}
+        assert len(src._inflight) == 0
 
 
 class TestFailure:

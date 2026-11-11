@@ -11,7 +11,6 @@
 결과 코드는 그대로 넘긴다 — `03 NO_DATA` 는 실패가 아니라 "특보 없음"이다.
 """
 
-import asyncio
 import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -22,6 +21,7 @@ import httpx
 
 from app.core.weather_raw import RawAdvisories, RawAdvisoryRow, UpstreamUnavailable, WeatherGrid
 from app.integrations.weather.areas import nearest_district, zones_of
+from app.integrations.weather.inflight import Inflight
 from app.integrations.weather.public_data import get_json, result_code
 
 log = logging.getLogger(__name__)
@@ -45,6 +45,8 @@ ADVISORY_TIMEOUT = httpx.Timeout(6.0, connect=1.0, read=5.0)
 
 _OK = "00"
 _NO_DATA = "03"
+# 받는 중 표시의 키. 전국 목록은 하나라 키도 하나다
+_NATIONWIDE = "전국"
 
 
 def parse_rows(payload: dict[str, Any]) -> tuple[str, tuple[RawAdvisoryRow, ...]]:
@@ -86,7 +88,8 @@ class KmaAdvisories:
         self._client = httpx.AsyncClient(transport=transport)
         self._now = now or (lambda: datetime.now(KST))
         self._cached: tuple[datetime, str, tuple[RawAdvisoryRow, ...]] | None = None
-        self._lock = asyncio.Lock()
+        # 받는 중인 전국 조회. 이번 주말(토 · 일)과 다른 run 이 같은 목록을 동시에 부른다 (#962)
+        self._inflight: Inflight[str, tuple[str, tuple[RawAdvisoryRow, ...]]] = Inflight()
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -106,35 +109,35 @@ class KmaAdvisories:
 
     async def _nationwide(self) -> tuple[str, tuple[RawAdvisoryRow, ...]]:
         now = self._now().astimezone(KST)
-        async with self._lock:
+        if self._cached is not None and now - self._cached[0] < timedelta(minutes=CACHE_MINUTES):
+            return self._cached[1], self._cached[2]
+        return await self._inflight.run(_NATIONWIDE, lambda: self._fetch(now))
+
+    async def _fetch(self, now: datetime) -> tuple[str, tuple[RawAdvisoryRow, ...]]:
+        try:
+            payload = await get_json(
+                self._client,
+                URL,
+                {
+                    "pageNo": 1,
+                    "numOfRows": ROWS,
+                    "dataType": "JSON",
+                    "fromTmFc": (now - timedelta(days=LOOKBACK_DAYS)).strftime("%Y%m%d"),
+                    "toTmFc": now.strftime("%Y%m%d"),
+                },
+                what="특보",
+                timeout=ADVISORY_TIMEOUT,
+            )
+        except UpstreamUnavailable:
+            # 새 조회가 실패하면 한 시간 안에 받은 목록을 쓴다 — 실패마다 "날씨 확인 못 함" 이
+            # 되지 않게. 그보다 오래되면 실패 그대로다. 같이 기다리던 호출도 이 결과를 받는다
             if self._cached is not None and now - self._cached[0] < timedelta(
-                minutes=CACHE_MINUTES
+                minutes=STALE_MINUTES
             ):
                 return self._cached[1], self._cached[2]
-            try:
-                payload = await get_json(
-                    self._client,
-                    URL,
-                    {
-                        "pageNo": 1,
-                        "numOfRows": ROWS,
-                        "dataType": "JSON",
-                        "fromTmFc": (now - timedelta(days=LOOKBACK_DAYS)).strftime("%Y%m%d"),
-                        "toTmFc": now.strftime("%Y%m%d"),
-                    },
-                    what="특보",
-                    timeout=ADVISORY_TIMEOUT,
-                )
-            except UpstreamUnavailable:
-                # 새 조회가 실패하면 한 시간 안에 받은 목록을 쓴다 — 실패마다 "날씨 확인 못 함" 이
-                # 되지 않게. 그보다 오래되면 실패 그대로다
-                if self._cached is not None and now - self._cached[0] < timedelta(
-                    minutes=STALE_MINUTES
-                ):
-                    return self._cached[1], self._cached[2]
-                raise
-            code, rows = parse_rows(payload)
-            if code in (_OK, _NO_DATA):
-                # 실패 코드는 캐시하지 않는다 — 다음 run 이 다시 묻는다
-                self._cached = (now, code, rows)
-            return code, rows
+            raise
+        code, rows = parse_rows(payload)
+        if code in (_OK, _NO_DATA):
+            # 실패 코드는 캐시하지 않는다 — 다음 run 이 다시 묻는다
+            self._cached = (now, code, rows)
+        return code, rows
