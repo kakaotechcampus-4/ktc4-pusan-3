@@ -515,6 +515,8 @@ def test_기대_안내_질문_초안() -> None:
     want = Expect(guidance=("out_of_scope",), questions_max=1, event_drafts_min=1)
     assert check_expect(trace, want, today=_TODAY) == []
     assert check_expect(trace, Expect(guidance=("emergency",)), today=_TODAY)
+    assert check_expect(trace, Expect(questions_min=1), today=_TODAY) == []
+    assert check_expect(_clean(), Expect(questions_min=1), today=_TODAY)  # 묻지 않으면 미달
 
 
 def test_케이스_합격_기준() -> None:

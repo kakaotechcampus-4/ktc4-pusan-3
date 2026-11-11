@@ -6,14 +6,16 @@
 
 찾는 순서는 메뉴 이름 줄 → 대분류 이름 줄 → (원재료성이고 대분류 이름이 비었을 때) 대분류 코드
 줄이다. 그래도 없으면 적재 배치가 이름이 같은 레시피의 주재료 식품군을 빌린다
-(`catalog_rows.borrowable_food_groups`).
+(`catalog_rows.borrowable_food_groups`). 식품군 출현을 셀 때만 그래도 비면 단일 식품 표
+(`reference/plain_food_groups.yaml`)를 본다 — 카탈로그 행에는 쓰지 않는다
+(`appearance_food_groups`).
 
 레시피 행의 식품군은 이 표가 아니라 재료 정리 표(`recipe_ingredients.yaml`)의 재료별 칸에서 모은다
 (`recipe_catalog.py`).
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import cache
 from typing import Any
@@ -21,6 +23,7 @@ from typing import Any
 from app.agents.common.reference import load_reference
 from app.agents.food.doc_seed import FOOD_GROUPS
 from app.core.nutrition_pick import NutritionFacts
+from app.rules.menu_key import normalize_menu_key
 from app.rules.term_match import normalize
 
 # 대분류 코드로 찾는 DB 그룹. 코드 뜻이 그룹마다 달라 이 그룹만 본다 — 원재료성 09 는 육류,
@@ -32,6 +35,11 @@ _CATEGORY_KEYS = frozenset({"category", "groups"})
 _CODE_KEYS = frozenset({"code", "category"})
 _MENU_KEYS = frozenset({"menu", "groups"})
 _CODE = re.compile(r"\d{2}")
+
+# 단일 식품 표(`plain_food_groups.yaml`)가 쓰는 식품군. 유지 · 당류는 뺀다 — 출현 문장이
+# 말하지 않는다
+PLAIN_FOOD_GROUPS = frozenset({"grains", "meat_fish_egg_legumes", "vegetables", "fruits", "dairy"})
+_PLAIN_TOP_KEYS = frozenset({"source", "version", "fetched_at", "menus"})
 
 
 @dataclass(frozen=True)
@@ -102,6 +110,33 @@ def food_groups_of_menu(menu_key: str, facts: NutritionFacts) -> frozenset[str]:
     return frozenset()
 
 
+def parse_plain_food_groups(data: Mapping[str, Any]) -> dict[str, frozenset[str]]:
+    """단일 식품 표를 검사해 돌려준다. 키는 `normalize_menu_key(menu)`. 틀리면 `ValueError`."""
+    if extra := set(data) - _PLAIN_TOP_KEYS:
+        raise ValueError(f"plain_food_groups.yaml 에 정해지지 않은 칸이 있다: {sorted(extra)}")
+    table = _group_rows(
+        data.get("menus"), name_key="menu", keys=_MENU_KEYS, normalize_key=normalize_menu_key
+    )
+    for key, groups in table.items():
+        if unknown := sorted(groups - PLAIN_FOOD_GROUPS):
+            raise ValueError(f"plain_food_groups.yaml {key!r}: 쓸 수 없는 식품군 {unknown}")
+    return table
+
+
+@cache
+def plain_food_groups() -> Mapping[str, frozenset[str]]:
+    """`reference/plain_food_groups.yaml`. 메뉴 키 → 식품군."""
+    return parse_plain_food_groups(load_reference("plain_food_groups.yaml"))
+
+
+def appearance_food_groups(menu_key: str, row_groups: frozenset[str]) -> frozenset[str]:
+    """식품군 출현을 셀 때 쓰는 메뉴의 식품군. 카탈로그 행에 식품군이 있으면 그대로, 비었을 때만
+    단일 식품 표를 본다. 둘 다 없으면 빈 집합이다 — 추정하지 않는다."""
+    if row_groups:
+        return row_groups
+    return plain_food_groups().get(menu_key, frozenset())
+
+
 def _check_row(row: Any, keys: frozenset[str]) -> None:
     if not isinstance(row, Mapping):
         raise ValueError("food_groups.yaml 의 항목은 객체여야 한다")
@@ -109,12 +144,18 @@ def _check_row(row: Any, keys: frozenset[str]) -> None:
         raise ValueError(f"food_groups.yaml 항목에 정해지지 않은 칸: {sorted(extra)}")
 
 
-def _group_rows(rows: Any, *, name_key: str, keys: frozenset[str]) -> dict[str, frozenset[str]]:
+def _group_rows(
+    rows: Any,
+    *,
+    name_key: str,
+    keys: frozenset[str],
+    normalize_key: Callable[[str], str] = normalize,
+) -> dict[str, frozenset[str]]:
     table: dict[str, frozenset[str]] = {}
     for row in rows or []:
         _check_row(row, keys)
         name = str(row.get(name_key) or "").strip()
-        key = normalize(name)
+        key = normalize_key(name)
         if not key:
             raise ValueError(f"food_groups.yaml 에 {name_key} 이름이 빈 항목이 있다")
         groups = row.get("groups")
