@@ -328,8 +328,9 @@ rows:
     row_type: weaning_stage
     title: 10~11개월, 가족 음식으로
     body: >-
-      여러 맛과 질감을 계속 주면서 가족이 먹는 음식도 작게 잘라 함께 준다. 돌 무렵에는 가족과 같은
-      종류의 음식을 먹도록 이끌고, 아기 음식을 따로 차릴 필요는 없다.
+      여러 맛과 질감을 계속 주면서 가족이 먹는 음식도 작게 잘라 함께 준다. 간을 하는 음식이면 소금 ·
+      설탕을 넣기 전에 아이 몫을 먼저 덜어 둔다. 돌 무렵에는 가족과 같은 종류의 음식을 먹도록 이끌고,
+      아기 음식을 따로 차릴 필요는 없다.
     min_month: 10
     max_month: 12
     tags: [weaning, family_food, texture]
@@ -530,7 +531,7 @@ rows:
     tags: [weaning, iron, meat, chicken, fish, first_food]
     texture: puree
     food_groups: [meat_fish_egg_legumes]
-    allergen_codes: [10, 15, 16]  # 고기(돼지 · 닭 · 쇠고기) · 닭고기
+    allergen_codes: [7, 10, 15, 16]  # 생선(고등어) · 고기(돼지 · 닭 · 쇠고기) · 닭고기
     <<: [*nz, *approved]
     reviewed_by: 03leedo
     reviewed_at: 2026-11-11
@@ -578,6 +579,7 @@ rows:
     tags: [weaning, fish, bones, finger_food]
     texture: mashed
     food_groups: [meat_fish_egg_legumes]
+    allergen_codes: [7]  # 생선(고등어) — 종류를 몰라 보수적으로 막는다
     <<: [*nz, *approved]
     reviewed_by: 03leedo
     reviewed_at: 2026-11-11
