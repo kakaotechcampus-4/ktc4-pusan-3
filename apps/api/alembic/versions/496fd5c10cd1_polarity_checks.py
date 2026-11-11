@@ -14,7 +14,7 @@ CHECK 를 걸기 전에 걸리는 행을 정리한다.
 🚨 downgrade 는 CHECK 만 푼다. 지운 Profile · 비운 칸은 되살리지 않는다.
 
 Revision ID: 496fd5c10cd1
-Revises: b7e4c2a9d815
+Revises: d41e7a0c9b26
 Create Date: 2026-11-09 12:00:00.000000
 
 """
@@ -25,7 +25,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "496fd5c10cd1"
-down_revision: Union[str, Sequence[str], None] = "b7e4c2a9d815"
+down_revision: Union[str, Sequence[str], None] = "d41e7a0c9b26"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
