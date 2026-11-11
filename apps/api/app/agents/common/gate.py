@@ -34,6 +34,8 @@ class DataReady:
     """그 아이에게 그 데이터가 있는가. 없으면 그 데이터를 읽는 tool 이 빠진다."""
 
     daycare_meal: bool = False  # 급식 행 — Food 의 급식 조회·갱신
+    # 급식 표를 읽으려다 실패했다 — 없다(`daycare_meal=False`)와 다르다. Food 가 따로 닫는다
+    daycare_unread: bool = False
     notice: bool = False  # 기관 공지 — Growth 의 lookup_notice
     book_api: bool = True  # 도서 API 가용 — Growth 의 도서 라벨
     places: bool = False  # 장소 어댑터가 주입됐나 — Activity 의 search_nearby_places

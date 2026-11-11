@@ -36,6 +36,7 @@ import {
 import { playEnter, useFlip } from "@/lib/motion";
 import {
   canBecomeEvent,
+  checkedOnConfirm,
   commitEntry,
   entryDateLabel,
   entryDateRole,
@@ -44,6 +45,7 @@ import {
   eventWhen,
   initialPlan,
   offBecausePast,
+  pastOnConfirm,
   planEndsAt,
   planLocks,
   planStartsAt,
@@ -205,7 +207,9 @@ export function PhotoReview({
   /**
    * 지난 일정이라 처음에 꺼 둔 줄 (`offBecausePast` · #828 리뷰). 그 줄이 "지난 일정이라 꺼 두었어요." 를
    * 말한다. 🚨 **보호자가 그 줄을 켜고 끄거나 고치면 빠진다** — 그 뒤로는 앱이 끈 것이 아니고, 날짜를 고쳤으면
-   *    `past` 는 처음 읽은 날짜의 판정이라 더는 맞지 않는다. 화면이 고친 날짜로 다시 견주지 않는다 (§4).
+   *    `past` 는 처음 읽은 날짜의 판정이라 더는 맞지 않는다. 화면이 오늘을 정해 다시 견주지 않는다 (§4).
+   * 🚨 **확인이 필요했던 일정을 처음 확인할 때는 다시 넣는다** (`saveEntry`) — 고친 날짜를 서버가 보낸
+   *    받은 날(`parsed.today`)과 견줘 지난 일정이면, 처음부터 지난 일정으로 읽힌 줄과 같이 꺼 두고 말한다.
    */
   const [pastOff, setPastOff] = useState<Set<string>>(
     () => new Set((parsed.entries ?? []).filter(offBecausePast).map((entry) => entry.id)),
@@ -301,6 +305,11 @@ export function PhotoReview({
     });
   }
 
+  /** 지난 일정이라 앱이 끈 줄로 적는다 — 그 줄이 "지난 일정이라 꺼 두었어요." 를 말한다. */
+  function markPastOff(id: string) {
+    setPastOff((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }
+
   function togglePick(id: string, next: boolean) {
     setPicked((prev) => {
       const out = new Set(prev);
@@ -319,12 +328,36 @@ export function PhotoReview({
      * 🚨 **고친 값으로 잠기면 켜 둔 것을 끈다.** 켠 채로 두면 나중에 값을 채워 풀리는 순간 보호자가 다시 켜지
      *    않았는데 저절로 켜진다. 한 번 잠긴 줄은 보호자가 다시 켠다.
      */
-    if (canBecomeEvent(next) && planLocks(next, plan ?? planOf(next)).length > 0) {
-      togglePick(next.id, false);
-    }
+    const nextPlan = plan ?? planOf(next);
+    const locked = canBecomeEvent(next) && planLocks(next, nextPlan).length > 0;
+    /** 확인하기 전의 그 줄. 🚨 이 렌더의 값이다 — 위의 `setEntries` 는 다음 렌더에 반영된다. */
+    const before = entries.find((e) => e.id === next.id);
+    /** 이 확인이 그 항목의 **첫** 확인인가 — "확인이 필요해요" 에 있던 줄이다. */
+    const firstConfirm = before?.needs_review === true;
+    if (locked) togglePick(next.id, false);
     // 고친 줄의 지난 실패는 지운다 — 고친 값으로는 될 수 있고, 남겨 두면 고친 뒤에도 못 넣었다고 말한다.
     forgetFailure(next.id);
     forgetPastOff(next.id);
+    /**
+     * 🚨 **처음 확인한 일정은 켠다** (`checkedOnConfirm`). 처음부터 잘 읽은 일정이 켜져서 시작하는 것과 같다.
+     *    확인한 줄은 접힌 "잘 읽었어요" 로 옮겨 가서, 꺼 두면 그 안에서 꺼진 채 일정이 조용히 빠진다.
+     * 🚨 **처음 확인할 때만이다** — 이미 확인한 줄을 다시 고칠 때는 보호자가 끈 것을 되살리지 않는다.
+     * 🚨 **지났는지는 확인한 날짜로 본다** (`pastOnConfirm`). 서버의 `past` 는 처음 읽은 날짜의 판정이라
+     *    날짜를 고치면 낡는다 — 고친 날짜를 서버가 보낸 받은 날(`parsed.today`)과 견준다.
+     * 🚨 **켜지 않았으면 접힌 묶음을 편다.** 잠겼든(시작 시간을 안 골랐다) 지난 일정이든, 접힌 채면 꺼진 줄이
+     *    보이지 않아 보호자는 넣은 줄 안다. 지난 일정이라 끈 것이면 그 줄이 까닭을 말한다 (`pastOff`).
+     */
+    if (before && firstConfirm && next.kind === "event" && !eventAdded[next.id]) {
+      const past = pastOnConfirm(before, next, parsed.today);
+      if (!locked && checkedOnConfirm({ ...next, past }, nextPlan)) {
+        togglePick(next.id, true);
+      } else {
+        setShowChecked(true);
+        if (!locked && past && checkedOnConfirm({ ...next, past: false }, nextPlan)) {
+          markPastOff(next.id);
+        }
+      }
+    }
     setEditing(null);
   }
 

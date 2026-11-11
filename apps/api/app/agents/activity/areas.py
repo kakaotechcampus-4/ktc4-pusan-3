@@ -147,6 +147,18 @@ def named_area(text: str, request_texts: Iterable[str]) -> str | None:
     return None
 
 
+def mentions_area(texts: Iterable[str]) -> bool:
+    """보호자 말에 지역 이름(시 · 도 · 시군구)이 있는가. 낱말 앞에서부터 사전 이름을 찾는다 —
+    "의령 가는데" · "해운대 근처" · "부산에". 행사 미리 읽기가 보호자 위치를 쓸지만 정한다."""
+    for text in texts:
+        for word in _WORD.findall(text):
+            for length in range(min(_MAX_NAME, len(word)), 1, -1):
+                name = word[:length]
+                if _is_name(name) and said(name, (text,)):
+                    return True
+    return False
+
+
 def leads_with_area(text: str) -> bool:
     """지역 이름으로 시작하는 다른 말인가 — "해운대해수욕장" · "세종문화회관" · "기장읍"."""
     key = "".join(_WORD.findall(text))

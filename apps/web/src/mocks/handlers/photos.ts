@@ -408,6 +408,8 @@ export async function* photoRunScript(runId: string): AsyncGenerator<Uint8Array>
     // 🚨 문서와 활동은 **다른 필드**다. 한 배열에 섞지 않는다 (types.ts 의 🚨).
     entries: run.entries,
     tags: run.tags,
+    // 서버가 사진을 받은 날이다 — 화면이 고친 날짜가 지났는지를 이 날과 견준다 (`pastOnConfirm`).
+    today: daysAgo(0),
   });
   await sleep(200);
 
