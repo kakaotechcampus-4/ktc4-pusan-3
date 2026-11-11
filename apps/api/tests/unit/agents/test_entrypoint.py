@@ -1031,8 +1031,17 @@ def test_넘긴_Food_카탈로그_어댑터를_그대로_쓴다() -> None:
     assert (ports.catalog, ports.recipes, ports.suggestions) == (catalog, recipes, suggestions)
 
 
+def test_넘긴_급식_어댑터가_Food_포트로_간다() -> None:
+    daycare = object()
+
+    ports = _food_ports(food_daycare=daycare)
+
+    assert ports.daycare._inner is daycare  # record_food_writes 가 쓰기 기록으로 감싼다
+
+
 def test_안_넘기면_빈_InMemory_다() -> None:
     ports = _food_ports()
+    assert type(ports.daycare._inner).__name__ == "InMemoryDaycareMeals"
 
     assert type(ports.catalog).__name__ == "InMemoryMenuCatalog"
     assert type(ports.recipes).__name__ == "InMemoryRecipeCatalog"

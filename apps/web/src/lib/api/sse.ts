@@ -311,6 +311,13 @@ export interface ParsedEvent {
   entries?: PhotoEntry[];
   /** 활동 lane 에서 뽑아낸 태그. 🚨 `entries` 와 **다른 필드다** (모양도 저장 경로도 다르다). */
   tags?: string[];
+  /**
+   * 서버가 사진을 받은 날 (한국 날짜 `YYYY-MM-DD`). 항목의 `past` 를 정한 그 날이다.
+   * 🚨 **화면은 오늘을 스스로 정하지 않는다.** 보호자가 고치기에서 날짜를 고치면 `past` 가 낡는데,
+   *    그때 고친 날짜가 지났는지를 이 값과 글자로 견준다 (`pastOnConfirm`). 계산이 아니라 비교다.
+   * ⚠️ 이 칸이 없던 서버의 응답에는 없다 — 그때는 지났다고 하지 않는다.
+   */
+  today?: string | null;
 }
 
 /**
