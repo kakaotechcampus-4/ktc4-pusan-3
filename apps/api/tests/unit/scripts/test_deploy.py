@@ -13,6 +13,7 @@ docker · git · sleep 을 가짜로 바꿔 돈다. docker · git 은 받은 인
     FAKE_RELOAD_FAIL   docker exec ktc4-caddy caddy reload
     FAKE_BACKUP_FAIL   배포 전 백업(가짜 deploy/scripts/backup.sh)
     FAKE_LOGS_FAIL     compose logs (api 로그 읽기)
+    FAKE_CRON_FAIL     worker cron 등록(가짜 deploy/scripts/worker-cron.sh)
 
 `compose logs` 는 FAKE_LOGS 를 그대로 찍는다 (api 컨테이너가 뜰 때 남긴 로그 자리).
 
@@ -113,6 +114,10 @@ def box(tmp_path: Path):
     (work / "deploy" / "scripts").mkdir(parents=True)
     (work / "deploy" / "scripts" / "backup.sh").write_text(
         'echo "backup $*" >> "$FAKE_LOG"\n[ -z "$FAKE_BACKUP_FAIL" ]\n'
+    )
+    # worker cron 등록은 test_worker_cron.py 가 본다. 여기서는 불리는 자리와 실패만
+    (work / "deploy" / "scripts" / "worker-cron.sh").write_text(
+        'echo "worker-cron" >> "$FAKE_LOG"\n[ -z "$FAKE_CRON_FAIL" ]\n'
     )
     env_file = work / "deploy" / "docker" / ".env"
     env_file.write_text(DEV_ENV)
@@ -432,6 +437,29 @@ def test_prod_validates_caddyfile_and_reloads_caddy(box):
     assert f"caddy-env team {AUTH_HASH}" in calls
     assert validate < _index(calls, " build ")
     assert any(c.startswith("docker exec ktc4-caddy caddy reload") for c in calls)
+
+
+def test_prod_registers_worker_cron_after_success(box):
+    """worker cron 줄은 prod 배포가 건다 (#718). dev 는 아직 cron 을 두지 않는다."""
+    box.env_file.write_text(PROD_ENV)
+    assert box(target="prod").returncode == 0
+    assert "worker-cron" in box.calls()
+
+    box.env_file.write_text(DEV_ENV)
+    assert box().returncode == 0
+    assert box.calls().count("worker-cron") == 1
+
+
+def test_failed_worker_cron_turns_prod_red_without_rollback(box):
+    """빠뜨려도 조용한 게 문제라 빨간불로 끝낸다. 새 버전은 떠 있으니 되돌리지 않는다."""
+    box.env_file.write_text(PROD_ENV)
+
+    result = box(target="prod", cron_fail="1")
+
+    assert result.returncode == 1
+    assert "worker cron 등록" in result.stdout
+    assert box.tag_file.read_text().strip() == "new"
+    assert "prev" not in [api for api, _ in _ups(box.calls())]
 
 
 def test_dev_does_not_touch_caddy(box):
