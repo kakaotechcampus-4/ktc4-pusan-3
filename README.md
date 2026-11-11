@@ -7,8 +7,11 @@
 **한 줄만 남기면, 우리 아이에게 맞는 다음 할 일로 돌아오는 육아 비서**
 
 <a href="https://play.google.com/store/apps/details?id=kr.ai.icatch"><img alt="Google Play 에서 받기" src="https://play.google.com/intl/en_us/badges/static/images/badges/ko_badge_web_generic.png" height="80"></a>
+<a href="https://icatch.ai.kr"><img alt="웹에서 바로 쓰기" src="docs/assets/readme/btn-web.png" height="80"></a>
 
-[웹에서 바로 쓰기](https://icatch.ai.kr) · [소개 영상 (42초)](https://youtu.be/EAYOg7bfxaI) · [개발 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/) · [API 문서](https://api.icatch.ai.kr/docs)
+<a href="https://youtu.be/EAYOg7bfxaI"><img alt="소개 영상 42초" src="docs/assets/readme/btn-video.png" height="56"></a>
+<a href="https://kakaotechcampus-4.github.io/ktc4-pusan-3/"><img alt="개발 문서" src="docs/assets/readme/btn-docs.png" height="56"></a>
+<a href="https://api.icatch.ai.kr/docs"><img alt="API 문서" src="docs/assets/readme/btn-api.png" height="56"></a>
 
 <sub>카카오테크 캠퍼스 4기 2단계 · 부산대 3팀</sub>
 
@@ -16,10 +19,11 @@
 
 | 아이캐치가 하는 일 | |
 | --- | --- |
-| **한 줄로 적습니다** | 칸을 고르지 않습니다. 말하듯 적으면 식사 · 건강 · 놀이 기록으로 나뉘어 저장됩니다 |
-| **사진으로도 적습니다** | 알림장과 식단표를 찍으면 일정 · 준비물 · 급식으로 정리해 보여 주고, 확인한 것만 저장합니다 |
-| **기록이 추천으로 돌아옵니다** | 저녁 메뉴 · 주말 놀이 · 교육 활동을 아이의 기록을 근거로 제안하고, 어떤 기록을 썼는지 보여 줍니다 |
-| **중요한 것은 사람이 정합니다** | 알레르기는 코드가 막고, 일정과 건강 기록은 보호자가 승인해야 들어갑니다 |
+| **한&nbsp;줄로&nbsp;적습니다** | 칸을 고르지 않습니다. 말하듯 적으면 식사 · 건강 · 놀이 기록으로 나뉘어 저장됩니다 |
+| **사진으로도&nbsp;적습니다** | 알림장과 식단표를 찍으면 일정 · 준비물 · 급식으로 정리해 보여 주고, 확인한 것만 저장합니다 |
+| **기록이&nbsp;추천으로&nbsp;돌아옵니다** | 저녁 메뉴 · 주말 놀이 · 교육 활동을 아이의 기록을 근거로 제안하고, 어떤 기록을 썼는지 보여 줍니다 |
+| **가족과&nbsp;같이&nbsp;봅니다** | 초대 코드로 다른 보호자를 부르면 같은 아이의 기록과 일정을 함께 봅니다 |
+| **중요한&nbsp;것은&nbsp;사람이&nbsp;정합니다** | 알레르기는 코드가 막고, 일정과 건강 기록은 보호자가 승인해야 들어갑니다 |
 
 <!-- 시연 영상(제출물)이 올라오면 위 링크 줄의 "소개 영상" 뒤에 시연 영상 링크를 더한다 -->
 
