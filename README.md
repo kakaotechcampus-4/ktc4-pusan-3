@@ -206,7 +206,7 @@ Agent 별 설계는 [Supervisor](https://kakaotechcampus-4.github.io/ktc4-pusan-
 
 </div>
 
-<img src="docs/assets/readme/architecture.png" alt="아이캐치 구성도 — 보호자의 웹과 앱이 Caddy 를 거쳐 web 과 api 로 들어가고, api 는 PostgreSQL · Redis · S3 · LLM API · 카카오 로그인 · 공공 데이터 · Firebase(FCM) 을 쓴다. UptimeRobot 이 밖에서 가동을 확인한다. 배포는 GitHub Actions 가 Systems Manager 로 명령을 보낸다.">
+<img src="docs/assets/readme/architecture.png" width="100%" alt="아이캐치 구성도. 보호자의 웹과 Android 앱이 HTTPS 로 AWS 서울 리전의 EC2 한 대에 들어온다. EC2 안에서 Caddy 가 요청을 받아 prod 와 dev 두 벌의 web · api · PostgreSQL · Redis 로 나눠 보내고, Alloy 가 지표를 모으고 cron 이 백업과 알림을 돌린다. api 는 LLM API · 카카오 로그인 · 공공 데이터 · Firebase FCM 을 부른다. 사진은 화면이 S3 에 바로 올리고 서버가 읽은 뒤 지운다. DB 백업은 매일 S3 에 쌓여 28일 보관된다. 배포는 GitHub Actions 가 OIDC 로 IAM 역할을 받아 Systems Manager 로 명령을 보낸다. Grafana Cloud · UptimeRobot · Discord 가 서버 밖에서 지켜본다.">
 
 | 고른 것 | 왜 |
 | --- | --- |
