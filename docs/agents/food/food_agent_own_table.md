@@ -275,6 +275,8 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 - 모델은 tool 을 꼭 불러야 끝나서(`required`) 묻는 말 · 가정도 쓰기로 올 수 있다. 원문을 코드가 본다(`daycare_intent`) — 묻는 말이면 쓰지 않고, 가정 · 짐작이거나 빠졌다는 말이 없으면 지우지 않는다. 바뀐 게 없으면 모델은 쓰지 않는 `keep_daycare_meal` 로 끝낸다
 - 적재(INSERT)는 백엔드 · OCR, 발화로 고치기(UPDATE · DELETE)는 Food 다. 메뉴는 집합 연산(`menu_keys − removed + added`)이라 같은 갱신을 두 번 해도 결과가 같다. 메뉴를 고치면 `caregiver_checked=true`, 양만 말하면 그대로다. 양은 양 사전(`amount_terms.yaml`)에 있는 말일 때만 바꾼다
 - "바꿨어요" 문구는 쓰기가 commit 된 뒤에만 낸다. 넣은 메뉴가 알레르기와 겹치면 저장은 하고 경고를 함께 낸다
+- 어댑터는 `app/domains/daycare_meal/agent_reader.py` 의 `DbDaycareMeals` 다. 러너와 05 가 `agent_ports.food_stores()` 로 같이 넘긴다(`food_daycare`) — 안 넘기면 빈 메모리라 급식이 있어도 "등록된 기관 급식 정보가 없어요" 로 닫힌다(#956). `update` 는 `menu_keys` · `amount_factor` · `amount_known` · `caregiver_checked` 넷만 바꾸고(날짜 · 끼니 · 출처는 둔다), `delete` 는 다른 아이 id 가 하나라도 섞이면 아무것도 지우지 않는다
+- 급식 표를 읽지 못하면(`DaycareLookupError`) 없다고 하지 않는다. 급식 조회 · 고치기는 도중에 못 읽어도 `closed.daycare_unread` · `blocked` 로 닫고(게이트에서 못 읽은 것과 같다), 영양소 분석 · 식단 추천은 급식 행 없이 계속 간다. 한 task 에서 한 번 못 읽으면 다시 읽지 않는다(`context.read_daycare_rows` 한 곳)([`영양소_계산_설계.md`](영양소_계산_설계.md) §3). 쓰기(`update` · `delete`) 실패는 그대로 Food 실패다 — 못 썼는데 "바꿨어요" 를 낼 수 없다
 
 ---
 

@@ -6,6 +6,7 @@
 - 돌려준 행사는 run state 에 남는다. 출력 검증이 place_name 을 이 표와 대조한다.
 """
 
+import asyncio
 from datetime import UTC, date, datetime, timedelta, timezone
 from uuid import UUID
 
@@ -632,3 +633,171 @@ class TestOrder:
         result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="해운대"))
 
         assert names(result) == ["해운대 주말 축제", "해운대 상설 전시"]
+
+
+class SlowSchedules(InMemoryEventSchedules):
+    """일정 읽기(모델 호출)가 느린 행사. `slow` 의 행사는 `delay` 초 걸린다."""
+
+    def __init__(self, slow: set[str], delay: float) -> None:
+        super().__init__()
+        self.slow, self.delay, self.done = slow, delay, []
+
+    async def schedule_of(self, event, *, today):
+        if event.content_id in self.slow:
+            await asyncio.sleep(self.delay)
+        self.done.append(event.content_id)
+        return await super().schedule_of(event, today=today)
+
+
+class TestReadBudget:
+    """첫 run 이 20초를 넘지 않게 일정 읽기에 상한을 둔다. 못 끝낸 행사는 이번에는 빼고, 읽기는
+    멈추지 않고 이어서 캐시를 채운다 — 다음 run 부터는 나온다."""
+
+    async def test_상한_안에_못_읽은_행사는_이번에는_빼고_읽기는_이어간다(self, monkeypatch):
+        from app.agents.activity.tools import outing
+
+        monkeypatch.setattr(outing, "EVENT_READ_BUDGET_S", 0.05)
+        rows = [raw("1", "빠른 축제", km=1), raw("2", "느린 축제", km=2)]
+        schedules = SlowSchedules({"2"}, delay=0.2)
+        ctx = await context(InMemoryEvents(rows), schedules=schedules)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == ["빠른 축제"]
+        await asyncio.sleep(0.3)
+        assert "2" in schedules.done  # 뒤에서 끝까지 읽었다
+
+    async def test_마감이_가까우면_남은_시간만큼만_기다린다(self, monkeypatch):
+        import time
+
+        from app.agents.activity.tools import outing
+
+        monkeypatch.setattr(outing, "EVENT_READ_BUDGET_S", 5.0)
+        rows = [raw("1", "느린 축제", km=1)]
+        ctx = await context(InMemoryEvents(rows), schedules=SlowSchedules({"1"}, delay=1.0))
+        # 마감까지 남은 시간이 마지막 후보 내기 몫보다 적다 — 일정 읽기를 기다리지 않는다
+        ctx.state.deadline = time.perf_counter() + outing.FINAL_TURN_RESERVE_S
+
+        started = time.perf_counter()
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == [] and time.perf_counter() - started < 0.5
+
+    async def test_보여_준_행사_뒤_남은_것이_모두_상한에_걸리면_새_행사_없음이_아니다(
+        self, monkeypatch
+    ):
+        """앞 턴에서 보여 준 행사를 빼고 남은 행사가 전부 일정 읽기 중이면 "더 없다" 가 아니라
+        "확인 중" 이다 (#906 리뷰)."""
+        from app.agents.activity.tools import outing
+
+        monkeypatch.setattr(outing, "EVENT_READ_BUDGET_S", 0.01)
+        rows = [raw("1", "본 축제", km=1), raw("2", "느린 축제", km=2)]
+        ctx = await context(InMemoryEvents(rows), schedules=SlowSchedules({"2"}, delay=0.2))
+        ctx.state.shown_before = ("본 축제",)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == []
+        assert ctx.state.no_new_events is False
+        assert ctx.state.events_pending is True
+        assert "확인하는 중" in result.data["message"]
+
+
+class CachingSlowSchedules(SlowSchedules):
+    """한 번 읽은 행사는 캐시에서 바로 준다 — `ReadEventSchedules` 의 일정 캐시처럼."""
+
+    async def schedule_of(self, event, *, today):
+        if event.content_id in self.done:
+            return await InMemoryEventSchedules.schedule_of(self, event, today=today)
+        return await super().schedule_of(event, today=today)
+
+
+class TestPrefetch:
+    """나들이를 물은 run 은 날씨를 보는 동안 근처 행사 일정 읽기를 뒤에서 시작한다 — 모델이
+    행사를 찾을 때는 캐시에 있다."""
+
+    async def test_미리_읽어_두면_상한이_짧아도_행사가_나온다(self, monkeypatch):
+        from app.agents.activity.tools import outing
+
+        monkeypatch.setattr(outing, "EVENT_READ_BUDGET_S", 0.05)
+        schedules = CachingSlowSchedules({"1"}, delay=0.1)
+        ctx = await context(InMemoryEvents([raw("1", "느린 축제", km=1)]), schedules=schedules)
+        ctx.state.request_texts = ("주말에 갈만한 행사 추천해줘",)
+
+        outing.start_event_prefetch(ctx, _weather(ok=True))
+        await asyncio.sleep(0.3)  # 날씨 조회 · 모델 1회차 동안
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == ["느린 축제"]
+
+    async def test_나들이를_묻지_않았으면_미리_읽지_않는다(self):
+        from app.agents.activity.tools import outing
+
+        schedules = CachingSlowSchedules(set(), delay=0)
+        ctx = await context(InMemoryEvents([raw("1", "축제")]), schedules=schedules)
+        ctx.state.request_texts = ("오늘 집에서 뭐 하고 놀까",)
+
+        outing.start_event_prefetch(ctx, _weather(ok=True))
+        await asyncio.sleep(0.05)
+
+        assert schedules.calls == []
+
+
+def _weather(*, ok: bool):
+    future = asyncio.get_event_loop().create_future()
+    future.set_result(WeatherBrief(outdoor_ok=ok))
+    return future
+
+
+class TestPrefetchLimits:
+    """미리 읽기가 쓸모없는 run 에서는 모델을 부르지 않는다 (#906 리뷰)."""
+
+    async def test_오늘_바깥이_어려우면_일정은_읽지_않는다(self):
+        from app.agents.activity.tools import outing
+
+        schedules = CachingSlowSchedules(set(), delay=0)
+        ctx = await context(InMemoryEvents([raw("1", "축제")]), schedules=schedules)
+        ctx.state.request_texts = ("주말에 갈만한 행사 추천해줘",)
+
+        outing.start_event_prefetch(ctx, _weather(ok=False))
+        await asyncio.sleep(0.05)
+
+        assert schedules.calls == []
+
+    async def test_지역을_말했으면_위치_근처를_미리_읽지_않는다(self):
+        from app.agents.activity.tools import outing
+
+        schedules = CachingSlowSchedules(set(), delay=0)
+        ctx = await context(InMemoryEvents([raw("1", "축제")]), schedules=schedules)
+        ctx.state.request_texts = ("다음 주에 의령 가는데 갈만한 행사 있어?",)
+
+        outing.start_event_prefetch(ctx, _weather(ok=True))
+        await asyncio.sleep(0.05)
+
+        assert schedules.calls == []
+
+    async def test_앞_턴이_아니라_이번_말만_본다(self):
+        from app.agents.activity.tools import outing
+
+        schedules = CachingSlowSchedules(set(), delay=0)
+        ctx = await context(InMemoryEvents([raw("1", "축제")]), schedules=schedules)
+        ctx.state.request_texts = ("오늘 집에서 뭐 하고 놀까",)
+        ctx.state.prior_texts = ("주말에 갈만한 행사 추천해줘",)
+
+        outing.start_event_prefetch(ctx, _weather(ok=True))
+        await asyncio.sleep(0.05)
+
+        assert schedules.calls == []
+
+    async def test_가까운_순으로_다섯_건만_읽는다(self):
+        from app.agents.activity.tools import outing
+
+        schedules = CachingSlowSchedules(set(), delay=0)
+        rows = [raw(str(n), f"축제 {n}", km=n) for n in range(1, 9)]
+        ctx = await context(InMemoryEvents(rows), schedules=schedules)
+        ctx.state.request_texts = ("주말에 갈만한 행사 추천해줘",)
+
+        outing.start_event_prefetch(ctx, _weather(ok=True))
+        await asyncio.sleep(0.05)
+
+        assert sorted(schedules.done) == ["1", "2", "3", "4", "5"]
