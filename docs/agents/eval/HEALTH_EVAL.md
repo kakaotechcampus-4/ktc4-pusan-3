@@ -18,7 +18,7 @@ tool spec · 응답 스키마: `app/agents/health/schemas/tool_defs.py`
 
 | 지표 | 값 |
 | --- | --- |
-| 측정값 | 문서에 남은 수치 없음 |
+| 측정값 | §1 의 v1 행 — 배포 값 `gpt-5.6-luna`/`none`, `develop` @ `3a0163c9` + #967 작업 트리(dirty), 79케이스 × 5회. 같은 코드로 `gpt-5-nano` 를 잰 v2 는 실패했다(§3) |
 
 ## 1. 측정 이력
 
@@ -28,6 +28,8 @@ tool spec · 응답 스키마: `app/agents/health/schemas/tool_defs.py`
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | v0 | `3e0d3afc` | `9bce61071b40` | 미측정 | 최초 기준선. 수치 없음, 다음 변경 때 전후 두 행으로 잰다 | 미측정 | 미측정 | 미측정 |
 | v0.1 | `bf3976c5 dirty` | `9bce61071b40` | T24-temp 1건 · gpt-5.6-luna/none · R1 | 프롬프트 · tool spec 은 그대로(지문 같음), 코드만 바꿨다 — 진료 준비 정리의 발열 줄에 체온을 싣는다. "병원에 가려고 하는데 최근 증상 정리해줘" 가 "발열" 만 내고 몇 도였는지를 뺐다(정리는 체온 칸을 싣지 않고, 체온은 열 타임라인에만 있었다). 결과는 §3 | 0/1 | 0 | 0 |
+| v1 | `3a0163c9 dirty` | `9bce61071b40` | 79케이스 · gpt-5.6-luna/none · R5 | #967 프롬프트 · tool spec 은 그대로(지문 같음). gpt-5-nano 와 비교하려고 79케이스 전체를 처음으로 R5 로 잼 — v0 은 미측정, v0.1 은 1케이스 · R1 이라 기준으로 못 쓴다 | 0/79 | 없음 | T05 |
+| v2 | `3a0163c9 dirty` | `9bce61071b40` | 79케이스 · gpt-5-nano/minimal · R5 | #967 모델만 gpt-5-nano/minimal 로 낮춤(지문 같음 · 엘리스 `gpt-5-nano-2025-08-07`). v1 대비 통과 99.1% → 84.5% · 실패율 0% → 2.7% · 호출/회차 1.23 → 1.75 · 비용/회차 ₩0.26 → ₩0.16(−39%) · p95 2.5초 → 10.4초 — **다운그레이드 실패**(luna 유지), 후속 방향은 §3 | 0/79 | T05 | T02 · T02-unclear · T04 · T10-mixed · T14 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
 - `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.
@@ -87,6 +89,16 @@ tool spec · 응답 스키마: `app/agents/health/schemas/tool_defs.py`
 
 - 판정에 "최근 3일 체온 기록이 있는데 가장 높은 체온이 정리에 없으면 실패" 를 더했다(`judges._visit_failures`). 같은 케이스를 1회만 돌린 것이라 흔들림은 아직 모른다
 
+### #967 gpt-5-nano 로 낮추기 — 실패 (v1 ↔ v2)
+
+Health 모델을 `gpt-5.6-luna`/`none` 에서 `gpt-5-nano`/`minimal` 로 낮춰 봤지만 **실패했다 — luna 를 유지한다.** 모델 교체 실험을 하려고 **로컬에서 코드를 고쳐 잰 것이다** — `LLMClient`(tool 호출에 `minimal` 허용)와 eval 도구(회차마다 LLM 사용량을 결과 jsonl 에 남기는 것). 두 변경은 저장소에 넣지 않았다(§1 의 `dirty` 가 이 작업 트리다). 같은 코드 · 같은 평가셋 · 케이스마다 5회로 잰 숫자는 §1 의 v1(luna) · v2(nano) 행에 있다. 비용/회차는 ₩0.26 → ₩0.16(−39%)으로 줄고 C1 도 0/79 로 같지만, 통과 99.1% → 84.5%, 실패율 0% → 2.7%(제안 기준 +2%p 초과), p95 2.5초 → 10.4초라 기준을 못 넘었다. **비용은 감소했지만 다운그레이드는 적절하지 않다고 판단했다.**
+
+가능한 후속 방향 (이번 PR 에서는 하지 않았다)
+
+- **복약만 luna 에 두고 진료 준비 정리만 낮춘다.** 라벨별로 보면 nano 는 진료 준비 정리(`visit_summary`)가 30/30 통과(luna 와 같다)이고 실패는 전부 복약(`medication`) 63/80(luna 79/80)이다. 지금은 역할 하나가 모델 하나라 라벨별로 모델을 나누는 코드가 먼저 필요하다. 진료 준비 정리만의 비용 절감 폭은 아직 재지 않았다.
+- **복약 completion 상한을 확인한다.** 복약 라벨의 상한(`MAX_COMPLETION_TOKENS = 1000`)에 닿은 호출이 있다(출력 최대 1000). 호출별 `finish_reason` 을 `usage` 행에 남겨 추론 토큰이 상한을 먹고 tool 인자가 잘렸는지부터 가린다.
+- **effort 를 `low` 로 올린다.** 복약 되묻기 · 초안 구성에서 실패가 났으니 추론이 도움이 될 수 있다. 저장소의 `LLMClient` 는 tool 호출에 `none` 만 받는다(`memory-agent-v1.md` D2-1).
+
 ## 4. 실행 방법
 
 ```powershell
@@ -96,3 +108,5 @@ uv run pytest tests/eval/agents/health/test_health_run.py -m live -s
 ```
 
 pytest 라이브 eval(`-m live`)은 끝나면 `tests/eval/agents/live_run_meta.json`(gitignore)에 커밋 · dirty · 모델 · effort · 반복 횟수 · 프롬프트 지문을 남긴다. pytest 가 아닌 스크립트는 위의 `run_meta` 명령으로 남긴다. 그 값으로 §1 에 행을 더한다. 실행이 끝나면 터미널에 측정 이력 칸 값이 한 줄 나온다 — 버전 · 무엇을 왜 바꿨나를 채워 §1 에 붙인다. 반복을 세션으로 나눠 돌렸으면(`EVAL_ATTEMPT`) `uv run python -m tests.eval.agents.tally` 로 다시 출력한다. `tool_ci` 표시 케이스(T01 · T13 · T16)만 프롬프트 · tool spec 이 바뀐 PR 에서 CI 로 3회 돈다 — [`live-ci-v1.md`](live-ci-v1.md).
+
+모델을 바꿔 비용 · 지연을 비교하는 방법 (#967 에서 로컬로 쓴 도구 — 저장소에는 없다): 라이브 eval 이 회차마다 `llm_usage` 행(역할 · 응답에 찍힌 실제 모델 · 입력 · 캐시 · 출력 · 추론 토큰 · 지연)을 결과 jsonl(`TEST_RESULT_PATH`)의 `usage` 칸에 남기게 하고, LLM 오류로 끝난 회차도 실패로 센다. 모델마다 결과 파일을 따로 두고 회차 · 호출/회차 · 통과 · 실패율 · p50 · p95 · 20초 초과 · 비용/회차를 센다. Health 의 Memory 모델 케이스(T21-memory · T21-linked)는 Memory 호출이라 분모에 들지 않는다. 다시 하려면 이 도구를 새로 만들어야 한다.

@@ -198,6 +198,17 @@ ISO 문자열도 같은 필드로 받는다 — 모델·API 조합에 따라 표
 `REASONING_EFFORT=none` 으로 고정했고, `LLMClient` 가 왕복 전에 `LLMConfigError` 로 막는다.
 reasoning 을 유지하려면 `/v1/responses` 로 옮겨야 하는데, 그때 입력 토큰도 함께 줄어든다(실측 189 → 108).
 
+**#967 에서 잰 값 (엘리스 실호출, 2026-11-11).** Food · Health 를 gpt-5-nano 로 낮춰 보려고 로컬에서
+`LLMClient` 가 tool 호출에 `minimal` 도 보내게 고쳐 잰 실험이다. 그 코드 변경은 저장소에 넣지 않았다 — 판정이
+"다운그레이드는 적절하지 않다"(luna 유지)여서 지금 `LLMClient` 는 위에서 말한 대로 tool 호출에 `none` 만 받는다.
+남기는 것은 실호출로 확인한 값이다.
+
+- gpt-5-nano 는 `none` 이 없다(400, 허용값 minimal · low · medium · high). `minimal` · `low` · `medium` 은 모두
+  tools + `tool_choice=required` 가 200 이었고, 추론 토큰이 0 인 `minimal` 로 잰다.
+- 반대로 luna 는 `minimal` 을 받지 않는다(400, 허용값 none · low · medium · high · xhigh). 역할 모델을 바꿔 봤다가
+  luna 로 되돌릴 때는 `<ROLE>_REASONING_EFFORT` 도 함께 비워야 한다 — effort 만 남으면 luna 에 `minimal` 이 붙어 400 이다.
+- 측정 결과와 가능한 후속 방향은 `eval/FOOD_EVAL.md` · `eval/HEALTH_EVAL.md` §3.
+
 ### D3. LLM 에게 노출하지 않는 필드
 
 `id` · `child_id` · `source_writer` · `created_at`/`updated_at` · `embedding` · `affinity_id` ·
