@@ -203,7 +203,7 @@
 │       │   │   └── CLAUDE.md (미생성) Agent 구현 · 프롬프트 — 이시하
 │       │   ├── rules/        규칙(순수 Python) — 공동
 │       │   ├── providers/    외부 모델 SDK 격리 (급식표 · 공지 사진 읽기)
-│       │   ├── integrations/ 외부 서비스 API (Kakao OAuth · 공공데이터 날씨 · 행사 · 병원 · 식품 · 도서관 정보나루 · FCM · Discord)
+│       │   ├── integrations/ 외부 서비스 API (Kakao OAuth · 공공데이터 날씨 · 행사 · 식품 · 도서관 정보나루 · FCM · Discord)
 │       │   ├── infra/db/     DB 세션 · 엔진 — 김명성
 │       │   └── workers/      서버 cron 이 돌리는 배치 — 일정 알림 발송 · 만료 정리 · 기억 다시 계산
 │       └── tests/            pytest — unit · integration · eval(라이브 LLM)

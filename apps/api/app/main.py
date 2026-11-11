@@ -23,7 +23,6 @@ from app.core.constants import API_V1_PREFIX
 from app.core.logging_config import configure_logging
 from app.domains.memory.curator import trigger as curator_trigger
 from app.integrations import discord
-from app.integrations.hospital.client import NmcHospitals
 from app.integrations.tour.events import TourEvents
 from app.integrations.weather.source import PublicWeather
 
@@ -95,9 +94,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     행사 어댑터(TourAPI)도 같다 — 하루치 전국 목록 · 소개정보 캐시가 프로세스 메모리에 있다.
     같은 공공데이터포털 키를 쓰고, 없으면 Activity 는 행사를 찾지 않는다.
 
-    병원 어댑터(국립중앙의료원, #713)도 같다 — 시도별 기관 목록 캐시가 프로세스 메모리에 있다.
-    같은 키를 쓰고, 없으면 Health 병원 찾기가 `place.unavailable` 로 닫힌다.
-
     LLM 사용량 writer(#710)는 키와 상관없이 늘 띄운다 — 큐를 2초마다 `llm_usage` 표에 쓴다.
     프로세스마다 큐 · writer 가 하나라 `--workers` 와 무관하다. 종료 때는 먼저 멈춰서(취소)
     남은 큐를 쓰고 끝낸다. SIGKILL · OOM 이면 최대 2초분을 잃는다.
@@ -109,10 +105,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     has_key = bool(settings.DATA_GO_KR_SERVICE_KEY.strip())
     weather = PublicWeather() if has_key else None
     events = TourEvents() if has_key else None
-    hospitals = NmcHospitals() if has_key else None
     app.state.activity_weather = weather
     app.state.activity_events = events
-    app.state.health_places = hospitals
     usage_writer = asyncio.create_task(llm_usage_writer.run_writer(), name="llm-usage-writer")
     # 만료된 되묻기 맥락을 1분마다 지운다 (#877). 처리방침이 "15분 안에 지운다" 라
     # 하루 배치로는 늦다
@@ -133,7 +127,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # 아래 클라이언트 닫기를 건너뛰면 안 된다
         with suppress(asyncio.CancelledError, Exception):
             await usage_writer
-        for client in (weather, events, hospitals):
+        for client in (weather, events):
             if client is not None:
                 await client.aclose()
 

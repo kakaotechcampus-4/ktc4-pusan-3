@@ -12,7 +12,7 @@ import pytest
 
 from app.agents.health import agent, registry
 from app.agents.health.agent import registered_titles, run, run_hooks
-from app.agents.health.readouts import READOUTS
+from app.agents.health.readouts import PLACE_PORTAL, READOUTS
 from app.agents.health.schemas.task import HealthTaskType
 from app.agents.health.store.inmemory import (
     InMemoryHealthMemory,
@@ -51,24 +51,27 @@ async def test_동의가_없으면_전_라벨이_닫힌다(label):
     assert result.suggestions == ()
 
 
-@pytest.mark.parametrize(
-    "label",
-    [
-        label
-        for label in HealthTaskType
-        if label not in registry.IMPLEMENTED_TASKS and label not in agent._PREPARING
-    ],
-)
-async def test_다른_미구현_라벨은_여전히_readout_없음(label):
+async def test_문_연_병원은_응급의료포털_안내_하나로_끝난다():
     llm = FakeLLM()
 
-    result = await run(task(label.value), context(), client=llm)
+    result = await run(task("place_lookup", "지금 문 연 소아과 찾아줘"), context(), client=llm)
 
-    assert result.status == "unsupported"
-    assert result.task_type == label.value
-    assert result.model_calls == 0
-    assert result.readouts == ()
+    assert (result.status, result.task_type, result.model_calls) == ("completed", "place_lookup", 0)
+    assert result.readouts == (READOUTS.render(PLACE_PORTAL),)
+    assert result.readouts[0].kind == "notice"
+    assert result.readouts[0].body == (
+        "지금 문 연 병원은 응급의료포털(www.e-gen.or.kr)에서 찾을 수 있어요. "
+        "급하면 119에 전화하세요."
+    )
     assert llm.seen == []
+
+
+async def test_경로가_없는_라벨은_문구_없이_unsupported(monkeypatch):
+    monkeypatch.setattr(agent, "IMPLEMENTED_TASKS", frozenset())
+
+    result = await run(task("schedule_check"), context(), client=FakeLLM())
+
+    assert (result.status, result.readouts, result.model_calls) == ("unsupported", (), 0)
 
 
 async def test_라벨이_없으면_아무것도_읽지_않고_unsupported():
@@ -114,23 +117,6 @@ async def test_run_hooks_는_응급_뒤에_반복_안내를_싣는다():
     assert [r.kind for r in result.readouts] == ["emergency", "symptom_repeat"]
     assert (result.task_type, result.status, result.model_calls) == (None, "completed", 0)
     assert result.suggestions == () and result.medication_drafts == ()
-
-
-async def test_병원_찾기는_준비_중_문구_하나_모델_0회():
-    # 위치 동의 약관에 병원 찾기 목적이 들어가기 전이라 위치를 묻지도 않는다
-    llm = FakeLLM()
-
-    result = await run(task("place_lookup", "지금 문 연 소아과"), context(), client=llm)
-
-    assert result.status == "unsupported" and result.model_calls == 0
-    assert [r.body for r in result.readouts] == ["병원 찾기는 아직 준비 중이에요."]
-    assert "위치" not in result.readouts[0].body  # place.no_location 이 아니다
-    assert llm.seen == []
-
-
-def test_준비_중_문구는_구현_전_라벨에만_있다():
-    assert set(agent._PREPARING) == {HealthTaskType.PLACE_LOOKUP}
-    assert not set(agent._PREPARING) & registry.IMPLEMENTED_TASKS
 
 
 class _SpyMedication(InMemoryMedicationStore):

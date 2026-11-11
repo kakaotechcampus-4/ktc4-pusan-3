@@ -50,7 +50,7 @@ def disabled_features(settings: _Settings, *, llm_gaps: Sequence[str]) -> list[s
     """
     found = list(llm_gaps)
     if _blank(settings.DATA_GO_KR_SERVICE_KEY):
-        found.append("날씨 · 행사 · 병원 목록 · 식품 영양성분 조회 (DATA_GO_KR_SERVICE_KEY 없음)")
+        found.append("날씨 · 행사 · 식품 영양성분 조회 (DATA_GO_KR_SERVICE_KEY 없음)")
     if _blank(settings.DATA4LIBRARY_AUTH_KEY):
         found.append("도서 추천 (DATA4LIBRARY_AUTH_KEY 없음)")
     ocr = [n for n in ("MEAL_OCR_BASE_URL", "MEAL_OCR_API_KEY") if _blank(getattr(settings, n))]

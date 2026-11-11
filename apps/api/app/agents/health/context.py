@@ -13,7 +13,6 @@ from datetime import date, datetime, tzinfo
 from typing import Literal
 from uuid import UUID
 
-from app.agents.activity.store.ports import CoarseLocation
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.gate import Gate, SafetyState
@@ -108,10 +107,6 @@ class HealthContext:
     state: HealthRunState = field(default_factory=HealthRunState)
     # 이전 run 이 되묻고 멈춘 자리. 연결 이슈가 reply_to 로 받아 넣는다 — 있으면 모델 없이 이어 간다
     pending: DomainPending | None = None
-    # 병원 찾기에 쓰는 흐린 좌표. 🚨 Activity 의 위치와 따로 받는다 — 위치 약관은 판마다 목적이
-    # 달라서, 병원 찾기 목적이 든 판에 동의한 보호자의 위치만 여기 온다(`entrypoint.handle_input`).
-    # None 이면 병원 찾기가 `place.no_location` 이다. 저장 · 로그 · 모델 입력에 넣지 않는다
-    location: CoarseLocation | None = None
 
     @property
     def today(self) -> date:
