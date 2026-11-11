@@ -14,6 +14,7 @@
 #   3. codes       원재료성 행이고 대분류 이름이 비었을 때만. 코드(FOOD_CAT1_CD)를 categories 의 이름으로 옮긴다.
 #                  코드 뜻은 DB 그룹마다 다르다(원재료성 09 = 육류, 음식 09 = 전·적 및 부침류)
 #   그래도 없으면 적재 배치가 이름이 같은 레시피의 주재료 식품군을 빌린다(catalog_rows.borrowable_food_groups)
+#   식품군 출현을 셀 때는 그래도 비면 단일 식품 표(plain_food_groups.yaml)를 본다 — 카탈로그 행에는 쓰지 않는다
 #
 # 띄어쓰기 · 문장부호는 보지 않는다("우유및유제품류" · "현미밥_쌀" 도 같은 이름이다).
 #   groups    grains · meat_fish_egg_legumes · vegetables · fruits · dairy · fats_sugars 중에서.
