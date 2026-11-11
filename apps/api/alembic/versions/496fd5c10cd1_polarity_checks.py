@@ -44,6 +44,9 @@ OBSERVATION_POLARITY_CHECK = "polarity IN (-1, 0, 1)"
 
 
 def upgrade() -> None:
+    # api 를 내리지 않고 마이그레이션한다(deploy.sh). 긴 쓰기에 막혀 줄을 서면 뒤의 요청까지 멈추니
+    # 기다리지 말고 실패시킨다 — 실패하면 전부 되돌아가고 옛 컨테이너가 계속 돈다 (de2051c89680 과 같다)
+    op.execute("SET LOCAL lock_timeout = '5s'")
     for table, domain in PROMOTABLE.items():
         op.execute(
             f"DELETE FROM observation_link_hold WHERE domain = '{domain}'"
@@ -60,15 +63,16 @@ def upgrade() -> None:
     )
 
     # 새 CHECK 는 expand-only 검사에 안 걸리지만 조이기다 — 표시는 찾기 쉽게 단다
+    # 앱이 잠그는 순서(관찰 → 기억)와 맞춰 관찰 표부터 건다 — 반대면 Curator 와 교착할 수 있다
     # contract: #844
+    for table in OBSERVATION_TABLES:
+        op.create_check_constraint("observation_polarity", table, OBSERVATION_POLARITY_CHECK)
     op.create_check_constraint(
         "profile_affinity_polarity", "profile_affinity", PROFILE_POLARITY_CHECK
     )
     op.create_check_constraint(
         "profile_affinity_confirmed_polarity", "profile_affinity", PROFILE_CONFIRMED_POLARITY_CHECK
     )
-    for table in OBSERVATION_TABLES:
-        op.create_check_constraint("observation_polarity", table, OBSERVATION_POLARITY_CHECK)
 
 
 def downgrade() -> None:
