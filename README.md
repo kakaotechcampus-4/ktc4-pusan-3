@@ -216,6 +216,7 @@ Agent 별 설계는 [Supervisor](https://kakaotechcampus-4.github.io/ktc4-pusan-
 | 서버가 통째로 죽는다 | UptimeRobot 이 5분마다 밖에서 찔러 본다 |
 | 서버는 살아 있는데 백업이 멈춘다 | GitHub Actions 가 매일 밖에서 가장 새 백업의 시각을 본다 |
 | CPU · 메모리 · 디스크 · 응답 코드가 이상하다 | Alloy 가 Grafana Cloud 로 보낸 지표를 대시보드로 본다 |
+| 운영 API 의 특정 경로가 느려지거나 5xx 가 난다 | api 가 경로별 요청 수 · 응답 코드 · 응답 시간을 내놓고, Alloy 가 dev 를 뺀 운영 숫자만 Grafana Cloud 로 보내 대시보드로 본다 |
 
 <img src="docs/assets/readme/alerts.png" width="100%" alt="Discord 로 온 알림 네 가지. 컨테이너 상태가 바뀌면 내려갈 때 빨강, 돌아오면 초록 카드가 온다. 백업이 멈추면 GitHub Actions 가 서버 밖에서 보고 알린다. 보호자 화면에서 오류가 나면 오류 종류 · 경로 · 기기 요약만 온다. 웹 서버 오류 카드에는 다음에 칠 명령이 적혀 있다.">
 
