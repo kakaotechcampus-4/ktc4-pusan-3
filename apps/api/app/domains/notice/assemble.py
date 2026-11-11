@@ -6,6 +6,7 @@
 
 import hashlib
 import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, tzinfo
@@ -21,7 +22,7 @@ from app.domains.notice.models import (
     NoticeItemTarget,
 )
 from app.domains.suggestion.draft_items import draft_items
-from app.rules.notice_dates import NoticeWhen, parse_base_month, parse_notice_when
+from app.rules.notice_dates import NoticeWhen, _times, parse_base_month, parse_notice_when
 from app.rules.notice_text import clean_text
 
 MAX_EVENT_TITLE = 200
@@ -53,6 +54,18 @@ _MIN_ORG_STEM = 3
 _OPENS = re.compile(r"(?:신청|접수|예약|모집)\s*시작|시작\s*일시|시작\s*시각|오픈")
 _QUOTE_NOISE = re.compile(r"[\s|│·ㆍ:：\-–—*•◆■□○●▶]+")
 _END_OF_DAY = time(23, 59)
+# 모델이 값을 고르며 한 생각이 제목 · details 에 섞인다 — "… Notice 포함 Info 등 겸함이나" (#909).
+# 공지에 없는 라틴 문자 낱말이 둘 이상이면 그 표시로 본다. 혼잣말은 영어 구절로 나온다 —
+# 낱말 하나는 원문의 "줌" 을 "Zoom" 으로 적은 정당한 값일 수 있다.
+# 두 글자 이하는 단위 · 약어라 세지 않는다
+_LATIN_WORD = re.compile(r"[A-Za-z]{3,}")
+_LATIN_RUN = re.compile(r"[A-Za-z]+")
+_MONOLOGUE_WORDS = 2
+_OPEN_PAREN = re.compile(r"[(（]")
+# 규칙이 날짜 · 시각으로 쓰지 못해 화면에서 사라질 글을 이 이름표로 details 에 남긴다
+WRITTEN_AS = "적힌 대로"
+_MARKS = re.compile(r"[\W_]+")
+_UNTIL_AFTER = re.compile(r"\s*까지")
 
 
 @dataclass(frozen=True)
@@ -214,12 +227,43 @@ def _cleaned(raw: ExtractedItem) -> ExtractedItem:
     )
 
 
+def _source_words(source: str) -> frozenset[str]:
+    """원문의 라틴 문자 낱말. 전각 글자는 반각으로 맞춘다.
+
+    사진의 "ＺＯＯＭ" 을 모델은 "ZOOM" 으로 적는다.
+    """
+    return frozenset(w.lower() for w in _LATIN_RUN.findall(unicodedata.normalize("NFKC", source)))
+
+
+def _monologue(text: str, words: frozenset[str]) -> bool:
+    """원문에 없는 라틴 문자 낱말이 둘 이상인가. 낱말 단위로 대조하고 대소문자는 가리지 않는다.
+
+    부분 문자열로 대조하면 원문의 "information" 때문에 "Info" 가 통과한다.
+    """
+    found = _LATIN_WORD.findall(unicodedata.normalize("NFKC", text))
+    return sum(w.lower() not in words for w in found) >= _MONOLOGUE_WORDS
+
+
+def _title(raw: ExtractedItem, words: frozenset[str]) -> tuple[str, bool]:
+    """(제목, 확인 필요). 혼잣말이 섞이면 첫 여는 괄호 앞까지만 남긴다.
+
+    혼잣말은 제목 뒤에 덧붙인 괄호에 든다. 그래도 남으면 확인을 요청한다. 괄호로 시작하는
+    제목("(필독) …")은 괄호 앞이 비므로 자르지 않고 확인만 요청한다.
+    """
+    title = raw.title.strip() or raw.label.strip() or "안내"
+    if not _monologue(title, words):
+        return title, False
+    cut = _OPEN_PAREN.split(title, maxsplit=1)[0].strip()
+    if not cut:
+        return title, True
+    return cut, _monologue(cut, words)
+
+
 def _cut(text: str, limit: int) -> str:
     return text if len(text) <= limit else f"{text[: limit - 1]}…"
 
 
-def _details(raw: list[ItemDetail], hide: Callable[[str], str]) -> tuple[ItemDetail, ...]:
-    """빈 값 · 중복을 빼고 개수 · 길이를 묶는다. 값은 가린 뒤에 자른다 — 이름이 잘려 남지 않게."""
+def _kept(raw: list[ItemDetail], hide: Callable[[str], str]) -> dict[tuple[str, str], ItemDetail]:
     kept: dict[tuple[str, str], ItemDetail] = {}
     for detail in raw:
         value = hide(detail.value.strip())
@@ -230,7 +274,49 @@ def _details(raw: list[ItemDetail], hide: Callable[[str], str]) -> tuple[ItemDet
             (name, value),
             ItemDetail(name=_cut(name, MAX_DETAIL_NAME), value=_cut(value, MAX_DETAIL_VALUE)),
         )
-    return tuple(kept.values())[:MAX_DETAILS]
+    return kept
+
+
+def _details(
+    raw: list[ItemDetail], hide: Callable[[str], str], tail: list[ItemDetail] | None = None
+) -> tuple[ItemDetail, ...]:
+    """빈 값 · 중복을 빼고 개수 · 길이를 묶는다. 값은 가린 뒤에 자른다 — 이름이 잘려 남지 않게.
+
+    `tail` 은 맨 뒤에 두고, 개수 상한에 잘리지 않게 그만큼 자리를 남긴다.
+    """
+    kept = _kept(raw, hide)
+    last = [d for key, d in _kept(tail or [], hide).items() if key not in kept]
+    return (*tuple(kept.values())[: MAX_DETAILS - len(last)], *last)
+
+
+def _written_as(texts: list[str], details: list[ItemDetail]) -> list[ItemDetail]:
+    """규칙이 날짜로 쓰지 못한 원문 글 → `적힌 대로` 줄. 값은 고치지 않는다.
+
+    모델이 이미 details 에 적었으면(공백 · 기호를 빼고 같은 글이 들어 있으면) 넣지 않는다.
+    """
+    have = [_MARKS.sub("", d.value) for d in details]
+    lines: list[ItemDetail] = []
+    for text in texts:
+        key = _MARKS.sub("", text)
+        if key and not any(key in value for value in have):
+            lines.append(ItemDetail(name=WRITTEN_AS, value=text.strip()))
+            have.append(key)
+    return lines
+
+
+def _until_clock(text: str, at: time) -> bool:
+    """글에 그 시각의 "까지" 가 있는가. 날짜 규칙과 같게 읽는다 — "9시" 와 "9:00" 은 같다."""
+    return any(c.at == at and _UNTIL_AFTER.match(text, c.end) for c in _times(text))
+
+
+def _until_text(date_text: str, quote: str, at: time, hide: Callable[[str], str]) -> str:
+    """일정의 "9시까지" 를 화면에 남길 원문. 무엇의 마감인지(등원 · 집합)는 근거 문장에 있다.
+
+    근거 문장에서 그 시각의 "까지" 가 든 줄을 쓴다. 다른 줄은 다른 이야기일 수 있다. 그 줄이
+    길이 상한을 넘으면 잘려 시각이 사라지므로 날짜 칸의 글을 쓴다. `quote` 는 원문 대조를 지난 것만.
+    """
+    line = next((ln.strip() for ln in quote.splitlines() if _until_clock(ln, at)), "")
+    return line if line and len(hide(line)) <= MAX_DETAIL_VALUE else date_text
 
 
 def _item(
@@ -245,6 +331,10 @@ def _item(
 ) -> NewNoticeItem:
     raw = _cleaned(raw)
     reasons: list[str] = []
+    # 일시 칸에 시작이 있어 버린 끝이 열린 마감 칸의 원문
+    dropped_due: list[str] = []
+    # 일정의 "9시까지" 에서 마감으로 옮긴 시각
+    until_at: time | None = None
 
     def hide(value: str) -> str:
         return mask_names(value, people=people, institutions=orgs)
@@ -263,10 +353,27 @@ def _item(
 
     if due.open_ended:
         # "10월 1일 10:00 ~ 선착순 마감" 의 10월 1일은 시작이다. 마감으로 두면 지난 마감으로 보인다
-        when = due if when.start is None else when
+        if when.start is None:
+            when = due
+        else:
+            # 일시 칸의 시작을 쓰고 이 칸은 버린다. 신청이 열리는 때가 사라지지 않게 원문을 남긴다
+            dropped_due.append(raw.due_text or "")
         due = NoticeWhen()
         if raw.handling == "todo":
             reasons.append("마감을 읽지 못했어요")
+    elif (
+        raw.handling == "info"
+        and not (raw.date_text or "").strip()
+        and due.start is not None
+        and due.end is not None
+    ):
+        # 안내의 "10/27 10:00 ~ 11/17 18:00" 을 마감 칸에만 적어도 시작을 버리지 않는다. 일시 칸에
+        # 적은 것과 같은 행(기간)이 되게 한다. 안내만이다 —
+        # - 일정의 마감 칸 기간은 대개 신청 · 회신 기간이라 행사 기간으로 바꾸면 틀린 일정이 확인
+        #   없이 들어간다. 전처럼 시작을 되묻는다
+        # - 할 일은 마감이 분명히 보여야 한다. 시작이 생기면 화면 이름표가 "마감" 에서 "언제" 로
+        #   바뀌고 보호자가 날짜를 고쳐도 마감이 따라 바뀌지 않는다. 전처럼 끝 날 마감만 둔다
+        when, due = due, NoticeWhen()
     # 할 일에 날짜만 있으면 그 날이 마감이다. 그래야 "이번 주 마감" 에 잡힌다. 다만 "신청 시작일시"
     # 는 열리는 시각이다 — 마감으로 두면 선착순이 열리는 날을 끝나는 날로 알려 준다
     opens = _OPENS.search(f"{raw.date_text or ''} {raw.source_quote}")
@@ -279,6 +386,8 @@ def _item(
         # "8/27(목) 9시까지 등원" 의 까지는 시각에 붙는다. 그날 9시까지 오라는 뜻이라 일정은 그날
         # 하루이고, 9시는 시작이 아니라 그 일의 마감이다. 시작 시각을 지어내지 않는다
         due = when if due.start is None else due
+        # 확인 화면은 일정의 시작만 보여 준다. "9시까지 등원" 이 사라지지 않게 원문을 남긴다
+        until_at = when.start_time
         when = replace(when, start_time=None, end_time=None, until=False)
     elif when.until:
         # "4월 30일까지 시행" 을 시작으로 읽으면 없던 하루짜리 일정이 생긴다
@@ -300,7 +409,8 @@ def _item(
     due_at = _at(due_day, due_time or _END_OF_DAY, tz) if due_day else None
 
     quote = raw.source_quote.strip()
-    if not _quoted(quote, source):
+    quoted = _quoted(quote, source)
+    if not quoted:
         reasons.append("근거 문장을 원문에서 찾지 못했어요")
 
     if (
@@ -322,18 +432,36 @@ def _item(
         )
     ):
         reasons.append("시각을 항목에 넣지 못했어요")
+    # 날짜 검사가 끝난 뒤에 본다 — 앞의 검사들은 "다른 이유가 없을 때만" 붙는다
+    words = _source_words(source)
+    title, odd_title = _title(raw, words)
+    if odd_title:
+        reasons.append("제목에 공지에 없는 글이 섞였어요")
+    # details 는 보여 주기만 하는 값이라 줄을 버려도 일정 · 마감이 바뀌지 않는다
+    details = [d for d in raw.details if not _monologue(d.value, words)]
+    # 규칙이 날짜로 쓰지 못한 원문은 위의 확인 검사 · 혼잣말 거르기가 끝난 뒤에 붙인다 — 날짜
+    # 칸의 원문이라 둘 다의 대상이 아니다. 둘 다 개수 상한에 잘리지 않는다.
+    # - "9시까지" 는 "언제" 의 보충이라 맨 앞. 모델이 그 시각의 "까지" 를 details 에 적었으면
+    #   화면에 이미 있다 ("9시까지 등교 부탁드리며")
+    # - 버린 마감 칸은 행사와 다른 날짜라 맨 뒤. "언제" 밑에 두면 날짜가 둘인 것처럼 읽힌다
+    until: list[str] = []
+    if until_at is not None and not any(_until_clock(d.value, until_at) for d in details):
+        until.append(_until_text(raw.date_text or "", quote if quoted else "", until_at, hide))
+    first = _written_as(until, details)
+    last = _written_as(dropped_due, [*first, *details])
+    details = [*first, *details]
 
     return NewNoticeItem(
         handling=NoticeItemHandling(raw.handling),
         label=hide(raw.label.strip()) or "안내",
-        title=hide(raw.title.strip() or raw.label.strip() or "안내"),
+        title=hide(title),
         target_scope=NoticeItemTarget(raw.target_scope),
         starts_at=starts_at,
         ends_at=ends_at,
         all_day=all_day,
         due_at=due_at,
         due_all_day=due_day is not None and due_time is None,
-        details=_details(raw.details, hide),
+        details=_details(details, hide, tail=last),
         supplies=tuple(hide(i.item_name) for i in draft_items([raw.supplies])),
         source_quote=hide(quote),
         needs_review=bool(reasons),
