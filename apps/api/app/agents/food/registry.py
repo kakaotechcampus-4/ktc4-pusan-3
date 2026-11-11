@@ -4,7 +4,7 @@
 
   라벨: meal_recommendation
     infant_milk(0–3)       닫힘
-    infant_weaning(4–11)   search·weaning·propose
+    infant_weaning(4–11)   search·weaning·propose  (후보는 이유식 식단 표, #399)
     toddler·preschool(12+) search·analyze·repeated·(daycare)·propose
   라벨: nutrient_analysis
     infant_milk·infant_weaning(0–11)  닫힘
@@ -13,6 +13,9 @@
   라벨: daycare_meal — 단계로 닫지 않음
     급식 행 있음  lookup·update·delete·keep
     급식 행 없음  닫힘
+  라벨: daycare_lookup — 단계 · 알레르기 조회 결과로 닫지 않음 (알레르기를 쓰지 않는 읽기)
+    급식 행 있음  show 하나(출력 tool)
+    급식 행 없음  닫힘
   라벨: food_check — 단계로 닫지 않음 (0–3개월의 꿀 질문도 답한다)
     열린 tool 없음 — 코드가 등록 알레르기 · 연령 규칙으로 답한다 (모델 0회, `answers_by_code`)
     안전 조회 실패만 `check.blocked_safety` 로 닫힌다
@@ -20,7 +23,7 @@
 - 🚨 열린 tool 중에 스텁(NotImplementedError)이 있으면 안 된다. tool 이 아직 스텁인 task 는
   `NOT_READY` 에 문구 키를 적어 닫고(`closed_readout_key`), `tools_for` 의 분기는 그대로 둔다 —
   구현되면 `NOT_READY` 에서 그 task 를 뺀다. `test_food_stub_gate.py` 가 막는다.
-- 지금은 tool 12개가 다 구현돼 있고 `run()` 이 식단 추천 · 급식 갱신의 결과를 옮겨서
+- 지금은 tool 13개가 다 구현돼 있고 `run()` 이 식단 추천 · 급식 갱신의 결과를 옮겨서
   `NOT_READY` 는 비어 있다.
 - `meal_recommendation`·`nutrient_analysis`는 `safety_ok=False`면 닫힌다(`blocked.safety`) —
   알레르기 필터를 걸 수 없어서다. 단계 사유(`unsupported.*`)가 먼저다. 영양소 분석은 식품군
@@ -31,6 +34,8 @@
   `infant_weaning`의 `meal_recommendation` 묶음은 급식 행과 무관하게 고정 3개다.
 - `filter_food_safety`는 `CODE_TOOLS`.
 - `daycare_meal` 은 쓰는 라벨이다(`WRITING_TASKS`). 같은 run 의 다른 Food task 보다 먼저 끝난다.
+  `daycare_lookup` 은 읽기라 넣지 않는다 — 같은 run 에 급식 갱신이 있으면 갱신이 먼저 끝나서
+  조회가 바뀐 행을 읽는다.
 """
 
 from collections.abc import Awaitable, Callable, Collection
@@ -38,10 +43,11 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from app.agents.common.food_safety import filter_food_safety
 from app.agents.common.gate import Gate
 from app.agents.common.tool_schema import ToolDefinition, build_tool_specs
 from app.agents.food.context import FoodContext
-from app.agents.food.readouts import CHECK_BLOCKED_SAFETY
+from app.agents.food.readouts import CHECK_BLOCKED_SAFETY, CLOSED_DAYCARE_UNREAD
 from app.agents.food.result import ErrorCode, ToolResult, fail
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.schemas.tool_defs import TOOL_DEFINITIONS
@@ -50,6 +56,7 @@ from app.agents.food.tools.menu import (
     delete_daycare_meal,
     keep_daycare_meal,
     lookup_daycare_menu,
+    show_daycare_meal,
     update_daycare_meal,
 )
 from app.agents.food.tools.nutrition import (
@@ -63,7 +70,6 @@ from app.agents.food.tools.records import (
     check_repeated_menus,
     search_food_memory,
 )
-from app.agents.food.tools.safety import filter_food_safety
 
 ToolHandler = Callable[[FoodContext, Any], Awaitable[ToolResult]]
 
@@ -75,6 +81,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "update_daycare_meal": update_daycare_meal,
     "delete_daycare_meal": delete_daycare_meal,
     "keep_daycare_meal": keep_daycare_meal,
+    "show_daycare_meal": show_daycare_meal,
     "lookup_nutrition": lookup_nutrition,
     "compare_diet_balance": compare_diet_balance,
     "guide_weaning_stage": guide_weaning_stage,
@@ -117,7 +124,7 @@ _NUTRIENT_MODEL_TOOLS: frozenset[str] = frozenset(
 )
 
 # 모델에게 열지 않고 코드 문구로 닫는 task → 문구 키. tool 이 아직 스텁인 task 를 여기에 적는다.
-# 지금은 tool 12개가 다 구현되고 `run()` 이 결과를 옮겨서 비어 있다. 열린 tool 에 스텁이 남아 있으면
+# 지금은 tool 13개가 다 구현되고 `run()` 이 결과를 옮겨서 비어 있다. 열린 tool 에 스텁이 남아 있으면
 # `test_food_stub_gate.py` 가 막는다 (#357 리뷰 4-②)
 NOT_READY: dict[FoodTaskType, str] = {}
 
@@ -143,7 +150,11 @@ def closed_readout_key(task: FoodTaskType, gate: Gate) -> str | None:
             return "unsupported.infant_nutrient"
         # 영양 안내가 식품군("달걀 반찬 늘리기")을 말하므로, 걸러 낼 알레르기를 모르면 열지 않는다
         return None if gate.safety_ok else "blocked.safety"
-    if task == FoodTaskType.DAYCARE_MEAL:
+    if task in (FoodTaskType.DAYCARE_MEAL, FoodTaskType.DAYCARE_LOOKUP):
+        # 조회는 알레르기를 쓰지 않아 `safety_ok` · 단계로 닫지 않는다. 급식 행이 없을 때나
+        # 급식 표를 못 읽었을 때만 닫힌다. 못 읽은 것은 없다는 말이 아니라서 문구가 따로다(#956)
+        if gate.data.daycare_unread:
+            return CLOSED_DAYCARE_UNREAD
         if not gate.data.daycare_meal:
             return "closed.no_daycare"
         return NOT_READY.get(task)
@@ -163,6 +174,8 @@ def tools_for(task: FoodTaskType, gate: Gate) -> tuple[str, ...]:
 
     if task == FoodTaskType.DAYCARE_MEAL:
         opened = set(_DAYCARE_TOOLS)
+    elif task == FoodTaskType.DAYCARE_LOOKUP:
+        opened = {"show_daycare_meal"}
     elif task == FoodTaskType.MEAL_RECOMMENDATION:
         if gate.stage.stage == "infant_weaning":
             opened = set(_WEANING_MEAL)
@@ -189,6 +202,8 @@ _OUTPUT_TOOLS: dict[FoodTaskType, frozenset[str]] = {
     FoodTaskType.MEAL_RECOMMENDATION: frozenset({"propose_meal_candidates"}),
     FoodTaskType.NUTRIENT_ANALYSIS: frozenset({"report_nutrient_analysis"}),
     FoodTaskType.FOOD_CHECK: frozenset(),  # 출력 tool 이 없다 — 코드가 답한다
+    # 급식 조회도 tool 을 꼭 부른다(required). 날짜를 코드가 풀고 보여 주는 것까지가 이 tool 이다
+    FoodTaskType.DAYCARE_LOOKUP: frozenset({"show_daycare_meal"}),
     # 급식 갱신은 tool 을 꼭 부른다(required). 쓰지 않고 끝내는 keep 이 없으면 묻는 말도 쓰기로 간다
     FoodTaskType.DAYCARE_MEAL: frozenset(
         {"update_daycare_meal", "delete_daycare_meal", "keep_daycare_meal"}

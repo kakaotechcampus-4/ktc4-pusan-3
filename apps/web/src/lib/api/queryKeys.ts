@@ -14,7 +14,14 @@ export const qk = {
   policies: () => ["policies"] as const,
 
   me: () => ["me"] as const,
+  /**
+   * 화면 투어를 본 기록 (#632 · `lib/tour/seen.ts`). 🚨 아이 스코프가 아니라 **계정** 단위다 —
+   * 아이를 바꿔도 이미 본 설명을 다시 띄우지 않는다. 그래서 `qk.child` 밖에 둔다.
+   */
+  tours: (parentId: string) => ["tours", parentId] as const,
   consents: (childId?: string) => ["consents", childId ?? null] as const,
+  /** GET /me/notification-settings — 보호자 단위라 아이 스코프 밖이다 (#609). */
+  notificationSettings: () => ["notification-settings"] as const,
 
   child: (childId: string) => ["child", childId] as const,
 
@@ -35,6 +42,11 @@ export const qk = {
    * 한 번에 무효화된다.
    */
   childProfile: (childId: string) => [...qk.child(childId), "profile"] as const,
+  /**
+   * 복약 화면의 진행 중 코스 · 회차 (`GET /children/{cid}/medications` · #537). 아이 스코프 아래라
+   * 복약을 제출하면 `qk.child` 무효화에 같이 걸린다.
+   */
+  medications: (childId: string) => [...qk.child(childId), "medications"] as const,
   /** 11 키·몸무게 측정 로그 (`GET /children/{cid}/growth` · PR #353). */
   growth: (childId: string) => [...qk.child(childId), "growth"] as const,
   /**
@@ -90,6 +102,13 @@ export const qk = {
    * 그 턴이 목록에 아직 받지 않은 지난 날에 붙어 있을 수 있다.
    */
   chatDay: (childId: string, date: string) => [...qk.chat(childId), "day", date] as const,
+  /**
+   * 대화의 삭제 카드를 확정 · 취소한 뒤의 상태 (#535 · `components/record-tabs-card.tsx`). 🚨 **받아 오는 쿼리가 없다** —
+   * 버튼 응답(`DeleteProposalResponse.proposal`)을 그대로 넣어 둔다. run 화면의 카드는 대화 스토어에 `pending` 으로
+   * 굳어 있어서, 이 값이 없으면 화면을 떠났다 오면 이미 지운 카드에 체크와 버튼이 다시 선다.
+   */
+  deleteProposal: (childId: string, proposalId: string) =>
+    [...qk.child(childId), "delete-proposal", proposalId] as const,
   corrections: (childId: string, ref?: { kind: string; id: string }) =>
     [...qk.child(childId), "corrections", ref ?? null] as const,
 } as const;

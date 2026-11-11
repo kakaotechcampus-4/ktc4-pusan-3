@@ -16,10 +16,13 @@ export interface SeverityOption {
 
 const UNKNOWN: SeverityOption = { value: "unknown", label: "모르겠어요" };
 
-/** 알레르기 — 검사 결과의 Class. 검사지에 적힌 글자 그대로 보여 준다. */
+/**
+ * 알레르기 — 검사 결과의 Class. 🚨 **화면에서는 "등급" 이라고 부른다** (#868). 칸 이름이 "검사 등급" 인데 고르는 값과
+ * 목록에는 영어 "Class 3" 이 서서 같은 것이 두 이름으로 불렸다. 검사지의 숫자 그대로라 "3등급" 으로 옮겨도 맞춰 읽힌다.
+ */
 const ALLERGY_OPTIONS: SeverityOption[] = [
   UNKNOWN,
-  ...Array.from({ length: 7 }, (_, n) => ({ value: `class_${n}`, label: `Class ${n}` })),
+  ...Array.from({ length: 7 }, (_, n) => ({ value: `class_${n}`, label: `${n}등급` })),
 ];
 
 /** 그 밖의 종류. DB 는 `anaphylaxis` 도 받지만 보호자에게 고르게 하지 않는다. */
@@ -55,13 +58,14 @@ export function severityFieldLabel(type: string): string {
  */
 export function severityFieldHint(type: string): string | undefined {
   return type === "allergy"
-    ? "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식단 추천에서는 똑같이 빼요."
+    ? "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식사 추천에서는 똑같이 빼요."
     : undefined;
 }
 
 /** 목록 · 확인 화면에 쓰는 이름. DB 가 받는 값은 전부 있어서 영문이 그대로 새지 않는다. */
 export const SEVERITY_LABEL: Record<string, string> = {
-  ...Object.fromEntries(ALLERGY_OPTIONS.slice(1).map((o) => [o.value, o.label])),
+  // 목록에서는 칸 이름 없이 혼자 서서 "검사" 를 붙인다 — "3등급" 만 있으면 반응이 심한 정도로 읽힌다.
+  ...Object.fromEntries(ALLERGY_OPTIONS.slice(1).map((o) => [o.value, `검사 ${o.label}`])),
   mild: "가볍게",
   moderate: "보통",
   severe: "심하게",

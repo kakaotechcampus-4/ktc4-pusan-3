@@ -49,9 +49,12 @@ INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OC
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Literal, Protocol
+from typing import Literal, Protocol, get_args
 from uuid import UUID
 
+from app.agents.common.errors import (
+    MenuSourceError as MenuSourceError,  # 다시 내보낸다 (#768)
+)
 from app.agents.common.evidence import AffinityRow
 from app.agents.common.ports import (
     ChildProfileReader,
@@ -62,6 +65,7 @@ from app.core.mfds_nutri_raw import RawNutriRow
 from app.core.nutrition_pick import (
     NutritionFacts,  # noqa: F401 — store/__init__.py 가 여기서 가져간다
 )
+from app.core.recipe_source import RecipeSource
 from app.rules.age import Stage
 
 # 영양소 구간. 한 번 low 였던 항목은 EAR 의 1.1배를 넘어야 ok 로 돌아간다(히스테리시스,
@@ -73,14 +77,6 @@ NutrientBand = Literal["low", "ok", "high"]
 # observation_food.confidence_source 값(memory/schemas/common.py 와 같은 값).
 # 보호자 말은 Memory Agent 가 저장할 때 고르고, OCR 분석이 쓰는 관찰은 그 경로가 따로 정한다.
 ConfidenceSource = Literal["institution_notice", "parent_direct", "parent_hedged", "parent_hearsay"]
-
-
-class MenuSourceError(Exception):
-    """외부 영양성분·레시피 API 호출 실패.
-
-    결과가 0건인 것(정말 없음)과 다르다. 호출부는 이 예외를 카탈로그에 없는 것
-    (캐시 미스)처럼 뭉개지 않는다.
-    """
 
 
 # health_safety 10/4 확정안(app/domains/safety/models.py)과 같은 값. Agent 마다 필요한 칸이
@@ -135,8 +131,10 @@ class Measurement:
 
 
 # 레시피 소스. 이 행들은 `recipe_catalog`(추천 후보)에만 들어가고 `menu_catalog` 에는 넣지 않는다.
-# 레시피 재료가 실리면 급식의 같은 이름 메뉴가 그 재료로 판정된다(own_table §1-1)
-RECIPE_SOURCES: frozenset[str] = frozenset({"mafra_recipe"})
+# 레시피 재료가 실리면 급식의 같은 이름 메뉴가 그 재료로 판정된다(own_table §1-1).
+# 값은 `core/recipe_source.RecipeSource` 와 같다 — 소스 정보 표(`RECIPE_SOURCE_INFO`, 05 출처 ·
+# 근거 문구)의 키와 같은지 테스트가 묶는다
+RECIPE_SOURCES: frozenset[RecipeSource] = frozenset(get_args(RecipeSource))
 
 
 @dataclass(frozen=True)
@@ -149,9 +147,11 @@ class MenuCatalogRow:
 
     menu_key: str
     display_name: str
-    # menu_catalog: mfds_nutri · center_standard · manual / recipe_catalog: mafra_recipe.
+    # menu_catalog: mfds_nutri · center_standard · manual
+    # recipe_catalog: `RecipeSource`(core) 그대로.
     # COOKRCP01(mfds_recipe)은 보류라 뺀다. 들이면 레시피라 recipe_catalog 쪽에 들어간다
-    source: Literal["mfds_nutri", "mafra_recipe", "center_standard", "manual"]
+    # "weaning_menu": 이유식 식단 표 행(`reference/weaning_menu.yaml`, #399) — 저장하지 않는다
+    source: Literal["mfds_nutri", "center_standard", "manual", "weaning_menu"] | RecipeSource
     resolved: bool
     synced_at: datetime
     food_code: str | None = None
@@ -168,6 +168,9 @@ class MenuCatalogRow:
     # recipe_catalog 의 PK 일부(source, source_id). menu_catalog 행은 쓰지 않는다 — menu_key 가
     # 이미 PK 다(own_table §1-1)
     source_id: str | None = None
+    # 후보 풀에서 이름이 같은 레시피를 이 행으로 합쳤을 때, 대표가 아닌 쪽의 (source, source_id).
+    # 메뉴 근거가 합쳐진 레시피를 모두 가리키게 한다(`meal_review._menu_basis`). 저장하지 않는다
+    merged_from: tuple[tuple[str, str], ...] = ()
 
 
 DaycareSlot = Literal["lunch", "snack_am", "snack_pm"]
@@ -258,8 +261,8 @@ class FoodMemoryReader(Protocol):
     ) -> list[FoodObservation]:
         """`observation_food` 구간 조회. `active` · `stand_alone` 행만 돌려준다.
 
-        `memory_bridge.FOOD_STATUSES` 와 같은 기준이다. "잘못된 기록"(`inactive`)과 삭제한
-        행은 근거로도, 영양 판정 합계로도 쓰지 않는다(영양소_계산_설계 §3). 출처 두 칸
+        `memory_bridge.FOOD_STATUSES` 와 같은 기준이다. 삭제한 행은 근거로도, 영양 판정
+        합계로도 쓰지 않는다(영양소_계산_설계 §3). 출처 두 칸
         (`confidence_source` · `source_notice_id`)도 읽어 온다 — `FoodObservation` 참고.
         """
         ...
@@ -323,7 +326,7 @@ class MenuSource(Protocol):
     추정하지 않는다 — 받은 결과가 그대로 카탈로그에 쌓여서다(food_agent_own_table §1).
 
     unresolved · 재료 없음은 알레르기 "확인 못 함"이다 — 안전한 것으로 보지 않는다
-    (`tools/safety.py` 의 unchecked).
+    (`common/food_safety.py` 의 unchecked).
     """
 
     async def nutrition_rows(self, *, name: str) -> tuple[RawNutriRow, ...]:
@@ -339,19 +342,40 @@ class MenuSource(Protocol):
         ...
 
 
+class DaycareLookupError(Exception):
+    """급식 표(`daycare_meal`)를 읽지 못했다. 없다(빈 목록 · False)와 다르다.
+
+    `SafetyLookupError` 와 같은 방식이다. Food 는 이 예외만 잡아서 그 task 안에서 급식을
+    "못 읽음" 으로 표시한다 — 급식 조회 · 고치기는 못 읽음 문구로 닫고, 영양소 분석 · 식단 추천은
+    집 식사 기록으로 계속 간다. 다른 예외(버그)는 덮지 않는다. 메시지에 메뉴 · 원문을 싣지 않는다.
+    """
+
+
 class DaycareMealStore(Protocol):
-    async def rows(
-        self, *, child_id: UUID, date_from: date, date_to: date
-    ) -> list[DaycareMealRow]: ...
-    async def has_rows(self, *, child_id: UUID) -> bool: ...
+    async def rows(self, *, child_id: UUID, date_from: date, date_to: date) -> list[DaycareMealRow]:
+        """날짜 범위(양 끝 포함)의 급식. (날짜, 끼니) 순. 읽기에 실패하면 `DaycareLookupError`."""
+        ...
+
+    async def has_rows(self, *, child_id: UUID) -> bool:
+        """그 아이의 급식 행이 하나라도 있나(날짜 무관). 읽기에 실패하면 `DaycareLookupError`.
+
+        실패를 False 로 바꾸지 않는다 — 급식이 있는 아이에게 "등록된 급식이 없어요" 가 나간다.
+        """
+        ...
+
     async def update(self, row: DaycareMealRow) -> None:
         """급식 수정 범위는 과거 30일과 미래 전부(계획서 "전체에 걸린 값").
 
         `row.child_id` 가 이미 아이 축을 들고 있다 — 어댑터는 `WHERE id = ? AND child_id = ?`
-        로 갈 수 있다. 그래서 이 메서드는 `child_id` 를 따로 받지 않는다.
+        로 갈 수 있다. 그래서 이 메서드는 `child_id` 를 따로 받지 않는다. 없는 행 · 다른 아이의
+        행이면 KeyError.
+
+        바꾸는 칸은 `menu_keys` · `amount_factor` · `amount_known` · `caregiver_checked` 넷뿐이다.
+        날짜 · 끼니 · 출처는 저장된 값을 둔다 — Food 가 고치는 것이 아니고, 날짜 · 끼니를 바꾸면
+        UNIQUE 에 걸린다.
 
         호출 하나가 짧은 트랜잭션 하나로 바로 commit 된다. 같은 run의 읽는 task가 갱신된
-        행을 본다. 행을 통째로 바꾸므로 같은 갱신을 두 번 적용해도 결과가 같다.
+        행을 본다. 같은 갱신을 두 번 적용해도 결과가 같다.
         """
         ...
 

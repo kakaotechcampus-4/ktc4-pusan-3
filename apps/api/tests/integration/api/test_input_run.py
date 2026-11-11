@@ -16,12 +16,16 @@ Idempotency 는 계약서 §01 "헤더가 없으면 400" 에 더해 docs/api/ide
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import ANY
 
 import pytest
-from sqlalchemy import select
+import redis
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.agents.common.result import DomainPending
+from app.agents.common.schemas.task import DomainTask
 from app.agents.entrypoint import PendingMemoryContext
 from app.agents.memory.schemas.task import WorkType
 from app.api import idempotency, quota
@@ -31,9 +35,14 @@ from app.domains.chat.models import ChatTurn
 from app.domains.child.models import Child
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import record_consent
+from app.domains.identity.models import Parent
 from app.domains.policy.models import PolicyVersion
+from app.domains.rate_event.models import RateEvent
+from app.infra.db.session import engine
 
-from .conftest import issue_bearer, link_child
+from .conftest import issue_bearer, link_child, seed_login
+
+pytestmark = pytest.mark.usefixtures("pending_db")
 
 INPUTS = "/api/v1/children/{cid}/inputs"
 EVENTS = "/api/v1/runs/{rid}/events"
@@ -42,17 +51,17 @@ BODY = {"text": "계란말이 또 찾아요", "source": "home_input"}
 
 @pytest.fixture(autouse=True)
 def _clean_process_memory(monkeypatch):
-    """채널과 Idempotency 기억은 프로세스 메모리라 테스트 사이에 샌다. 가짜 러너의 지연도 없앤다."""
+    """채널과 Idempotency 기억은 프로세스 메모리라 테스트 사이에 샌다. 가짜 러너의 지연도 없앤다.
+
+    되묻기 맥락 · 하루 한도는 표(`run_hold` · `rate_event`, #877)라 `pending_db` 가 테스트
+    트랜잭션에 묶는다.
+    """
     registry.clear()
     idempotency.clear()
-    quota.clear()
-    pending_reply.clear()
     monkeypatch.setattr(runner, "DEMO_STEP_DELAY", 0.0)
     yield
     registry.clear()
     idempotency.clear()
-    quota.clear()
-    pending_reply.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -130,6 +139,8 @@ async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls
             "reply_to": None,
             "location": None,
             "activity_weather": None,
+            "activity_events": None,
+            "health_places": None,
             "on_event": ANY,  # 대화 기록(#228) — test_finished_run_is_kept_as_a_chat_turn
         }
     ]
@@ -494,7 +505,7 @@ _ANSWER = {"text": "3일 전부터", "source": "home_input"}
 
 async def test_reply_to_가_이전_질문_맥락을_agent_로_넘긴다(db_client, bearer, agent_calls, cid):
     headers, parent_id = bearer
-    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    await pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
 
     response = await db_client.post(
         INPUTS.format(cid=cid),
@@ -524,9 +535,13 @@ async def test_없는_reply_to_는_400_이고_agent_를_부르지_않는다(
     assert agent_calls == []
 
 
-async def test_남의_run_을_가리키면_400(db_client, bearer, agent_calls, cid):
+async def test_남의_run_을_가리키면_400(db_client, session, bearer, agent_calls, cid):
     headers, _ = bearer
-    pending_reply.put(run_id="r-other", parent_id=uuid.uuid4(), child_id=cid, context=_PENDING)
+    _, other = await issue_bearer(session, token="test-token-other")
+    await link_child(session, parent_id=other, child_id=cid)
+    assert await pending_reply.put(
+        run_id="r-other", parent_id=other, child_id=cid, context=_PENDING
+    )
 
     response = await db_client.post(
         INPUTS.format(cid=cid),
@@ -538,9 +553,14 @@ async def test_남의_run_을_가리키면_400(db_client, bearer, agent_calls, c
     assert agent_calls == []
 
 
-async def test_다른_아이의_질문에_이어_적으면_400(db_client, bearer, agent_calls, cid):
+async def test_다른_아이의_질문에_이어_적으면_400(db_client, session, bearer, agent_calls, cid):
     headers, parent_id = bearer
-    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=uuid.uuid4(), context=_PENDING)
+    _, someone = await issue_bearer(session, token="test-token-someone")
+    other_child = await link_child(session, parent_id=someone)
+    # 이어지지 않은 아이라 넣어지지도 않는다(False) — 넣혔더라도 다른 아이 주소로는 꺼낼 수 없다
+    await pending_reply.put(
+        run_id="r-prev", parent_id=parent_id, child_id=other_child, context=_PENDING
+    )
 
     response = await db_client.post(
         INPUTS.format(cid=cid),
@@ -554,7 +574,7 @@ async def test_다른_아이의_질문에_이어_적으면_400(db_client, bearer
 
 async def test_같은_reply_to_를_두_번_쓰면_두_번째가_막힌다(db_client, bearer, agent_calls, cid):
     headers, parent_id = bearer
-    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    await pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
     body = {**_ANSWER, "reply_to": "r-prev"}
 
     first = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
@@ -569,7 +589,7 @@ async def test_같은_키로_다시_누르면_400_이_아니라_같은_run_을_�
 ):
     # 맥락은 재생 뒤에 꺼낸다. 순서가 바뀌면 두 번째 누름이 400 을 받는다
     headers, parent_id = bearer
-    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    await pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
     body = {**_ANSWER, "reply_to": "r-prev"}
     keyed = with_key(headers)
 
@@ -587,7 +607,7 @@ async def test_한도에_걸린_답은_맥락을_지우지_않는다(
     # 429 는 접수 전이다. 여기서 맥락을 지우면 한도가 풀려도 이어 적을 수 없다
     monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 1)
     headers, parent_id = bearer
-    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    await pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
     await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
 
     response = await db_client.post(
@@ -597,7 +617,7 @@ async def test_한도에_걸린_답은_맥락을_지우지_않는다(
     )
 
     assert response.status_code == 429
-    assert pending_reply.get(run_id="r-prev", parent_id=parent_id, child_id=cid) == _PENDING
+    assert await pending_reply.get(run_id="r-prev", parent_id=parent_id, child_id=cid) == _PENDING
     assert len(agent_calls) == 1  # 한도를 채운 첫 입력만 Agent 까지 갔다
 
 
@@ -606,12 +626,12 @@ async def test_한도가_풀리면_남겨_둔_맥락으로_이어_적는다(
 ):
     monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 1)
     headers, parent_id = bearer
-    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    await pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
     body = {**_ANSWER, "reply_to": "r-prev"}
     await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
     blocked = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
 
-    quota.clear()  # 날짜가 바뀐 것과 같다
+    await quota.reset()  # 날짜가 바뀐 것과 같다
     accepted = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
 
     assert blocked.status_code == 429
@@ -635,6 +655,119 @@ async def test_맥락_없는_reply_to_는_한도를_쓰지_않는다(
 
     assert rejected.status_code == 400
     assert accepted.status_code == 202
+
+
+# ── reply_to — Health 가 물은 것에 대한 답 ──────────────────────
+# 보관함은 맥락 종류를 가리지 않는다. 같은 15분 · 임자 · 아이 · 사용 중 확인이 Health 맥락에도
+# 걸리는지 본다. 맥락에는 발화 원문이 없다(`hint_text` · 요청 조각이 비어 있다).
+_STOP_Q = "항생제 복약 알림을 멈출까요? 먹인 기록은 그대로 남아요."
+_HEALTH_PENDING = PendingMemoryContext(
+    hint_text="",
+    question=_STOP_Q,
+    work=WorkType.OBSERVE,
+    resume=DomainTask(run_id="r-prev", agent="health", task_type="medication", request_texts=()),
+    asked=DomainPending(
+        "health",
+        "medication_stop",
+        _STOP_Q,
+        {"schedule_id": str(uuid.uuid4()), "title": "항생제"},
+    ),
+)
+_HEALTH_ANSWER = {"text": "응", "source": "home_input"}
+
+
+async def test_Health_질문에_reply_to_로_답하면_맥락이_agent_로_넘어간다(
+    db_client, bearer, agent_calls, cid
+):
+    headers, parent_id = bearer
+    await pending_reply.put(
+        run_id="r-health", parent_id=parent_id, child_id=cid, context=_HEALTH_PENDING
+    )
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_HEALTH_ANSWER, "reply_to": "r-health"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 202
+    assert agent_calls[0]["continuation"] == _HEALTH_PENDING
+    assert agent_calls[0]["continuation"].asked.kind == "medication_stop"
+
+
+async def test_15분이_지난_Health_맥락은_400(db_client, bearer, agent_calls, cid):
+    headers, parent_id = bearer
+    await pending_reply.put(
+        run_id="r-health",
+        parent_id=parent_id,
+        child_id=cid,
+        context=_HEALTH_PENDING,
+        now=datetime.now(UTC) - pending_reply.TTL - timedelta(minutes=1),
+    )
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_HEALTH_ANSWER, "reply_to": "r-health"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "reply_context_unavailable"
+    assert agent_calls == []
+
+
+async def test_다른_보호자는_Health_질문에_답할_수_없다(
+    db_client, session, bearer, agent_calls, cid
+):
+    headers, _ = bearer
+    _, other = await issue_bearer(session, token="test-token-other")
+    await link_child(session, parent_id=other, child_id=cid)
+    assert await pending_reply.put(
+        run_id="r-health", parent_id=other, child_id=cid, context=_HEALTH_PENDING
+    )
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_HEALTH_ANSWER, "reply_to": "r-health"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 400 and agent_calls == []
+
+
+async def test_다른_아이의_Health_질문은_이어받지_못한다(
+    db_client, session, bearer, agent_calls, cid
+):
+    headers, parent_id = bearer
+    _, someone = await issue_bearer(session, token="test-token-someone")
+    other_child = await link_child(session, parent_id=someone)
+    # 이어지지 않은 아이라 넣어지지도 않는다(False) — 넣혔더라도 다른 아이 주소로는 꺼낼 수 없다
+    await pending_reply.put(
+        run_id="r-health", parent_id=parent_id, child_id=other_child, context=_HEALTH_PENDING
+    )
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_HEALTH_ANSWER, "reply_to": "r-health"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 400 and agent_calls == []
+
+
+async def test_같은_Health_질문의_두_번째_답은_400(db_client, bearer, agent_calls, cid):
+    # 중단 확인에 "응" 이 두 번 가면 같은 코스를 두 번 멈추려는 것과 같다
+    headers, parent_id = bearer
+    await pending_reply.put(
+        run_id="r-health", parent_id=parent_id, child_id=cid, context=_HEALTH_PENDING
+    )
+    body = {**_HEALTH_ANSWER, "reply_to": "r-health"}
+
+    first = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
+    second = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
+
+    assert first.status_code == 202 and second.status_code == 400
+    assert len(agent_calls) == 1
 
 
 # ── 9단계 — 아이 주소는 연결된 보호자만 ─────────────────────────────
@@ -725,3 +858,192 @@ async def test_막힌_요청은_하루_횟수를_쓰지_않는다(db_client, bea
 
     assert denied.status_code == 403
     assert accepted.status_code == 202
+
+
+async def test_Redis_가_죽으면_입력은_503_이고_Agent_를_부르지_않는다(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    """#671 — 메모리로 받으면 장애 직전에 적힌 키가 안 보여 같은 한 줄이 두 번 저장된다.
+
+    서버를 늘리면 다른 서버로 간 재시도도 못 막는다. 다시 보내면 되는 503 으로 막는다.
+    """
+    down = redis.Redis(host="127.0.0.1", port=1, socket_connect_timeout=0.2)
+    monkeypatch.setattr(idempotency, "get_redis", lambda: down)
+    headers, _ = bearer
+
+    response = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "temporarily_unavailable"
+    assert agent_calls == []
+
+
+async def test_키를_못_남기면_입력은_503_이고_Agent_를_부르지_않는다(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    """#671 리뷰 — 한 줄 입력은 키를 러너보다 먼저 적는다. 아직 아무것도 저장하지 않았으니 키를
+    못 남기면 503 으로 끝내야 한다. 삼키고 러너를 띄우면 같은 키 재시도가 두 번 저장된다."""
+    import fakeredis
+
+    store = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(idempotency, "get_redis", lambda: store)
+    real_set = store.set
+
+    def refuse_reply_write(name, value, *args, **kwargs):
+        if str(name).startswith("idem:"):
+            raise redis.ConnectionError("down")
+        return real_set(name, value, *args, **kwargs)
+
+    monkeypatch.setattr(store, "set", refuse_reply_write)
+    headers, _ = bearer
+
+    response = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+    await asyncio.sleep(0.05)
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "temporarily_unavailable"
+    assert agent_calls == []
+
+
+async def test_키를_적은_뒤_응답을_못_받아_503_이면_같은_키_재시도는_새로_처리한다(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    """#729 리뷰 — 키를 적은 뒤 응답만 늦어 TimeoutError 면 첫 요청은 503 인데 키는 남는다.
+
+    웹은 같은 문장을 같은 키로 다시 보낸다. 그 키가 처리되지 않은 run 을 재생하면 입력이 사라진다.
+    """
+    import fakeredis
+
+    store = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(idempotency, "get_redis", lambda: store)
+    real_set = store.set
+    late = {"once": True}
+
+    def write_then_time_out(name, value, *args, **kwargs):
+        done = real_set(name, value, *args, **kwargs)
+        if str(name).startswith("idem:") and late.pop("once", False):
+            raise redis.TimeoutError("late")
+        return done
+
+    monkeypatch.setattr(store, "set", write_then_time_out)
+    headers = with_key(bearer[0])
+
+    first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=headers)
+    retry = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=headers)
+    await asyncio.sleep(0.05)
+
+    assert first.status_code == 503
+    assert retry.status_code == 202
+    assert len(agent_calls) == 1  # 재시도가 실제로 처리됐다
+
+
+# ── 같은 키가 거의 동시에 올 때 ─────────────────────────────────
+# 키 확인(recall)과 키 적기 사이에 동의 읽기 · 한도 · 채널 열기가 있다. 그 사이에 같은 키가 또 오면
+# 그 요청도 "처음 보는 키" 를 본다 — 11-11 로컬에서 같은 키 4개를 한꺼번에 보내 run 4개 · 관찰
+# 4건이 저장됐다. 키 적기가 "처음 적은 요청만 통과"(SET NX) 여야 뒤 요청이 새 run 을 띄우지 않는다.
+
+
+def _recall_misses(monkeypatch) -> None:
+    """앞 요청이 키를 적기 전에 같은 키가 와서 recall 이 아무것도 못 본 상황."""
+
+    async def missed(**scope):
+        return None
+
+    monkeypatch.setattr(idempotency, "recall", missed)
+
+
+def _lost_channels(winner: str) -> list:
+    return [c for c in registry._channels.values() if c.run_id != winner]
+
+
+async def test_recall_이_놓친_같은_키는_러너를_다시_띄우지_않고_먼저_적힌_run_을_준다(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    headers, _ = bearer
+    keyed = with_key(headers)
+    first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+    _recall_misses(monkeypatch)
+
+    second = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+
+    winner = first.json()["run_id"]
+    assert second.status_code == 202
+    assert second.json()["run_id"] == winner
+    assert len(agent_calls) == 1  # 러너를 한 번만 띄웠다
+    # 진 쪽이 연 채널은 아무도 닫지 않는다 — 닫아야 지울 예약이 걸린다
+    assert all(c.closed and c.task is None for c in _lost_channels(winner))
+
+
+async def test_진_요청이_찜한_되묻기_맥락은_풀어_둔다(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    """같은 키를 앞 요청이 먼저 적었으면 러너가 안 떠서 "사용 중" 표시를 풀어 줄 쪽이 없다.
+
+    풀지 않으면 15분 동안 그 질문에 답할 수 없다 (#564). 같은 키에 다른 본문이 온 드문 경우다 —
+    같은 reply_to 면 찜하기(claim)에서 먼저 막힌다.
+    """
+    headers, parent_id = bearer
+    keyed = with_key(headers)
+    await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+    await pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    _recall_misses(monkeypatch)
+    answer = {**_ANSWER, "reply_to": "r-prev"}
+
+    lost = await db_client.post(INPUTS.format(cid=cid), json=answer, headers=keyed)
+    answered = await db_client.post(INPUTS.format(cid=cid), json=answer, headers=with_key(headers))
+
+    assert lost.status_code == answered.status_code == 202
+    assert len(agent_calls) == 2  # 처음 입력과 다시 보낸 답만 러너까지 갔다
+    assert agent_calls[-1]["continuation"] == _PENDING
+
+
+# ── 동시성 — 실제로 커밋하는 연결 여럿 ─────────────────────────────
+# 테스트 세션 하나에 묶인 db_client 로는 요청을 겹쳐 보낼 수 없다(한 연결은 한 번에 하나만 묻는다).
+# 여기만 커밋하는 보호자 · 아이를 따로 만들고 요청마다 자기 연결을 쓰게 한 뒤, 끝나면 직접 지운다
+# (test_rate_limits · test_run_hold 의 committed 와 같은 방식).
+
+
+@pytest.fixture
+async def committed_input(pending_db, monkeypatch):
+    """(Authorization 헤더, 아이 id).
+
+    pending_db 가 테스트 트랜잭션에 묶어 둔 한도 · 보관함을 커밋하는 연결로 되돌린다.
+    """
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    token = f"test-token-{uuid.uuid4().hex}"
+    async with factory() as s:
+        parent = Parent()
+        s.add(parent)
+        await s.flush()
+        await seed_login(s, parent_id=parent.id, token=token)
+        child_id = await link_child(s, parent_id=parent.id)
+        await s.commit()
+        parent_id = parent.id
+    for store in (quota, pending_reply):
+        monkeypatch.setattr(store, "_session_factory", factory)
+
+    async def unrecorded(self, channel):  # 대화 기록 행은 이 테스트가 보는 것이 아니다
+        return None
+
+    monkeypatch.setattr(chat_record.TurnRecorder, "save", unrecorded)
+    yield {"Authorization": f"Bearer {token}"}, child_id
+    async with factory() as s:
+        await s.execute(delete(RateEvent).where(RateEvent.key.like(f"input:{parent_id}:%")))
+        await s.execute(delete(Child).where(Child.id == child_id))
+        await s.execute(delete(Parent).where(Parent.id == parent_id))
+        await s.commit()
+
+
+async def test_같은_키가_동시에_와도_run_은_하나다(client, committed_input, agent_calls):
+    headers, child_id = committed_input
+    keyed = with_key(headers)
+
+    responses = await asyncio.gather(
+        *(client.post(INPUTS.format(cid=child_id), json=BODY, headers=keyed) for _ in range(4))
+    )
+
+    assert [r.status_code for r in responses] == [202] * 4
+    run_ids = {r.json()["run_id"] for r in responses}
+    assert len(run_ids) == 1
+    assert len(agent_calls) == 1
+    await asyncio.wait_for(registry.get(run_ids.pop()).task, timeout=2)

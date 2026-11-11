@@ -1,8 +1,9 @@
 "use client";
 
 import { ArrowRight, Plus, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
+import { ReminderField } from "@/components/reminder-field";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -12,9 +13,25 @@ import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import { TimeField } from "@/components/ui/time-field";
 import { cn } from "@/lib/cn";
-import { moveStart, sameInstant, seoulDate, seoulTime, withSeoulDateTime } from "@/lib/event-draft";
-import { formatEventTime } from "@/lib/format";
-import type { EventDraft, EventDraftFields, EventDraftItem } from "@/lib/api/types";
+import {
+  moveStart,
+  repeatRequest,
+  sameInstant,
+  seoulDate,
+  seoulTime,
+  seriesTimeLabel,
+  withSeoulDateTime,
+} from "@/lib/event-draft";
+import { formatDay, formatEventTime } from "@/lib/format";
+import { forKind, isPast, NO_REMINDER, reminderLabel, type ReminderChoice } from "@/lib/reminder";
+import type {
+  EventDraft,
+  EventDraftFields,
+  EventDraftItem,
+  Reminder,
+  RepeatRequest,
+  SeriesDraft,
+} from "@/lib/api/types";
 
 /**
  * 일정 초안 한 장 — **초안이 만들어지는 세 경로가 같이 쓰는 한 벌.**
@@ -60,7 +77,30 @@ import type { EventDraft, EventDraftFields, EventDraftItem } from "@/lib/api/typ
  *
  * 🚨 **도메인 색을 쓰지 않는다.** `category` 는 Agent 도메인이 아니다 (이름이 겹치는
  *    `activity` 가 있지만 뜻이 다르다) — `photo-review.tsx` 와 같은 판단이다.
+ *
+ * 🚨 **알림 칸은 새 일정에만 선다** (#609). 알림은 일정이 아니라 보호자 개인 설정이라 게이트가
+ *    아니고, 고른 값은 제출과 함께 **이 보호자에게만** 걸린다. 수정 초안은 `reminder` 를 아예
+ *    싣지 않는다 — 칸이 없으면 서버가 걸린 알림을 그대로 두고 시각 · 종일이 바뀌면 알아서 옮긴다.
+ *    수정에서 같은 값을 다시 보내면 시작을 옮긴 경우 그 값이 지나 422 로 일정까지 못 넣는다 (#603).
+ *    걸린 알림을 바꾸는 자리는 09 하루 패널이다.
+ *
+ * 🚨 **요일 반복 일정(#738)은 날짜를 잠근다.** 어느 날이 회차인지는 서버 규칙(`recurrence.py`)이 정하고
+ *    화면은 그 문구(`repeat.label`)만 그린다. 첫 회차를 카드에서 옮기면 요일과 어긋나거나 90일 상한을 넘을 수
+ *    있는데, 화면은 날짜를 계산하지 않아 그걸 알 수도 문구를 다시 만들 수도 없다. 시각 · 하루 종일 · 준비물 · 알림은
+ *    회차마다 같은 값이라 그대로 고친다. 요일 · 끝 날짜를 바꾸려면 대화로 다시 말한다.
+ * 🚨 **반복 묶음 고치기(`op: "update_series"`)는 이 카드가 아니라 `SeriesDraftCard` 다** (아래). 날짜 없는 시각과
+ *    이름뿐인 준비물이라 칸이 맞지 않는다.
  */
+
+/** 제출할 때 넘기는 최종 상태. `reminder` 는 새 일정에만 있다 (위 머리말). */
+export interface DraftSubmitFinal {
+  event: EventDraftFields;
+  items: EventDraftItem[];
+  /** 🚨 `null` 은 "알림 없음" 이다. 수정 초안에서는 칸 자체가 없다. */
+  reminder?: Reminder | null;
+  /** 요일 반복 일정이면 그 규칙 (#738). 🚨 초안에서 받은 그대로다 — 카드는 요일 · 끝 날짜를 고치지 않는다. */
+  repeat?: RepeatRequest;
+}
 
 /** 게이트를 통과한 뒤. 🚨 보호자의 선택이 아니라 **서버가 저장을 끝냈는가**다. */
 export type DraftSubmitState = "idle" | "submitting" | "submitted" | "failed";
@@ -76,7 +116,9 @@ export function EventDraftCard({
   draft,
   state = "idle",
   error,
+  errorHint,
   blocked = false,
+  blockedNote,
   lockReason,
   onSubmit,
 }: {
@@ -85,10 +127,23 @@ export function EventDraftCard({
   /** 제출이 실패한 이유. `state === "failed"` 일 때만 쓴다. */
   error?: string;
   /**
+   * 실패 문구 아래에 덧붙일 다음 할 일. 🚨 **카드에서 고칠 수 없는 실패일 때만** 그릇이 넘긴다 —
+   *    반복 규칙 오류(`invalid_repeat`)는 요일 · 끝 날짜 · 첫 회차를 고칠 칸이 없어서 대화로 다시 말해야 한다.
+   */
+  errorHint?: string;
+  /**
    * 🚨 알레르기가 확인돼 이 초안은 넣지 않는다. 그릇이 판정한다 —
    *    사전검사에 답하는 자리는 카드 밖(승인 시트)이고, 여기는 결과만 받는다.
    */
   blocked?: boolean;
+  /**
+   * `blocked` 의 이유를 그릇이 말할 때 (#902). 보호자가 답해 막은 것이 아니라 **넣는 순간 서버가 막은 것**이다 —
+   *    시트를 연 사이 다른 보호자가 알레르기를 등록했다. 기본 문구("알레르기를 확인했어요")는 보호자가 확인한
+   *    일이라 이때 쓰면 거짓말이다.
+   *    🚨 **실패가 아니라 안내라서** `danger` 도 `CardFailed` 도 쓰지 않는다 — 05 의 "채택한 뒤에 막힐 때" 안내
+   *    (`event-draft-ui-v1.md` §3-8)와 같은 꼴이다. 다시 눌러도 같은 409 라 버튼을 세우지 않는다.
+   */
+  blockedNote?: string;
   /**
    * 그릇이 거는 잠금과 그 이유. 🚨 **`blocked` 와 다르다** — `blocked` 는 "안 넣는다"(알레르기)고
    *    이건 "아직 못 넣는다"(제안 경로의 재료 확인이 안 끝남)다. 둘을 한 값으로 쓰면 화면이
@@ -96,23 +151,37 @@ export function EventDraftCard({
    */
   lockReason?: string;
   /** 🚨 보호자가 확인한 **최종 상태**를 통째로 넘긴다 (#122 확정 — 부분 갱신이 아니다). */
-  onSubmit: (final: { event: EventDraftFields; items: EventDraftItem[] }) => void;
+  onSubmit: (final: DraftSubmitFinal) => void;
 }) {
   /**
    * 🚨 **정본은 여기다.** 보호자가 고치면 이 값이 바뀌고 제출은 이 값을 보낸다 —
    *    서버가 보낸 `draft` 를 다시 읽지 않는다 (`photo-review.tsx` 와 같은 구조).
    */
   const [event, setEvent] = useState<EventDraftFields>(() => draft.event);
-  const [items, setItems] = useState<EventDraftItem[]>(() => draft.items);
+  /**
+   * 카드가 처음 받은 준비물 — "새로 더한 것" 을 가르는 기준이다 (`ItemList`).
+   * 🚨 `draft.items` 를 직접 쓰지 않는다. 그릇이 같은 초안을 새 객체로 다시 넘기면 같은 항목이
+   *    다른 참조가 되어 전부 "새로 더한 것" 이 된다 — 처음 받은 배열을 붙잡아 둔다.
+   */
+  const [originalItems] = useState<readonly EventDraftItem[]>(() => draft.items);
+  const [items, setItems] = useState<EventDraftItem[]>(() => [...originalItems]);
   const [newItem, setNewItem] = useState("");
   /**
    * 🚨 **넣은 뒤에 보여줄 것은 로컬 값이 아니라 보낸 값이다.** 제출이 나가는 동안에도 칸은
    *    살아 있어서, 기다리는 사이 날짜를 바꾸면 "넣었어요" 카드가 **캘린더에 안 들어간 값**을
    *    보여준다 — 승인 게이트가 자기가 쓴 것과 다른 것을 말하게 된다.
    */
-  const [sent, setSent] = useState<{ event: EventDraftFields; items: EventDraftItem[] } | null>(
-    null,
-  );
+  const [sent, setSent] = useState<DraftSubmitFinal | null>(null);
+  /** 새 일정에만 쓴다. 🚨 기본값은 "없음" 이다 (#594). */
+  const [reminder, setReminder] = useState<ReminderChoice>(NO_REMINDER);
+  const creating = draft.op !== "update";
+  /**
+   * 🚨 **반복 일정은 날짜를 잠근다** (머리말). 첫 회차가 비어 온 반복 초안은 없어야 하지만(서버 `EventBody.starts_at`
+   *    이 필수다), 비어 오면 잠그지 않는다 — 고를 칸이 없으면 제출이 영영 잠긴다.
+   */
+  const repeat = draft.repeat;
+  const lockDate = repeat !== undefined && draft.event.starts_at !== null;
+  const kind = draft.op === "update" ? "일정 수정" : repeat ? "새 반복 일정" : "새 일정";
   /**
    * 🚨 **날짜와 시각은 따로 둔다.** `starts_at` 하나로 들면 "날짜는 골랐고 시각은 아직" 을
    *    담을 자리가 없어서, 그 상태가 **자정**으로 접힌다 (그게 이 카드가 냈던 버그다).
@@ -132,6 +201,19 @@ export function EventDraftCard({
   const missingTime = !event.all_day && time === "";
   const done = state === "submitted";
   const busy = state === "submitting";
+  /**
+   * 고른 알림 시각이 이미 지났다 — 날짜를 앞으로 당겼거나 고른 채 시간이 흘렀다.
+   * 🚨 **조용히 "없음" 으로 바꾸지 않는다.** 고른 것과 들어간 것이 달라진다. 막고 다시 고르게 한다.
+   */
+  const reminderPast =
+    creating &&
+    // 🚨 반복 일정은 첫 회차 하나로 판정하지 않는다 (#746 리뷰). 첫 회차의 알림 시각이 지났어도 다음 회차부터는
+    //    울릴 수 있고, 회차 날짜는 화면이 계산하지 않아 둘째 회차를 볼 수 없다. 지난 회차 건너뛰기와 전 회차가
+    //    다 지난 경우의 422 는 서버가 진다 (#761).
+    !repeat &&
+    reminder !== NO_REMINDER &&
+    event.starts_at !== null &&
+    isPast(reminder, event.starts_at, event.all_day);
 
   /** 🚨 일시가 없으면 제출할 수 없다. 화면이 왜 잠겼는지 말한다 — 조용히 비활성으로 두지 않는다. */
   const canSubmit =
@@ -140,6 +222,7 @@ export function EventDraftCard({
     event.title.trim() !== "" &&
     !blocked &&
     !lockReason &&
+    !reminderPast &&
     !busy &&
     !done;
 
@@ -158,6 +241,8 @@ export function EventDraftCard({
 
     if (next.date !== undefined) setDate(next.date);
     if (next.time !== undefined) setTime(next.time);
+    // 🚨 종류가 바뀌면 고른 알림을 지우지 않고 날 수를 지켜 옮긴다 — 서버 `for_kind` 와 같은 방향이다.
+    if (allDay !== event.all_day) setReminder((prev) => forKind(prev, allDay));
     patch({
       all_day: allDay,
       ...moveStart(event, withSeoulDateTime(nextDate, nextTime, allDay)),
@@ -176,17 +261,22 @@ export function EventDraftCard({
     return (
       <Card>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="text-label text-ink-subtle">
-            {draft.op === "update" ? "일정 수정" : "새 일정"}
-          </span>
+          <span className="text-label text-ink-subtle">{kind}</span>
           <span className="text-caption text-brand-ink bg-brand-soft rounded-field px-2 py-0.5">
             넣었어요
           </span>
         </div>
         <p className="text-body text-ink mt-3">{shown.event.title}</p>
+        {repeat ? <p className="text-body-sm text-ink-muted mt-1">{repeat.label}</p> : null}
         {shown.event.starts_at ? (
           <p className="text-body-sm text-ink-muted mt-1">
+            {repeat ? "첫 회차 " : null}
             {formatEventTime(shown.event.starts_at, shown.event.all_day)}
+          </p>
+        ) : null}
+        {shown.reminder ? (
+          <p className="text-body-sm text-ink-muted mt-1">
+            알림 {reminderLabel(shown.reminder.lead)}
           </p>
         ) : null}
       </Card>
@@ -196,9 +286,7 @@ export function EventDraftCard({
   return (
     <Card>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="text-label text-ink-subtle">
-          {draft.op === "update" ? "일정 수정" : "새 일정"}
-        </span>
+        <span className="text-label text-ink-subtle">{kind}</span>
         {/* 🚨 아직 아무것도 저장되지 않았다는 것은 경고가 아니라 **사실**이라 중립 면이다
             (`photo-review.tsx` 와 같은 판단 — `caution` 은 누르는 버튼 옆에만 선다). */}
         <span className="text-caption text-ink-muted bg-surface-muted rounded-field px-2 py-0.5">
@@ -209,7 +297,7 @@ export function EventDraftCard({
       {/* 🚨 왜 확인이 필요한지는 **서버 문구**를 그대로 쓴다. 프론트가 지어내지 않는다. */}
       {draft.needs_review ? (
         <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-3 px-3 py-2">
-          {draft.review_reason ?? "읽지 못한 값이 있어요. 보고 채워 주세요."}
+          {draft.review_reason ?? "읽지 못한 칸이 있어요. 확인하고 채워 주세요."}
         </p>
       ) : null}
 
@@ -229,15 +317,19 @@ export function EventDraftCard({
                사진 경로가 쓰는 순간 제안이 아닌 것을 제안이라고 말한다. 왜 비었는지는 경로를 아는
                쪽(`review_reason`)이 말하고, 여기는 **비었다는 사실만** 말한다. 그것마저 위에 있으면
                같은 말을 두 번 하게 되므로 그때는 아예 뺀다. */}
-        <DateField
-          label="언제"
-          placeholder="날짜를 골라주세요"
-          hint={missingDate && !draft.review_reason ? "이 초안에는 날짜가 없어요." : undefined}
-          value={date}
-          onChange={(next) => setWhen({ date: next })}
-          fromDate={FROM_DATE}
-          toDate={TO_DATE}
-        />
+        {lockDate && repeat ? (
+          <RepeatWhen label={repeat.label} firstDay={date} />
+        ) : (
+          <DateField
+            label="언제"
+            placeholder="날짜를 골라 주세요"
+            hint={missingDate && !draft.review_reason ? "이 초안에는 날짜가 없어요." : undefined}
+            value={date}
+            onChange={(next) => setWhen({ date: next })}
+            fromDate={FROM_DATE}
+            toDate={TO_DATE}
+          />
+        )}
 
         <Checkbox
           checked={event.all_day}
@@ -254,7 +346,18 @@ export function EventDraftCard({
           <TimeField label="시작 시간" value={time} onChange={(next) => setWhen({ time: next })} />
         ) : null}
 
-        <ItemList items={items} disabled={busy} onChange={setItems} />
+        {creating ? (
+          <ReminderField
+            // 🚨 반복이면 첫 회차로 지난 선택지를 거르지 않는다 — 위 `reminderPast` 와 같은 이유다.
+            startsAt={repeat ? null : event.starts_at}
+            allDay={event.all_day}
+            value={reminder}
+            onChange={setReminder}
+            hint={repeat ? "나에게만 회차마다 울려요. 이미 지난 회차는 건너뛰어요." : undefined}
+          />
+        ) : null}
+
+        <ItemList items={items} original={originalItems} disabled={busy} onChange={setItems} />
 
         {/* 🚨 `TextInput` 의 `className` 은 래퍼가 아니라 `<input>` 으로 간다 — 폭은 바깥에서 준다. */}
         <div className="flex items-end gap-2">
@@ -271,9 +374,10 @@ export function EventDraftCard({
               }}
             />
           </div>
+          {/* 입력칸(`min-h-field`)과 한 줄로 서는 버튼이라 `field` 크기다 (디자인 시스템 §7). */}
           <Button
             variant="secondary"
-            size="compact"
+            size="field"
             disabled={busy || newItem.trim() === ""}
             onClick={addItem}
           >
@@ -287,15 +391,21 @@ export function EventDraftCard({
           서버가 보내 준 `changed` 는 보호자가 값을 고치는 순간 쓸 수 없어서 payload 에서 뺐다 (#122). */}
       {draft.before ? <Diff before={draft.before} event={event} items={items} /> : null}
 
-      {error ? (
-        <CardFailed className="mt-4">
-          <p>{error}</p>
-          <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
-        </CardFailed>
-      ) : null}
-
-      <div className="mt-5">
-        {blocked ? (
+      <CardActions>
+        {/* 🚨 **실패 문구도 바 안에 선다** (#866 리뷰). 바가 붙은 채 시트 위쪽을 보며 누를 수 있어서, 카드 맨 아래
+            원래 자리에 두면 "왜 안 들어갔는지" 가 화면 밖에 남고 버튼만 다시 켜진다. */}
+        {error ? (
+          <CardFailed className="mb-3">
+            <p>{error}</p>
+            <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
+            {errorHint ? <p className="mt-1">{errorHint}</p> : null}
+          </CardFailed>
+        ) : null}
+        {blocked && blockedNote ? (
+          <p role="status" className="text-body-sm text-ink">
+            {blockedNote}
+          </p>
+        ) : blocked ? (
           <p className="text-body-sm text-danger-ink">
             알레르기를 확인했어요. 이 일정은 넣지 않을게요.
           </p>
@@ -315,14 +425,21 @@ export function EventDraftCard({
             >
               {lockReason ? <p className="text-body-sm">{lockReason}</p> : null}
               {missingDate ? (
-                <p className="text-body-sm">날짜를 골라주셔야 넣을 수 있어요.</p>
+                <p className="text-body-sm">날짜를 골라 주셔야 넣을 수 있어요.</p>
               ) : null}
               {missingTime ? (
-                <p className="text-body-sm">몇 시에 시작하는지 골라주셔야 넣을 수 있어요.</p>
+                <p className="text-body-sm">몇 시에 시작하는지 골라 주셔야 넣을 수 있어요.</p>
+              ) : null}
+              {reminderPast ? (
+                <p className="text-body-sm">
+                  고른 알림 시각이 이미 지났어요. 알림을 다시 골라 주셔야 넣을 수 있어요.
+                </p>
               ) : null}
               {canSubmit ? (
                 <p className="text-body-sm">
-                  누르면 캘린더에 들어가요. 함께 보는 보호자에게도 보여요.
+                  {repeat
+                    ? "누르면 반복하는 날마다 캘린더에 들어가요. 함께 보는 보호자에게도 보여요."
+                    : "누르면 캘린더에 들어가요. 함께 보는 보호자에게도 보여요."}
                 </p>
               ) : null}
             </div>
@@ -331,8 +448,16 @@ export function EventDraftCard({
               disabled={!canSubmit}
               aria-busy={busy}
               onClick={() => {
-                setSent({ event, items });
-                onSubmit({ event, items });
+                const final: DraftSubmitFinal = creating
+                  ? {
+                      event,
+                      items,
+                      reminder: reminder === NO_REMINDER ? null : { lead: reminder },
+                      ...(repeat ? { repeat: repeatRequest(repeat) } : {}),
+                    }
+                  : { event, items };
+                setSent(final);
+                onSubmit(final);
               }}
             >
               {busy ? <Spinner /> : null}
@@ -340,7 +465,7 @@ export function EventDraftCard({
             </Button>
           </>
         )}
-      </div>
+      </CardActions>
     </Card>
   );
 
@@ -354,15 +479,121 @@ export function EventDraftCard({
 }
 
 /**
+ * 넣기 버튼과 그 위의 확인 · 막힌 이유 (#866). 🚨 **시트 스크롤 바닥에 붙는다** — 카드가 시트보다 길면
+ * 넣기 버튼이 "닫기" 아래로 밀려서, 보이는 것이 닫기뿐이었다. 날짜가 비어 버튼이 꺼져 있으면 그 이유까지
+ * 같이 가려져 왜 막혔는지 알 길이 없었다. 카드를 다 내리면 원래 자리(카드 맨 아래)에 놓인다.
+ *
+ * 🚨 **이유와 버튼을 한 덩이로 붙인다.** 이유만 날짜 칸 아래로 옮기는 길도 있었지만, 그러면 막는 것을 말하는
+ *    자리가 버튼과 떨어진다 — 막는 것이 넷(잠금 · 날짜 · 시각 · 알림)이라 한 곳에서 말한다 (카드 본문 주석).
+ * 🚨 **시트 바닥(푸터)으로 옮기지 않는다.** 제출은 건별이라 버튼은 카드의 상태(고친 칸 · 키 · 결과)를 들고,
+ *    여러 장이면 숨긴 장도 마운트돼 있다 (`event-draft-list.tsx` · #537). 시트가 아니라 카드가 버튼을 진다.
+ *
+ * - `-bottom-4` · `-mb-4` · `pb-4` 는 시트 본문의 아래 여백(`BottomSheet` 의 `py-4`)과 카드 여백(`p-4`)을
+ *   덮는다. 스크롤 면은 안쪽 여백만큼 들어온 곳에 붙여서, `bottom-0` 이면 바 아래 16px 틈으로 뒤 칸이 비쳤다
+ * - 🚨 **글자를 입력하는 동안에는 붙지 않는다.** 키보드가 올라오면 시트 높이가 줄어서 바가 입력칸을 덮는다.
+ *   체크박스는 입력으로 치지 않는다 — 누르면 포커스가 가서 바가 떨어졌다 붙는다
+ * - 🚨 **다시 붙는 것은 그 누르기가 끝난 뒤다** (#866 리뷰). 포커스는 누르는 순간(mousedown) 옮겨 가는데, 그때 바로
+ *   붙으면 바가 누른 자리("더하기" · 준비물 빼기)를 덮어 click 이 그 버튼에 닿지 않았다 — 눌렀는데 아무 일도 없다.
+ *   CSS `:focus` 로는 이 순서를 못 미뤄서 상태로 든다. 손가락 탭은 mousedown · mouseup · click 이 한 번에 오고,
+ *   마우스는 누른 채 있다가 떼므로 뗄 때(`pointerup`)까지 기다린다
+ */
+function CardActions({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const typing = useTyping(ref);
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        "bg-surface border-line mt-5 border-t pt-3",
+        typing ? "static" : "sticky -bottom-4 -mb-4 pb-4",
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** 카드 안에서 글자를 입력하는 중인가 (`CardActions` 머리말). 카드는 바의 부모다 — 바가 카드 바로 아래 자식이라서. */
+function useTyping(ref: RefObject<HTMLElement | null>) {
+  const [typing, setTyping] = useState(false);
+
+  useEffect(() => {
+    const card = ref.current?.parentElement;
+    if (!card) return;
+    let pressing = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const isTextInput = (el: Element | EventTarget | null) =>
+      el instanceof HTMLInputElement && el.type !== "checkbox" && card.contains(el);
+    const sync = () => setTyping(isTextInput(document.activeElement));
+    /** 이 누르기의 click 까지 끝난 뒤에 맞춘다. */
+    const later = () => {
+      clearTimeout(timer);
+      timer = setTimeout(sync, 0);
+    };
+    // 🚨 떼는 것만 바로 한다 — 키보드가 올라오기 전에 떨어져 있어야 칸을 안 덮는다. 붙는 것은 늘 미룬다:
+    //    "더하기" 처럼 포커스를 받는 버튼을 누르면 focusin 이 그 버튼에서 오는데, 거기서 바로 붙이면 같은 사고다.
+    const onFocusIn = (e: FocusEvent) => {
+      if (isTextInput(e.target)) {
+        clearTimeout(timer);
+        setTyping(true);
+      } else if (!pressing) later();
+    };
+    const onFocusOut = () => {
+      if (!pressing) later();
+    };
+    const onPointerDown = () => {
+      pressing = true;
+    };
+    const onPointerUp = () => {
+      if (!pressing) return;
+      pressing = false;
+      later();
+    };
+
+    card.addEventListener("focusin", onFocusIn);
+    card.addEventListener("focusout", onFocusOut);
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("pointerup", onPointerUp, true);
+    document.addEventListener("pointercancel", onPointerUp, true);
+    return () => {
+      clearTimeout(timer);
+      card.removeEventListener("focusin", onFocusIn);
+      card.removeEventListener("focusout", onFocusOut);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("pointerup", onPointerUp, true);
+      document.removeEventListener("pointercancel", onPointerUp, true);
+    };
+  }, [ref]);
+
+  return typing;
+}
+
+/**
  * 준비물 목록. 🚨 **지우기가 있어야 계약이 성립한다** — `items` 가 최종 목록이라
  * 배열에서 빠지는 것이 삭제를 표현하는 유일한 방법이다 (#122).
+ *
+ * 카드 폭이 넉넉하면 **두 열로 선다** (#679 · 09 일정 카드 #568 과 같은 방식). 기준과 이유는
+ * `docs/web/event-draft-ui-v1.md` §3-5.
+ * ⚠️ 기준 폭은 09 의 `@2xs`(18rem) 가 아니라 `@3xs`(16rem) 다. 시트 여백과 카드 안쪽 여백을 빼면
+ *    360 폭 폰에서 칸이 286px 라 18rem 에 2px 모자라 한 열로 섰다.
+ *
+ * 🚨 **"N개 더 보기" 로 접지 않는다.** 이 카드는 승인 게이트라 접힌 항목도 제출에 실려
+ *    캘린더에 들어간다 — 보호자가 보지 않은 것이 저장된다.
  */
 function ItemList({
   items,
+  original,
   disabled,
   onChange,
 }: {
   items: EventDraftItem[];
+  /**
+   * 카드가 처음 받은 준비물. 🚨 **"새로 더한 것" 은 `item_id === null` 이 아니라 여기에 없는 항목이다.**
+   *    새 일정 초안은 서버가 찾아 준 준비물도 전부 `item_id: null` 이라(아직 행이 없다), `null` 로
+   *    가르면 보호자가 더하지 않은 것까지 전부 "새로 더한 것" 이 된다 (#679).
+   */
+  original: readonly EventDraftItem[];
   disabled: boolean;
   onChange: (next: EventDraftItem[]) => void;
 }) {
@@ -371,18 +602,23 @@ function ItemList({
   }
 
   return (
-    <div>
+    <div className="@container">
       <p className="text-label text-ink-muted">준비물</p>
-      <ul className="mt-1.5 flex flex-col gap-1.5">
+      <ul className="mt-1.5 grid grid-cols-1 gap-1.5 @3xs:grid-cols-2">
         {items.map((item, index) => (
           <li
             key={item.item_id ?? `new-${index}-${item.item_name}`}
-            className="border-line rounded-field flex items-center gap-2 border px-3 py-2"
+            className="border-line rounded-field flex min-w-0 items-center gap-1 border py-2 pr-1 pl-3"
           >
-            <span className="text-body-sm text-ink flex-1">{item.item_name}</span>
-            {item.item_id === null ? (
-              <span className="text-caption text-ink-subtle">새로 더한 것</span>
-            ) : null}
+            {/* 🚨 `wrap-anywhere` · `min-w-0` — 칸이 좁아져서 띄어쓰기 없는 긴 이름이 칸 밖으로 넘친다.
+                전역이 `keep-all` 이라 끊을 자리가 없고, `break-words` 는 최소 폭을 줄이지 못한다. */}
+            <div className="min-w-0 flex-1">
+              <p className="text-body-sm text-ink wrap-anywhere">{item.item_name}</p>
+              {/* 좁은 칸에서 이름과 한 줄에 두면 이름이 서너 글자씩 꺾여서 아래 줄로 내렸다. */}
+              {!original.includes(item) ? (
+                <p className="text-caption text-ink-subtle">새로 더한 것</p>
+              ) : null}
+            </div>
             <button
               type="button"
               disabled={disabled}
@@ -431,11 +667,31 @@ function Diff({
   const removed = before.items.filter((item) => item.item_id && !keptIds.has(item.item_id));
   const added = items.filter((item) => item.item_id === null);
 
+  return (
+    <DiffList
+      rows={rows}
+      added={added.map((item) => item.item_name)}
+      removed={removed.map((item) => item.item_name)}
+      unchanged="원래 일정과 달라진 것이 없어요."
+    />
+  );
+}
+
+/** 무엇이 달라지는지 그리는 자리. 일정 수정과 반복 묶음 고치기(#738)가 같이 쓴다 — 값을 고르는 것은 부르는 쪽이다. */
+function DiffList({
+  rows,
+  added,
+  removed,
+  unchanged,
+}: {
+  rows: Array<{ term: string; from: string; to: string }>;
+  added: string[];
+  removed: string[];
+  unchanged: string;
+}) {
   if (rows.length === 0 && removed.length === 0 && added.length === 0) {
     return (
-      <p className="text-body-sm text-ink-muted border-line mt-4 border-t pt-3">
-        원래 일정과 달라진 것이 없어요.
-      </p>
+      <p className="text-body-sm text-ink-muted border-line mt-4 border-t pt-3">{unchanged}</p>
     );
   }
 
@@ -461,20 +717,168 @@ function Diff({
         {added.length > 0 ? (
           <div className="flex flex-wrap items-baseline gap-x-2">
             <dt className="text-caption text-ink-subtle w-10 shrink-0">더함</dt>
-            <dd className="text-body-sm text-ink">
-              {added.map((item) => item.item_name).join(", ")}
-            </dd>
+            <dd className="text-body-sm text-ink">{added.join(", ")}</dd>
           </div>
         ) : null}
         {removed.length > 0 ? (
           <div className="flex flex-wrap items-baseline gap-x-2">
             <dt className="text-caption text-ink-subtle w-10 shrink-0">뺌</dt>
-            <dd className="text-body-sm text-ink-muted line-through">
-              {removed.map((item) => item.item_name).join(", ")}
-            </dd>
+            <dd className="text-body-sm text-ink-muted line-through">{removed.join(", ")}</dd>
           </div>
         ) : null}
       </dl>
     </div>
+  );
+}
+
+/**
+ * 반복 일정의 "언제" (#738). 🚨 **고르는 칸이 아니라 읽는 줄이다** — 회차 날짜는 서버 규칙이 정하고, 첫 회차를
+ *    여기서 옮기면 요일 · 90일 상한과 어긋난다 (카드 머리말). 바꾸는 길은 대화로 다시 말하는 것이라 그렇게 적는다.
+ * 🚨 반복 문구는 서버 문구다 — 요일 · 끝 날짜로 화면이 다시 만들지 않는다.
+ */
+function RepeatWhen({ label, firstDay }: { label: string; firstDay: string }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-label text-ink-muted">언제</span>
+      <p className="text-body text-ink">{label}</p>
+      {firstDay !== "" ? (
+        <p className="text-body-sm text-ink-muted">첫 회차는 {formatDay(firstDay)}이에요.</p>
+      ) : null}
+      <p className="text-caption text-ink-subtle">
+        요일이나 끝나는 날을 바꾸려면 대화로 다시 말해 주세요.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * 반복 묶음 전체를 고치는 초안 한 장 (`op: "update_series"` · #738).
+ *
+ * 🚨 **여기도 승인 게이트 ㉠ 이다** — 아직 시작하지 않은 회차 전부를 캘린더에서 고친다. 같은 게이트의 다른 메서드라
+ *    `btn-approve` 와 `caution` 을 쓰고, 게이트가 는 것이 아니다 (`EventDraftCard` 머리말과 같은 이유).
+ *
+ * 🚨 **읽기 전용이다** (#738). 바꾸는 값이 날짜 없는 하루 시각 · 요일 · 끝 날짜 · 준비물 이름이라 일정 카드의
+ *    칸(날짜 + 시각)으로 받을 수 없고, 요일 · 끝 날짜를 화면이 고치면 반복 문구를 다시 만들어야 한다(날짜 계산).
+ *    다르게 바꾸고 싶으면 대화로 다시 말한다 — 새 초안이 이 장을 갈아 끼운다 (`draftTarget`).
+ *
+ * 🚨 **범위를 먼저 말한다.** "아직 시작하지 않은 회차 전부" 와 "지난 회차는 그대로" 가 이 카드의 본체다 — 한 회차만 고치려던
+ *    보호자가 여기서 멈출 수 있어야 한다 (Agent 가 범위를 잘못 고를 수 있다 · #744 리뷰).
+ * 🚨 **무엇이 달라지는지는 `before` 와 비교한다.** `before` 는 아직 시작하지 않은 회차에서 가장 흔한 값이라, 한 회차만 따로
+ *    고쳐 둔 값은 비교에 안 나온다 — 서버도 그 회차를 덮지 않으니 맞는 표시다.
+ */
+export function SeriesDraftCard({
+  draft,
+  state = "idle",
+  error,
+  errorHint,
+  onSubmit,
+}: {
+  draft: SeriesDraft;
+  state?: DraftSubmitState;
+  error?: string;
+  /** 실패 문구 아래에 덧붙일 다음 할 일 (`EventDraftCard` 의 `errorHint` 와 같다). */
+  errorHint?: string;
+  onSubmit: () => void;
+}) {
+  const done = state === "submitted";
+  const busy = state === "submitting";
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-label text-ink-subtle">반복 일정 수정</span>
+        {done ? (
+          <span className="text-caption text-brand-ink bg-brand-soft rounded-field px-2 py-0.5">
+            바꿨어요
+          </span>
+        ) : (
+          <span className="text-caption text-ink-muted bg-surface-muted rounded-field px-2 py-0.5">
+            아직 저장되지 않았어요
+          </span>
+        )}
+      </div>
+
+      <p className="text-body text-ink mt-3">{draft.event.title}</p>
+      <p className="text-body-sm text-ink-muted mt-1">{draft.repeat.label}</p>
+      <p className="text-body-sm text-ink-muted mt-1">{seriesTimeLabel(draft.event)}</p>
+
+      {done ? null : (
+        <>
+          <p className="text-body-sm text-ink bg-surface-muted rounded-field mt-3 px-3 py-2">
+            앞으로의 회차가 모두 바뀌어요. 지난 회차는 그대로예요.
+          </p>
+
+          {/* 🚨 **테두리 상자로 그리지 않는다.** 일정 카드의 준비물 칸과 같은 모양이면 눌러서 고치려 한다 —
+              이 카드는 읽기 전용이라 이름을 이은 한 줄이다. */}
+          <div className="mt-4">
+            <p className="text-label text-ink-muted">준비물</p>
+            <p className="text-body-sm text-ink mt-1 wrap-anywhere">
+              {draft.items.length === 0 ? "없어요" : draft.items.join(", ")}
+            </p>
+          </div>
+
+          {draft.before ? <SeriesDiff draft={draft} before={draft.before} /> : null}
+
+          <p className="text-caption text-ink-subtle mt-4">
+            여기서는 고칠 수 없어요. 다르게 바꾸려면 대화로 다시 말해 주세요.
+          </p>
+
+          <CardActions>
+            {/* 실패 문구는 바 안에 선다 (`EventDraftCard` 와 같은 이유 · #866 리뷰). */}
+            {error ? (
+              <CardFailed className="mb-3">
+                <p>{error}</p>
+                <p className="mt-1">아직 아무것도 바꾸지 않았어요.</p>
+                {errorHint ? <p className="mt-1">{errorHint}</p> : null}
+              </CardFailed>
+            ) : null}
+            {/* 🚨 게이트의 마지막 확인은 버튼 옆 글자 한 덩이다 (`EventDraftCard` 와 같다). */}
+            <p
+              className={cn(
+                "text-body-sm ease-standard mb-3 transition-colors duration-120",
+                busy ? "text-ink-subtle" : "text-caution",
+              )}
+            >
+              누르면 앞으로의 회차가 캘린더에서 모두 바뀌어요. 함께 보는 보호자에게도 보여요.
+            </p>
+            <Button variant="approve" disabled={busy} aria-busy={busy} onClick={onSubmit}>
+              {busy ? <Spinner /> : null}
+              {busy ? "바꾸는 중이에요" : "확인했어요, 앞으로 전부 바꿀게요"}
+            </Button>
+          </CardActions>
+        </>
+      )}
+    </Card>
+  );
+}
+
+/** 묶음 고치기에서 달라지는 것. 🚨 준비물은 이름으로 비교한다 — 회차마다 `item_id` 가 달라서다 (#738). */
+function SeriesDiff({
+  draft,
+  before,
+}: {
+  draft: SeriesDraft;
+  before: NonNullable<SeriesDraft["before"]>;
+}) {
+  const rows: Array<{ term: string; from: string; to: string }> = [];
+  if (before.title !== draft.event.title) {
+    rows.push({ term: "제목", from: before.title, to: draft.event.title });
+  }
+  const fromTime = seriesTimeLabel(before);
+  const toTime = seriesTimeLabel(draft.event);
+  if (fromTime !== toTime) rows.push({ term: "시각", from: fromTime, to: toTime });
+  if (before.repeat.label !== draft.repeat.label) {
+    rows.push({ term: "반복", from: before.repeat.label, to: draft.repeat.label });
+  }
+
+  const now = new Set(draft.items);
+  const was = new Set(before.items);
+  return (
+    <DiffList
+      rows={rows}
+      added={draft.items.filter((name) => !was.has(name))}
+      removed={before.items.filter((name) => !now.has(name))}
+      unchanged="지금 반복 일정과 달라진 것이 없어요."
+    />
   );
 }

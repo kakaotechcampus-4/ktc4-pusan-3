@@ -30,10 +30,19 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agents import pipeline
-from app.agents.common.llm_client import LLMResponse, LLMUnavailableError
+from app.agents.common.guardrail import GuardContext, GuardrailUnavailableError, GuardResult
+from app.agents.common.llm_client import (
+    LLMAuthError,
+    LLMConfigError,
+    LLMRateLimitError,
+    LLMResponse,
+    LLMTimeoutError,
+    LLMUnavailableError,
+)
 from app.agents.common.readout import Readout
 from app.agents.common.refs import EvidenceCitation
 from app.agents.common.refs import Ref as EvidenceRef
+from app.agents.common.result import DomainPending
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import SuggestionDraft, count_notice
 from app.agents.food.agent import run as run_food
@@ -49,12 +58,14 @@ from app.agents.food.store import (
     MenuCatalogRow,
     in_memory_ports,
 )
-from app.agents.memory.agent import MAX_QUESTIONS, MAX_STEPS
+from app.agents.memory.agent import _UNCLEAR_REPLY, MAX_QUESTIONS, MAX_STEPS
+from app.agents.memory.agent import run as run_memory
 from app.agents.memory.context import AgentContext
 from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
 from app.agents.memory.store import InMemoryStore
 from app.agents.memory_bridge import StoreFoodMemory
 from app.agents.pipeline import (
+    AgentQuestion,
     AgentResult,
     DomainRouted,
     Done,
@@ -73,6 +84,7 @@ from app.agents.pipeline import (
 )
 from app.agents.run_writes import RunWrites, record_food_writes
 from app.agents.suggestion_save import InMemorySuggestions, SuggestionBatch
+from app.agents.supervisor import agent as supervisor_agent
 from app.agents.supervisor import routing as routing_module
 from app.agents.supervisor.routing import Guidance
 from app.rules.age import Stage
@@ -571,6 +583,49 @@ async def test_Supervisor_가_죽어도_입력은_실패가_아니다(
     assert len(rows) == 1
 
 
+class _HangingSupervisor(FakeLLM):
+    async def chat(self, **params: Any) -> LLMResponse:
+        self.calls += 1
+        await asyncio.sleep(3600)
+        raise AssertionError("상한이 끊지 못했다")
+
+
+async def test_Supervisor_모델이_멈추면_상한에서_강등하고_Memory_가_기록한다(
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#914 — 60초 뒤 실패가 아니라, 상한에서 Supervisor 실패와 같은 길로 간다."""
+    monkeypatch.setattr(supervisor_agent, "SUPERVISOR_TIMEOUT_S", 0.05)
+    hanging = _HangingSupervisor()
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", _STRAWBERRY)), _reply("기록했어요.")
+    )
+
+    result = await asyncio.wait_for(
+        _handle(
+            "RC01",
+            memory_llm=memory_llm,
+            memory_context=memory_context,
+            food_context=food_context,
+            events=events,
+            supervisor_llm=hanging,
+        ),
+        timeout=5,
+    )
+
+    assert hanging.calls == 1
+    assert result.supervisor.error == supervisor_agent.TIMEOUT
+    assert result.routing.degraded is True
+    assert result.routing.intent_type == "record"
+    assert result.failed is None
+    rows = await memory_context.store.query_observations(domain="food", child_id=CHILD)
+    assert len(rows) == 1
+    # 기록 후보 조각 없이 원문 전체만 받는다 — 평소의 "기록 후보" 절이 붙지 않는다
+    assert memory_llm.seen[0][-1]["content"] == CASES_BY_ID["RC01"].text
+
+
 # ── 실패 ────────────────────────────────────────────────────────
 async def test_Memory_가_죽으면_입력을_그대로_돌려준다(
     memory_context: AgentContext,
@@ -761,6 +816,30 @@ async def test_적지_않은_조각을_unclear_로_다시_나누면_도메인_Ag
     assert await memory_context.store.query_observations(domain="food", child_id=CHILD) == []
 
 
+async def test_unclear_뿐인_입력의_모델_답변은_화면에_나가지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    text = "공룡에 대해 알려줘"
+    supervisor_llm = FakeLLM(_route_reply({"segments": [{"text": text, "kind": "unclear"}]}))
+    memory_llm = FakeLLM(_reply("공룡은 아주 오래전 살았던 파충류예요."))
+
+    await handle_input(
+        text,
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=supervisor_llm,
+        memory_client=memory_llm,
+        emit=events.append,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    assert [(note.text, note.kind) for note in _of(events, MemoryNote)] == [
+        (_UNCLEAR_REPLY, "message")
+    ]
+
+
 async def test_다시_나누기가_실패하면_처음_나눈_대로_간다(
     memory_context: AgentContext, food_context: FoodContext, events: list[Any]
 ) -> None:
@@ -948,6 +1027,111 @@ async def test_Supervisor_의_hazard_라벨이면_Memory_를_부르지_않는다
     assert memory_llm.calls == 0
     assert [guidance.code for guidance in _of(events, Guidance)] == ["hazard"]
     assert result.domain == () and result.failed is None
+
+
+# ── 바꿔 끼운 Guardrail (#731) ──────────────────────────────────
+_STRAWBERRY = {"raw_text": "딸기 먹었어", "observed_on": "오늘", "subject": "딸기", "polarity": 1}
+
+
+class _FakeGuard:
+    """`blocks` 의 검사는 막고 `fails` 의 검사는 못 한 것으로 친다. 받은 검사를 순서대로 남긴다."""
+
+    def __init__(
+        self, *, blocks: frozenset[str] = frozenset(), fails: frozenset[str] = frozenset()
+    ) -> None:
+        self.blocks = blocks
+        self.fails = fails
+        self.calls: list[tuple[str, str]] = []
+
+    async def check(self, text: str, context: GuardContext) -> GuardResult:
+        self.calls.append((text, context))
+        if context in self.fails:
+            raise GuardrailUnavailableError("가짜 장애")
+        return GuardResult(("chemical",) if context in self.blocks else ())
+
+
+async def test_바꿔_끼운_Guardrail_이_사전검사에서_막는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    guard = _FakeGuard(blocks=frozenset({"input"}))
+    supervisor_llm, memory_llm = FakeLLM(), FakeLLM()
+    await _handle_text(
+        "딸기 먹었어",
+        memory_llm=memory_llm,
+        supervisor_llm=supervisor_llm,
+        memory_context=replace(memory_context, guardrail=guard),
+        food_context=food_context,
+        events=events,
+    )
+
+    assert supervisor_llm.calls == 0 and memory_llm.calls == 0
+    assert [guidance.code for guidance in _of(events, Guidance)] == ["hazard"]
+    assert guard.calls == [("딸기 먹었어", "input")]
+
+
+async def test_바꿔_끼운_Guardrail_이_저장_게이트에서도_막는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 사전검사는 지나고 이름 칸에서 막는 가짜 — 두 곳이 같은 인스턴스를 쓰는지도 본다
+    guard = _FakeGuard(blocks=frozenset({"food_name"}))
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", _STRAWBERRY)), _reply("기록하지 않았어요.")
+    )
+    await _handle_text(
+        "딸기 먹었어",
+        memory_llm=memory_llm,
+        supervisor_llm=FakeLLM(LLMUnavailableError("망")),
+        memory_context=replace(memory_context, guardrail=guard),
+        food_context=food_context,
+        events=events,
+    )
+
+    assert await memory_context.store.query_observations(domain="food", child_id=CHILD) == []
+    assert [guidance.code for guidance in _of(events, Guidance)] == ["hazard"]
+    assert guard.calls == [("딸기 먹었어", "input"), ("딸기", "food_name")]
+
+
+async def test_사전검사를_못_하면_guard_unavailable_로_끝내고_모델을_부르지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # fail-closed — 검사를 못 한 입력을 "걸린 것 없음" 으로 넘기지 않는다 (#768)
+    supervisor_llm, memory_llm = FakeLLM(), FakeLLM()
+    guard = _FakeGuard(fails=frozenset({"input"}))
+    result = await _handle_text(
+        "딸기 먹었어",
+        memory_llm=memory_llm,
+        supervisor_llm=supervisor_llm,
+        memory_context=replace(memory_context, guardrail=guard),
+        food_context=food_context,
+        events=events,
+    )
+
+    assert supervisor_llm.calls == 0 and memory_llm.calls == 0
+    assert result.failed == Failed("guard_unavailable", "딸기 먹었어")
+    assert [event.reason for event in _of(events, Failed)] == ["guard_unavailable"]
+    assert not _of(events, Saved) and not _of(events, Guidance)
+
+
+async def test_저장_게이트가_검사를_못_하면_저장_없이_guard_unavailable_로_끝낸다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", _STRAWBERRY)), _reply("기록했어요.")
+    )
+    guard = _FakeGuard(fails=frozenset({"food_name"}))
+    result = await _handle_text(
+        "딸기 먹었어",
+        memory_llm=memory_llm,
+        supervisor_llm=FakeLLM(LLMUnavailableError("망")),
+        memory_context=replace(memory_context, guardrail=guard),
+        food_context=food_context,
+        events=events,
+    )
+
+    assert result.failed == Failed("guard_unavailable", "딸기 먹었어")
+    assert result.committed is False
+    assert await memory_context.store.query_observations(domain="food", child_id=CHILD) == []
+    assert not _of(events, Saved)
 
 
 # ── 먹인 약 (#626 PM 리뷰) ──────────────────────────────────────
@@ -1312,10 +1496,14 @@ def test_구현된_agent_마다_실행_함수가_있다() -> None:
     assert set(pipeline._RUNNERS) == routing_module.IMPLEMENTED_AGENTS
 
 
-def test_추천을_내는_task_표도_구현된_agent_와_키가_같다() -> None:
-    # 05 의 다시 시도 · 0개 기록은 이 표로 남긴다 (#249). 한쪽만 늘리면 새 Agent 의 실패가 맥락 없이
-    # "이어서 할 수 없음" 으로 떨어진다
-    assert set(pipeline.RECOMMENDING_TASKS) == routing_module.IMPLEMENTED_AGENTS
+def test_구현된_agent_는_추천_표와_추천_없는_표_중_한_곳에만_있다() -> None:
+    # 05 의 다시 시도 · 0개 기록은 추천 표로 남긴다 (#249). 한쪽만 늘리면 새 Agent 의 실패가
+    # 맥락 없이 "이어서 할 수 없음" 으로 떨어진다. 추천을 안 내는 Agent 는 따로 적는다
+    assert (
+        set(pipeline.RECOMMENDING_TASKS) | pipeline.NON_RECOMMENDING_AGENTS
+        == routing_module.IMPLEMENTED_AGENTS
+    )
+    assert not set(pipeline.RECOMMENDING_TASKS) & pipeline.NON_RECOMMENDING_AGENTS
 
 
 # ── 도메인 Agent 실행 (공통_구현_계획 §5 · NF-06) ─────────────────
@@ -1330,6 +1518,9 @@ class _Outcome:
     readouts: tuple[Readout, ...] = ()
     needs_observation: tuple[str, ...] = ()
     suggestions: tuple[SuggestionDraft, ...] = ()
+    medication_drafts: tuple[Any, ...] = ()
+    event_requests: tuple[Any, ...] = ()
+    pending: DomainPending | None = None
 
 
 @dataclass(frozen=True)
@@ -1447,14 +1638,14 @@ async def test_RC16_한_Agent_가_죽어도_나머지_결과는_나간다(
     assert result.model_calls == 3  # 죽은 쪽은 몇 번 불렀는지 몰라 세지 않는다
 
 
-async def test_도메인_결과의_readout_과_되묻기가_AgentResult_로_나간다(
+async def test_도메인_결과의_readout_은_AgentResult_로_되묻기는_AgentQuestion_으로_나간다(
     monkeypatch: pytest.MonkeyPatch,
     memory_context: AgentContext,
     food_context: FoodContext,
     events: list[Any],
 ) -> None:
-    # #227 — DomainRouted는 로그용이라 결과 본문이 없다.
-    # 화면에 갈 readout · 되묻기는 AgentResult가 싣는다
+    # #227 — DomainRouted는 로그용이라 결과 본문이 없다. 화면에 갈 readout 은 AgentResult가 싣고,
+    # 되묻기는 카드에 싣지 않고 끝난 결과를 다 본 뒤 하나만 AgentQuestion 으로 보낸다 (#615)
     notice = Readout(kind="notice", body="조건에 맞는 추천을 2개 준비했어요.", authored_by="code")
     question = "요즘 어느 정도까지 혼자 하나요?"
     monkeypatch.setitem(
@@ -1477,9 +1668,10 @@ async def test_도메인_결과의_readout_과_되묻기가_AgentResult_로_나�
     )
 
     assert _of(events, AgentResult) == [
-        AgentResult("food", "meal_recommendation", "completed", (notice,), question)
+        AgentResult("food", "meal_recommendation", "completed", (notice,))
     ]
-    assert _order(events)[-3:] == ["DomainRouted", "AgentResult", "Done"]
+    assert _of(events, AgentQuestion) == [AgentQuestion("food", "meal_recommendation", question)]
+    assert _order(events)[-4:] == ["DomainRouted", "AgentResult", "AgentQuestion", "Done"]
 
 
 class _Saver:
@@ -1540,6 +1732,291 @@ async def test_추천은_저장이_끝난_뒤에_id_를_싣고_나간다(
     assert card.suggestion_ids == ("s0", "s1")  # 추천 순서 그대로
     assert card.task_type == batch.task_type
     assert result.partial is None
+
+
+# ── run 하나에 되묻기는 하나다 (루트 §2 · #452 리뷰 · #615) ──────────────────────────────
+# Agent 하나는 질문을 하나만 내지만(`DomainAgentResult`) 둘이 같은 run 에서 각자 물을 수 있다.
+# 카드는 끝나는 대로 질문 없이 나가고(K-11), 질문은 결과를 다 본 뒤 하나만 골라 따로 나간다.
+# 끝나는 순서는 입력이 정하지 않으니, 고르는 기준은 끝난 순서와 상관없어야 한다
+_NOTE = Readout(kind="notice", body="조건에 맞는 추천을 2개 준비했어요.", authored_by="code")
+_FOOD_QUESTION = "브로콜리은(는) 좋아하는 편인가요?"
+_ACTIVITY_QUESTION = "실내 놀이와 바깥 놀이 중 어느 쪽을 더 좋아하나요?"
+
+
+async def _ask_twice(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+    *,
+    food: Any,
+    activity: Any,
+) -> pipeline.PipelineResult:
+    monkeypatch.setattr(routing_module, "IMPLEMENTED_AGENTS", frozenset({"food", "activity"}))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", food)
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", activity)
+    return await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=_Saver(events),
+    )
+
+
+def _questions(events: list[Any]) -> list[tuple[str, str]]:
+    return [(question.agent, question.text) for question in _of(events, AgentQuestion)]
+
+
+@pytest.mark.parametrize(
+    ("food_delay", "activity_delay"),
+    [(0.05, 0.0), (0.0, 0.05), (0.0, 0.0)],
+    ids=["Food 가 늦게", "Activity 가 늦게", "같은 틱"],
+)
+async def test_두_Agent_가_같이_되물으면_끝난_순서와_상관없이_같은_질문이다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+    food_delay: float,
+    activity_delay: float,
+) -> None:
+    await _ask_twice(
+        monkeypatch,
+        memory_context,
+        food_context,
+        events,
+        food=_runner(
+            "food", delay=food_delay, readouts=(_NOTE,), needs_observation=(_FOOD_QUESTION,)
+        ),
+        activity=_runner(
+            "activity",
+            delay=activity_delay,
+            readouts=(_NOTE,),
+            needs_observation=(_ACTIVITY_QUESTION,),
+        ),
+    )
+
+    # 같은 순위면 task 순서다 — Food 가 앞선다
+    assert _questions(events) == [("food", _FOOD_QUESTION)]
+    # 카드는 둘 다 나간다. 질문은 카드에 싣지 않고 모든 카드가 나간 뒤에 보낸다
+    assert sorted(card.agent for card in _of(events, AgentResult)) == ["activity", "food"]
+    last_card = max(i for i, event in enumerate(events) if isinstance(event, AgentResult))
+    assert events.index(_of(events, AgentQuestion)[0]) > last_card
+
+
+async def test_질문만_낸_결과가_추천에_덧붙는_질문보다_먼저다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 질문이 답의 전부인 결과(Activity 는 안내 한 줄이 readout 으로 붙어 있다)가 먼저다.
+    # 추천을 받은 보호자에게 덧붙는 질문보다, 추천이 없어 막힌 쪽의 질문이 답을 더 필요로 한다
+    drafts = (_draft("계란말이"), _draft("두부조림"))
+    result = await _ask_twice(
+        monkeypatch,
+        memory_context,
+        food_context,
+        events,
+        food=_runner("food", delay=0.05, suggestions=drafts, needs_observation=(_FOOD_QUESTION,)),
+        activity=_runner("activity", needs_observation=(_ACTIVITY_QUESTION,), readouts=(_NOTE,)),
+    )
+
+    assert _questions(events) == [("activity", _ACTIVITY_QUESTION)]
+    # 질문을 고르지 못한 Food 의 추천은 저장되고 카드에 실린다
+    food = next(card for card in _of(events, AgentResult) if card.agent == "food")
+    assert food.suggestion_ids == ("s0", "s1")
+    assert result.partial is None
+
+
+async def test_질문만_낸_결과도_카드는_그대로_나가고_실패로_세지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 추천도 readout 도 없이 질문만 낸 결과도 카드는 나간다. 질문이 카드를 떠나도 실패가 아니다.
+    # 빈 카드는 화면이 거른다 (visibleAgentResults)
+    result = await _ask_twice(
+        monkeypatch,
+        memory_context,
+        food_context,
+        events,
+        food=_runner("food", readouts=(_NOTE,), needs_observation=(_FOOD_QUESTION,)),
+        activity=_runner("activity", delay=0.05, needs_observation=(_ACTIVITY_QUESTION,)),
+    )
+
+    assert [card.agent for card in _of(events, AgentResult)] == ["food", "activity"]
+    assert [routed.agent for routed in _of(events, DomainRouted)] == ["food", "activity"]
+    assert [item.agent for item in result.domain] == ["food", "activity"]
+    assert result.partial is None
+
+
+async def test_질문은_partial_앞이다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 화면은 부분 결과 카드를 Agent 카드 바로 아래에 붙인다. partial 은 결과 뒤에 오는 계약이다
+    result = await _ask_twice(
+        monkeypatch,
+        memory_context,
+        food_context,
+        events,
+        food=_runner("food", readouts=(_NOTE,), needs_observation=(_FOOD_QUESTION,)),
+        activity=_failing(RuntimeError("부서졌다")),
+    )
+
+    assert result.partial is not None
+    assert _order(events)[-3:] == ["AgentQuestion", "Partial", "Done"]
+
+
+async def test_질문을_낸_Agent_가_시간_초과면_남은_Agent_의_질문이_나간다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    monkeypatch.setattr(pipeline, "RUN_DEADLINE_S", 0.5)  # 앞 단계는 FakeLLM 이라 수 ms
+    result = await _ask_twice(
+        monkeypatch,
+        memory_context,
+        food_context,
+        events,
+        food=_runner("food", delay=5, needs_observation=(_FOOD_QUESTION,)),
+        activity=_runner("activity", readouts=(_NOTE,), needs_observation=(_ACTIVITY_QUESTION,)),
+    )
+
+    assert _questions(events) == [("activity", _ACTIVITY_QUESTION)]
+    assert result.partial is not None and result.partial.failed == ("food",)
+    assert _order(events)[-3:] == ["AgentQuestion", "Partial", "Done"]
+
+
+async def test_저장에_실패한_결과의_질문은_나가지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # #452 리뷰 — 카드가 안 나간 Food 의 질문이 화면에 나가면 답할 질문만 있고 그 질문을 낸 결과가
+    # 없다. 저장에 실패한 결과는 실패로 세고 질문도 없다
+    monkeypatch.setattr(routing_module, "IMPLEMENTED_AGENTS", frozenset({"food", "activity"}))
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _runner("food", suggestions=(_draft("a"),), needs_observation=(_FOOD_QUESTION,)),
+    )
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "activity",
+        _runner("activity", delay=0.05, needs_observation=(_ACTIVITY_QUESTION,)),
+    )
+
+    result = await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=_Saver(events, fail=RuntimeError("db")),
+    )
+
+    assert _questions(events) == [("activity", _ACTIVITY_QUESTION)]
+    assert [card.agent for card in _of(events, AgentResult)] == ["activity"]
+    assert result.partial is not None and result.partial.failed == ("food",)
+
+
+async def test_질문을_하나만_내면_그대로_나간다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    await _ask_twice(
+        monkeypatch,
+        memory_context,
+        food_context,
+        events,
+        food=_runner("food", readouts=(_NOTE,), needs_observation=(_FOOD_QUESTION,)),
+        activity=_runner("activity", readouts=(_NOTE,)),
+    )
+
+    [question] = _of(events, AgentQuestion)
+    assert question == AgentQuestion("food", "meal_recommendation", _FOOD_QUESTION)
+    assert question.awaits_reply is False  # 답을 받는 질문은 Agent 가 맥락을 실을 때만이다
+
+
+async def test_Memory_가_물은_run_에는_Agent_질문_이벤트가_없다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # Memory 의 되묻기(note)는 답하기가 되는 질문이고 도메인 Agent 보다 먼저 나간다.
+    # 둘이 같이 서면 보호자가 고른 질문과 서버가 이어받는 질문이 어긋난다
+    raw = "떡볶이 먹었어. 저녁 뭐 먹일까"
+    segments = [
+        {"text": "떡볶이 먹었어", "kind": "record", "work": "observe"},
+        {
+            "text": "저녁 뭐 먹일까",
+            "kind": "request",
+            "agent": "food",
+            "food_task": "meal_recommendation",
+        },
+    ]
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _runner("food", readouts=(_NOTE,), needs_observation=(_FOOD_QUESTION,)),
+    )
+    memory = FakeLLM(
+        _answer({"text": "언제 먹었어요?", "kind": "question", "pending_hint": "떡볶이 먹었어"})
+    )
+
+    await handle_input(
+        raw,
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(_tools(_call("s1", "route", {"segments": segments}))),
+        memory_client=memory,
+        emit=events.append,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    assert next(event for event in events if isinstance(event, MemoryNote)).kind == "question"
+    assert _of(events, AgentQuestion) == []
+    assert [card.agent for card in _of(events, AgentResult)] == ["food"]  # 카드는 그대로 나간다
+
+
+async def test_failed_run_에는_질문_이벤트가_없다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # Memory 가 죽으면 도메인 단계가 돌지 않는다 — 질문을 낸 결과 자체가 없다
+    monkeypatch.setitem(
+        pipeline._RUNNERS, "food", _runner("food", needs_observation=(_FOOD_QUESTION,))
+    )
+
+    result = await _handle(
+        "RC01",
+        memory_llm=FakeLLM(LLMUnavailableError("망")),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+    )
+
+    assert result.failed is not None
+    assert _of(events, AgentQuestion) == []
 
 
 def _personal(content: str) -> SuggestionDraft:
@@ -2051,7 +2528,7 @@ async def test_RC20_도메인_Agent_가_전부_죽고_남은_게_없으면_faile
         events=events,
     )
 
-    assert result.failed == Failed("llm_unavailable", CASES_BY_ID["RC20"].text)
+    assert result.failed == Failed("internal_error", CASES_BY_ID["RC20"].text)
     assert result.partial is not None and result.partial.failed == ("food",)
     assert not _of(events, Partial)  # failed 와 partial 은 함께 나가지 않는다
     assert _order(events)[-2:] == ["Failed", "Done"]
@@ -2675,7 +3152,7 @@ async def test_메뉴_카탈로그만_저장했어도_모델이_실패하면_fai
     )
 
     assert result.committed is False
-    assert result.failed == Failed("llm_unavailable", raw)
+    assert result.failed == Failed("internal_error", raw)
     assert _order(events)[-2:] == ["Failed", "Done"]
 
 
@@ -2717,7 +3194,7 @@ async def test_쓰기_전에_모델_호출이_실패하면_commit_이_없어_fai
     result = await _handle_meal_only(memory_context, context, events, writes)
 
     assert result.committed is False
-    assert result.failed == Failed("llm_unavailable", _MEAL_ONLY)
+    assert result.failed == Failed("internal_error", _MEAL_ONLY)
     assert _order(events)[-2:] == ["Failed", "Done"]
 
 
@@ -2737,7 +3214,7 @@ async def test_쓰기_전에_시간이_다_되면_commit_이_없어_failed_다(
 
     assert log == ["food 시작"]  # 시작은 했다
     assert result.committed is False
-    assert result.failed == Failed("llm_unavailable", _MEAL_ONLY)
+    assert result.failed == Failed("timeout", _MEAL_ONLY)
 
 
 async def test_쓰는_task_가_시작도_못_하고_끊기면_commit_이_없어_failed_다(
@@ -2754,7 +3231,7 @@ async def test_쓰는_task_가_시작도_못_하고_끊기면_commit_이_없어_
     result = await _handle_meal_only(memory_context, context, events, writes)
 
     assert result.committed is False
-    assert result.failed == Failed("llm_unavailable", _MEAL_ONLY)
+    assert result.failed == Failed("timeout", _MEAL_ONLY)
     assert _order(events)[-2:] == ["Failed", "Done"]
 
 
@@ -3259,6 +3736,31 @@ async def test_leftover_여도_질문에_대한_답은_저장하고_done_으로_
     assert not _of(events, Failed)
 
 
+async def test_증상과_먹인_약을_한_번에_저장하면_Saved_에_두_행이_다_실린다(
+    memory_context: AgentContext,
+) -> None:
+    # #551 — tool 호출 한 번이 두 행을 만든다. id 하나만 실으면 04 화면에서 약 행이 빠진다
+    fever_and_medicine = {
+        "raw_text": "열이 끓길래 바로 해열제 먹였어",
+        "observed_on": "오늘",
+        "symptom": ["발열"],
+        "medication_given": "해열제",
+    }
+    memory = await run_memory(
+        fever_and_medicine["raw_text"],
+        memory_context,
+        client=FakeLLM(
+            _tools(_call("m1", "create_observation_health", fever_and_medicine)),
+            _reply("기록했어요."),
+        ),
+    )
+
+    rows = await memory_context.store.query_observations(domain="health", child_id=CHILD)
+    refs = pipeline._saved_refs(memory)
+    assert [(ref.kind, ref.id) for ref in refs] == [("observation_health", row.id) for row in rows]
+    assert len(refs) == 2
+
+
 async def test_이어받기는_앞_run_에서_저장한_관찰을_다시_저장하지_않는다(
     memory_context: AgentContext, food_context: FoodContext
 ) -> None:
@@ -3610,3 +4112,259 @@ async def test_식단_추천_결과는_저장_함수에_한_묶음으로_가고_
     assert card.status == "completed"
     assert len(card.suggestion_ids) == len(batch.drafts) == 3  # 카드 id 는 저장된 추천 수와 같다
     assert result.failed is None and result.partial is None
+
+
+# ── 실패 이유 (#768) ────────────────────────────────────────────
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (LLMUnavailableError("망"), "llm_unavailable"),
+        (LLMTimeoutError("느림"), "timeout"),
+        (LLMRateLimitError("많음"), "llm_rate_limited"),
+        (LLMAuthError("키"), "llm_misconfigured"),
+    ],
+)
+async def test_Memory_실패는_예외_종류대로_이유가_갈린다(
+    error: Exception,
+    reason: str,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    result = await _handle(
+        "RC01",
+        memory_llm=FakeLLM(error),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+    )
+
+    assert result.failed == Failed(reason, CASES_BY_ID["RC01"].text)
+    assert [event.reason for event in _of(events, Failed)] == [reason]
+
+
+async def test_Memory_가_계통_밖_예외로_죽으면_internal_error_다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 버그는 연결 실패로 위장하지 않는다. 계통 밖 예외는 pipeline 이 잡지 않고
+    # 러너가 internal_error 로 끝낸다
+    with pytest.raises(RuntimeError):
+        await _handle(
+            "RC01",
+            memory_llm=FakeLLM(RuntimeError("버그")),
+            memory_context=memory_context,
+            food_context=food_context,
+            events=events,
+        )
+
+    assert not _of(events, Failed)
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (LLMRateLimitError("많음"), "llm_rate_limited"),
+        (LLMAuthError("키"), "llm_misconfigured"),
+        (LLMTimeoutError("느림"), "timeout"),
+        (RuntimeError("버그"), "internal_error"),
+    ],
+)
+async def test_도메인_Agent_전부_실패하면_그_예외의_이유가_failed_가_된다(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    reason: str,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    monkeypatch.setitem(pipeline._RUNNERS, "food", _failing(error))
+
+    result = await _handle(
+        "RC20",
+        memory_llm=FakeLLM(_reply("불리면 안 된다")),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+    )
+
+    assert result.failed == Failed(reason, CASES_BY_ID["RC20"].text)
+
+
+async def test_결과_없이_돌아온_도메인_Agent_는_모델_실패로_센다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    async def no_result(task: DomainTask, context: Any, **kwargs: Any) -> _Outcome:
+        return _Outcome(agent="food", status="failed")
+
+    monkeypatch.setitem(pipeline._RUNNERS, "food", no_result)
+
+    result = await _handle(
+        "RC20",
+        memory_llm=FakeLLM(_reply("불리면 안 된다")),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+    )
+
+    # 말을 바꿔 보내라고 하면 같은 실패를 되풀이한다
+    # — 공통 tool loop 의 "화면은 다시 시도" (#768 리뷰)
+    assert result.failed == Failed("llm_unavailable", CASES_BY_ID["RC20"].text)
+
+
+def test_한_일_없는_run_의_이유는_task_순서가_아니라_우선순위로_고른다() -> None:
+    def failures(*reasons: str | None) -> tuple[Any, ...]:
+        return tuple((_FOOD_TASK, reason) for reason in reasons)
+
+    reason = pipeline._nothing_done_reason
+    assert reason(()) == "unparsable"
+    # 결과 없음(None)이 앞에 있어도 설정 · rate limit 이 이긴다 (#768 리뷰)
+    assert reason(failures(None, "llm_misconfigured")) == "llm_misconfigured"
+    assert reason(failures(None, "llm_rate_limited")) == "llm_rate_limited"
+    assert reason(failures("internal_error", "timeout")) == "timeout"
+    assert reason(failures("timeout", "llm_rate_limited")) == "llm_rate_limited"
+    # 결과 없음의 뜻은 부른 쪽이 정한다 — 모델을 안 부르는 Health 답은 unparsable
+    assert reason(failures(None)) == "llm_unavailable"
+    assert reason(failures(None), no_result="unparsable") == "unparsable"
+
+
+def test_우선순위는_모든_이유를_한_번씩_담는다() -> None:
+    from typing import get_args
+
+    from app.agents.common.errors import FailReason
+
+    assert sorted(pipeline._REASON_PRIORITY) == sorted(get_args(FailReason))
+
+
+async def test_LLM_응답_시간_초과도_partial_은_timeout_20s_다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # failed.reason(timeout)과 같은 기준이다 — 저장 여부에 따라 같은 원인이 다르게 분류되지 않게
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _by_type(
+            daycare_meal=_failing(LLMTimeoutError("느림")),
+            meal_recommendation=_runner("food"),
+        ),
+    )
+
+    ran = await pipeline._run_domain((_MEAL, _DINNER), {"food": _FakeContext()}, timeout=1.0)
+
+    assert ran.partial is not None and ran.partial.reason == "timeout_20s"
+    assert [reason for _, reason in ran.failures] == ["timeout"]
+    assert ran.failed_tasks == (_MEAL,)  # 실패한 쪽은 급식 갱신 task
+
+
+async def test_검사를_못_해도_응급_신호면_응급_안내로_끝낸다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 실패 카드로 끝내면 화면이 119 안내를 그리지 않는다. 모델 · 저장은 그래도 없다 (#768 리뷰)
+    supervisor_llm, memory_llm = FakeLLM(), FakeLLM()
+    result = await handle_input(
+        "숨을 잘 못 쉬어.",
+        replace(memory_context, guardrail=_FakeGuard(fails=frozenset({"input"}))),
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=supervisor_llm,
+        memory_client=memory_llm,
+        emit=events.append,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    assert supervisor_llm.calls == 0 and memory_llm.calls == 0
+    assert result.failed is None and result.emergency is True
+    assert _order(events) == ["Guidance", "Done"]
+    assert _of(events, Guidance)[0].code == "emergency"
+
+
+async def test_Memory_가_모델을_부른_뒤_실패하면_모델_호출_수에_센다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 저장 게이트가 검사를 못 했다. Memory 는 이미 모델을 불렀다
+    # — 과금된 호출이 지표에서 빠지면 안 된다
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", _STRAWBERRY)), _reply("기록했어요.")
+    )
+    supervisor_llm = FakeLLM(LLMUnavailableError("망"))
+    result = await _handle_text(
+        "딸기 먹었어",
+        memory_llm=memory_llm,
+        supervisor_llm=supervisor_llm,
+        memory_context=replace(
+            memory_context, guardrail=_FakeGuard(fails=frozenset({"food_name"}))
+        ),
+        food_context=food_context,
+        events=events,
+    )
+
+    assert result.failed == Failed("guard_unavailable", "딸기 먹었어")
+    assert result.model_calls == result.supervisor.model_calls + 1
+    assert _of(events, Done)[0].model_calls == result.model_calls
+
+
+async def test_Memory_설정_오류는_요청_전이라_모델_호출로_세지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    result = await _handle(
+        "RC01",
+        memory_llm=FakeLLM(LLMConfigError("MEMORY_MODEL 가 비어 있다")),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+    )
+
+    assert result.failed == Failed("llm_misconfigured", CASES_BY_ID["RC01"].text)
+    assert result.model_calls == result.supervisor.model_calls
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [(LLMTimeoutError("느림"), "timeout"), (LLMRateLimitError("많음"), "llm_rate_limited")],
+)
+async def test_이어받기에서도_Memory_실패_이유가_갈린다(
+    error: Exception,
+    reason: str,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    result = await handle_input(
+        "3일 전부터",
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(LLMUnavailableError("망")),
+        memory_client=FakeLLM(error),
+        emit=events.append,
+        continuation=_COUGH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    assert result.failed == Failed(reason, "3일 전부터")
+    assert [event.reason for event in _of(events, Failed)] == [reason]
+
+
+async def test_이어받기_사전검사를_못_해도_guard_unavailable_로_끝낸다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    supervisor_llm, memory_llm = FakeLLM(), FakeLLM()
+    result = await handle_input(
+        "3일 전부터",
+        replace(memory_context, guardrail=_FakeGuard(fails=frozenset({"input"}))),
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=supervisor_llm,
+        memory_client=memory_llm,
+        emit=events.append,
+        continuation=_COUGH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    assert supervisor_llm.calls == 0 and memory_llm.calls == 0
+    assert result.failed == Failed("guard_unavailable", "3일 전부터")

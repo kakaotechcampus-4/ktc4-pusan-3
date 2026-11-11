@@ -1,5 +1,6 @@
 """Agent 결과 하나의 추천 저장 — 근거 검증 · 묶음 단위 · run_id · draft +24h."""
 
+import logging
 import uuid
 from datetime import UTC, date, datetime
 from typing import get_args
@@ -8,8 +9,16 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import Range
 
-from app.agents.common.refs import ChildRecordKind, DocKind, EvidenceCitation, MenuKind, Ref
+from app.agents.common.refs import (
+    BookKind,
+    ChildRecordKind,
+    DocKind,
+    EvidenceCitation,
+    MenuKind,
+    Ref,
+)
 from app.agents.common.suggestion import SuggestionDraft
+from app.agents.food.schemas.common import MealSlot
 from app.domains.child.models import ParentChildRelation
 from app.domains.child.repository import create_child
 from app.domains.food import repository as food_repository
@@ -20,6 +29,7 @@ from app.domains.suggestion.models import (
     Suggestion,
     SuggestionEvidence,
     SuggestionKind,
+    SuggestionMealSlot,
     SuggestionStatus,
 )
 from app.domains.suggestion.repository import (
@@ -98,6 +108,24 @@ def doc_citation(kind: str = "activity_doc") -> dict:
     return cited(kind, DOC_ID, "또래 놀이 자료")
 
 
+def book_citation(isbn: str = "9788900000001") -> dict:
+    """Growth 일반 도서 추천의 근거는 고른 책 자체다 — ISBN 의 uuid5 (Food 메뉴 근거와 같다)."""
+    from app.rules.book_evidence import book_evidence_id
+
+    return cited(
+        "book_catalog", book_evidence_id(isbn), "도서관 정보나루 검색 결과에 있는 책이에요."
+    )
+
+
+def growth_book(**kwargs) -> dict:
+    return {
+        **payload(content="책1(가)", **kwargs),
+        "agent": "growth",
+        "allergens": [],
+        "items": ["책1(가)"],
+    }
+
+
 async def counts(session, child_id) -> tuple[int, int]:
     """그 아이의 추천 행 수 · 근거 행 수. 개발 DB 의 다른 행을 세지 않게 아이로 거른다."""
     suggestions = await session.scalar(
@@ -117,6 +145,12 @@ def test_근거_종류_목록이_Agent_쪽과_같다():
     종류가 저장에서 거절되거나, 아이 기록이 문서 행처럼 검사 없이 들어간다."""
     assert repository._CHILD_RECORD_KINDS == frozenset(get_args(ChildRecordKind))
     assert repository._DOC_KINDS == frozenset(get_args(DocKind))
+
+
+def test_끼니_목록이_Food_쪽과_같다():
+    """끼니도 두 곳에 있다. Food 쪽만 늘리면 그 끼니는 저장에서 비워져 초안 제목이 "식사" 로
+    떨어진다 (#898)."""
+    assert {slot.value for slot in SuggestionMealSlot} == {slot.value for slot in MealSlot}
 
 
 async def test_추천을_draft_로_저장하고_id_를_순서대로_돌려준다(session, kids):
@@ -141,6 +175,10 @@ async def test_추천을_draft_로_저장하고_id_를_순서대로_돌려준다
     assert {row.run_id for row in rows} == {RUN}
     assert {row.expires_at for row in rows} == {NOW + SUGGESTION_TTL}
     assert (rows[0].allergens, rows[0].items) == (["난류"], ["계란"])
+    assert {row.place_notice for row in rows} == {None}  # payload 에 키가 없으면 비운다
+    assert [row.warnings for row in rows] == [[], []]
+    assert {(row.event_starts_on, row.event_ends_on) for row in rows} == {(None, None)}
+    assert {row.meal_slot for row in rows} == {None}  # 이 칸 전에 만든 payload 도 저장된다
     assert await counts(session, child.id) == (2, 2)  # 아이 기록 근거 1행 + 문서 근거 1행
 
 
@@ -160,6 +198,7 @@ async def test_SuggestionDraft_의_payload_가_그대로_저장된다(session, k
         ),
         allergens=("난류",),
         items=("계란",),
+        meal_slot="breakfast",
     )
 
     [row_id] = await save_agent_suggestions(
@@ -167,6 +206,7 @@ async def test_SuggestionDraft_의_payload_가_그대로_저장된다(session, k
     )
 
     row = await session.get(Suggestion, row_id)
+    assert row.meal_slot == "breakfast"  # 일정 초안 제목이 이 값으로 정해진다 (#898)
     assert (row.kind, row.agent, row.reason) == (
         SuggestionKind.PERSONALIZED,
         "food",
@@ -174,6 +214,92 @@ async def test_SuggestionDraft_의_payload_가_그대로_저장된다(session, k
     )
     assert (row.allergens, row.items) == (["난류"], ["계란"])
     assert await counts(session, child.id) == (1, 2)
+
+
+async def test_모르는_끼니는_비우고_경고만_남긴다(session, kids, caplog):
+    """끼니 목록이 어긋나도 Food 묶음 저장은 실패하지 않는다 — 초안 제목이 "식사" 가 될
+    뿐이다. 운영에서 어긋난 것이 보이게 경고는 남기되 모델이 낸 값은 싣지 않는다 (#898)."""
+    _, child, _ = kids
+    item = {**payload(citations=[doc_citation()]), "meal_slot": "brunch"}
+
+    with caplog.at_level(logging.WARNING, logger=repository.__name__):
+        [row_id] = await save_agent_suggestions(
+            session, child_id=child.id, run_id=RUN, now=NOW, payloads=[item]
+        )
+
+    row = await session.get(Suggestion, row_id)
+    assert row.meal_slot is None
+    [record] = [record for record in caplog.records if record.name == repository.__name__]
+    assert record.levelno == logging.WARNING
+    assert "brunch" not in record.getMessage()
+
+
+async def test_장소가_붙은_추천의_확인_문구를_저장한다(session, kids):
+    """Activity 가 장소를 붙이면 코드 문구를 칸으로 싣는다 (#516). 근거 행은 늘지 않는다."""
+    _, child, _ = kids
+    notice = "공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를 확인해 주세요."
+    draft = SuggestionDraft(
+        agent="activity",
+        kind="general",
+        content="사직어린이공원에서 모래성 쌓기",
+        reason="이유",
+        citations=(EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="놀이 자료"),),
+        place_notice=notice,
+    )
+
+    [row_id] = await save_agent_suggestions(
+        session, child_id=child.id, run_id=RUN, now=NOW, payloads=[draft.to_payload()]
+    )
+
+    row = await session.get(Suggestion, row_id)
+    assert row.place_notice == notice
+    assert (row.event_starts_on, row.event_ends_on) == (None, None)  # 장소는 기간이 없다
+    assert await counts(session, child.id) == (1, 1)  # 장소는 근거가 아니다
+
+
+async def test_추천의_위험_경고를_저장한다(session, kids):
+    """위험 용어 사전의 축 문구를 그 추천의 칸으로 싣는다 (#402). 근거 행은 늘지 않는다."""
+    _, child, _ = kids
+    warning = "작은 부품은 삼킬 수 있어요. 아이 입에 들어가지 않는 크기인지 먼저 확인해 주세요."
+    draft = SuggestionDraft(
+        agent="activity",
+        kind="general",
+        content="구슬 꿰기",
+        reason="이유",
+        citations=(EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="놀이 자료"),),
+        warnings=(warning,),
+    )
+
+    [row_id] = await save_agent_suggestions(
+        session, child_id=child.id, run_id=RUN, now=NOW, payloads=[draft.to_payload()]
+    )
+
+    row = await session.get(Suggestion, row_id)
+    assert row.warnings == [warning]
+    assert await counts(session, child.id) == (1, 1)  # 경고는 근거가 아니다
+
+
+async def test_행사가_붙은_추천의_기간을_저장한다(session, kids):
+    """행사 이름만 나가면 지난 행사인지 알 수 없다 — 화면이 기간을 날짜로 세운다 (#516)."""
+    _, child, _ = kids
+    draft = SuggestionDraft(
+        agent="activity",
+        kind="general",
+        content="광안리 가을 축제에서 축제 구경",
+        reason="이유",
+        citations=(EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="놀이 자료"),),
+        place_notice="한국관광공사 행사 정보예요.",
+        event_starts_on=date(2026, 9, 29),
+        event_ends_on=date(2026, 10, 1),
+    )
+
+    [row_id] = await save_agent_suggestions(
+        session, child_id=child.id, run_id=RUN, now=NOW, payloads=[draft.to_payload()]
+    )
+
+    row = await session.get(Suggestion, row_id)
+    assert (row.event_starts_on, row.event_ends_on) == (date(2026, 9, 29), date(2026, 10, 1))
+    assert await counts(session, child.id) == (1, 1)  # 행사는 근거가 아니다
 
 
 async def test_문서_행_근거는_대상_테이블_없이_저장한다(session, kids):
@@ -279,19 +405,80 @@ async def test_보호자가_정한_요청에_맞춘_일반_추천은_문서_근�
         payloads=[payload(kind="general", requested=True, agent="activity")],
         now=NOW,
     )
-    assert suggestion_id
     assert await counts(session, child.id) == (1, 0)
+    # 05 가 문서 근거 없이도 내보낼 수 있게 요청 기반임을 행에 남긴다 (#597 리뷰)
+    assert (await session.get(Suggestion, suggestion_id)).requested is True
 
 
-async def test_요청_기반_면제는_Activity_만이다(session, kids):
-    """Food 는 레시피북 밖 메뉴가 나가면 안 된다 — requested 가 와도 문서 근거를 본다."""
+async def test_Growth_요청_기반_일반_추천을_문서_근거_없이_저장한다(session, kids):
+    """보호자가 주제를 정해 물었고 그 주제의 문서 행이 없으면 요청이 기준이다 (#702)."""
+    _, child, _ = kids
+    [suggestion_id] = await save_agent_suggestions(
+        session,
+        child_id=child.id,
+        run_id=RUN,
+        payloads=[payload(kind="general", requested=True, agent="growth")],
+        now=NOW,
+    )
+    assert await counts(session, child.id) == (1, 0)
+    assert (await session.get(Suggestion, suggestion_id)).requested is True
+
+
+async def test_Growth_요청_기반이_아니면_문서_근거가_필요하다(session, kids):
     _, child, _ = kids
     with pytest.raises(SuggestionEvidenceError, match="문서 행 근거가 없다"):
         await save_agent_suggestions(
             session,
             child_id=child.id,
             run_id=RUN,
-            payloads=[payload(kind="general", requested=True, agent="food")],
+            payloads=[payload(kind="general", agent="growth")],
+            now=NOW,
+        )
+    assert await counts(session, child.id) == (0, 0)
+
+
+async def test_요청_기반은_requested_를_보낸_일반_추천만_행에_남긴다(session, kids):
+    """requested 를 안 보낸 일반 추천은 Agent 가 무엇이든 요청 기반으로 남지 않는다 — 05 에서 문서
+    근거가 사라지면 다른 일반 추천처럼 빠진다. 막연한 요청의 Activity · Food 가 그렇다."""
+    _, child, _ = kids
+    food, activity = await save_agent_suggestions(
+        session,
+        child_id=child.id,
+        run_id=RUN,
+        payloads=[
+            payload(kind="general", agent="food", citations=[doc_citation("food_doc")]),
+            payload(kind="general", agent="activity", citations=[doc_citation()]),
+        ],
+        now=NOW,
+    )
+    assert (await session.get(Suggestion, food)).requested is False
+    assert (await session.get(Suggestion, activity)).requested is False
+
+
+async def test_Food_요청_기반_일반_추천을_문서_근거_없이_저장한다(session, kids):
+    """보호자가 재료 · 요리 종류를 정해 물었고(Agent 가 보호자 말에서 확인) 레시피북에 없는
+    메뉴를 냈으면 그 요청이 기준이다 (#740)."""
+    _, child, _ = kids
+    [suggestion_id] = await save_agent_suggestions(
+        session,
+        child_id=child.id,
+        run_id=RUN,
+        payloads=[payload(kind="general", requested=True, agent="food", content="파프리카볶음")],
+        now=NOW,
+    )
+    assert await counts(session, child.id) == (1, 0)
+    assert (await session.get(Suggestion, suggestion_id)).requested is True
+
+
+async def test_Food_는_요청_기반이_아니면_문서_근거를_본다(session, kids):
+    """조건을 정해 묻지 않은 Food 일반 추천은 지금처럼 메뉴 · 문서 행이 근거다."""
+    _, child, _ = kids
+    with pytest.raises(SuggestionEvidenceError, match="문서 행 근거가 없다"):
+        await save_agent_suggestions(
+            session,
+            child_id=child.id,
+            run_id=RUN,
+            payloads=[payload(kind="general", agent="food")],
             now=NOW,
         )
     assert await counts(session, child.id) == (0, 0)
@@ -329,13 +516,15 @@ async def test_일반_추천인데_문서_근거가_없으면_한_행도_쓰지_
 
 
 # ── Food 일반 추천의 메뉴 근거 (#442) ────────────────────────────────────
-async def recipe_in_catalog(session, source_id="7", *, resolved=True) -> uuid.UUID:
+async def recipe_in_catalog(
+    session, source_id="7", *, resolved=True, source="mafra_recipe"
+) -> uuid.UUID:
     """레시피 카탈로그에 한 행을 넣고 그 행을 가리키는 메뉴 근거 id 를 돌려준다."""
     await food_repository.upsert_recipes(
         session,
         rows=[
             {
-                "source": "mafra_recipe",
+                "source": source,
                 "source_id": source_id,
                 "menu_key": f"레시피{source_id}",
                 "display_name": f"레시피{source_id}",
@@ -345,7 +534,7 @@ async def recipe_in_catalog(session, source_id="7", *, resolved=True) -> uuid.UU
             }
         ],
     )
-    return menu_evidence_id("mafra_recipe", source_id)
+    return menu_evidence_id(source, source_id)
 
 
 def menu_citation(menu: uuid.UUID) -> dict:
@@ -360,6 +549,25 @@ async def test_Food_일반_추천은_메뉴_근거만으로_저장한다(session
     """문서 행이 없어도 고른 메뉴(레시피 카탈로그 행)가 근거다 — 근거 0행이 아니다."""
     _, child, _ = kids
     menu = await recipe_in_catalog(session)
+
+    [row_id] = await save_agent_suggestions(
+        session,
+        child_id=child.id,
+        run_id=RUN,
+        now=NOW,
+        payloads=[payload(citations=[menu_citation(menu)])],
+    )
+
+    row = await session.scalar(
+        select(SuggestionEvidence).where(SuggestionEvidence.suggestion_id == row_id)
+    )
+    assert (row.source_kind, row.source_id) == ("recipe_catalog", menu)
+
+
+async def test_Food_일반_추천은_nics_레시피_메뉴_근거도_저장한다(session, kids):
+    """저장 검사는 소스를 가리지 않고 후보 풀에 그 행이 있는지만 본다 (#510)."""
+    _, child, _ = kids
+    menu = await recipe_in_catalog(session, source="nics_recipe")
 
     [row_id] = await save_agent_suggestions(
         session,
@@ -424,4 +632,62 @@ async def test_카탈로그에_없거나_풀리지_않은_메뉴는_근거로_�
             now=NOW,
             payloads=[payload(citations=[menu_citation(menu)])],
         )
+    assert await counts(session, child.id) == (0, 0)
+
+
+def test_도서_근거_종류_목록이_Agent_쪽과_같다():
+    assert repository._BOOK_KINDS == frozenset(get_args(BookKind))
+
+
+async def test_Growth_일반_도서_추천은_책_근거만으로_저장한다(session, kids):
+    """문서 행이 없어도 고른 책(정보나루 서지 행)이 근거다 — Food 메뉴(#442)와 같다."""
+    _, child, _ = kids
+
+    [row_id] = await save_agent_suggestions(
+        session,
+        child_id=child.id,
+        run_id=RUN,
+        now=NOW,
+        payloads=[growth_book(citations=[book_citation()])],
+    )
+
+    row = await session.scalar(
+        select(SuggestionEvidence).where(SuggestionEvidence.suggestion_id == row_id)
+    )
+    assert row.source_kind == "book_catalog"
+
+
+async def test_도서_근거는_Growth_가_아니면_거절한다(session, kids):
+    _, child, _ = kids
+
+    with pytest.raises(SuggestionEvidenceError):
+        await save_agent_suggestions(
+            session,
+            child_id=child.id,
+            run_id=RUN,
+            now=NOW,
+            payloads=[payload(citations=[book_citation()])],  # agent=food
+        )
+
+    assert await counts(session, child.id) == (0, 0)
+
+
+async def test_개인화_도서에_책_근거가_섞이면_거절한다(session, kids):
+    """개인화의 근거는 아이 기록이다 — 책 근거는 일반 추천에만 붙는다(메뉴 근거와 같은 규칙)."""
+    owner, child, _ = kids
+    obs = await observation(session, child, owner)
+
+    with pytest.raises(SuggestionEvidenceError):
+        await save_agent_suggestions(
+            session,
+            child_id=child.id,
+            run_id=RUN,
+            now=NOW,
+            payloads=[
+                growth_book(
+                    kind="personalized", citations=[cited("observation_food", obs), book_citation()]
+                )
+            ],
+        )
+
     assert await counts(session, child.id) == (0, 0)

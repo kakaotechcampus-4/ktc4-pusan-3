@@ -19,12 +19,15 @@ Owner: 고태영 (프론트 리드)
 | 이걸 만지면 | 먼저 읽을 문서 |
 | --- | --- |
 | 05 · 07 · 08 · 09 · 11-1 · 11-2 화면, 라우트를 더하거나 시트를 라우트로 바꿀 때 | [`screen-rules-v1.md`](../../docs/web/screen-rules-v1.md) |
-| 04 대화 · `stores/conversation.ts` · `hooks/use-run-stream.ts` · `lib/api/sse.ts` · `components/run-result.tsx` · 지난 대화(`lib/chat-history.ts` · `hooks/use-chat-history.ts`) | [`chat-run-v1.md`](../../docs/web/chat-run-v1.md) |
+| 04 대화 · `stores/conversation.ts` · `hooks/use-run-stream.ts` · `lib/api/sse.ts` · `components/run-result.tsx` · `components/record-tabs-card.tsx` · `lib/delete-proposal.ts` · 지난 대화(`lib/chat-history.ts` · `hooks/use-chat-history.ts`) | [`chat-run-v1.md`](../../docs/web/chat-run-v1.md) |
 | `components/` · `components/ui/` · `globals.css` · 아이콘 · 서체 · 10 설정 하위 화면(고객센터 · 탈퇴 · 문제 알리기) | [`components-v1.md`](../../docs/web/components-v1.md) |
-| `lib/auth/` · `stores/session.ts` · `/auth/*` · 01 · 02 · 동의(`lib/consent.ts`) | [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) |
+| `lib/auth/` · `stores/session.ts` · `/auth/*` · 01 · 02 · 동의(`lib/consent.ts`) · 위치(`lib/location.ts` · `lib/native/location.ts`) | [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) |
 | `lib/api/` · 뮤테이션 · 에러 코드 처리 · `error.tsx` · `AppErrorBoundary` | [`api-client-v1.md`](../../docs/web/api-client-v1.md) |
-| `mocks/` · `*.test.ts` · `e2e/` · `contract/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
-| `package.json` 의 버전 · `eslint.config.mjs` · `ci-web.yml` · `Dockerfile` · 배포 | [`toolchain-deploy-v1.md`](../../docs/web/toolchain-deploy-v1.md) |
+| 화면 투어(`components/screen-tour.tsx` · `lib/tour/` · `stores/tour.ts`) · 화면의 `data-tour` · ? 버튼 | [`screen-tour-v1.md`](../../docs/web/screen-tour-v1.md) |
+| `mocks/` · `*.test.ts` · `e2e/` · `e2e-live/` · `playwright.live.config.ts` · `contract/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
+| 복약 초안 카드 · 11-3 복약 · `stores/medication-draft.ts` · `lib/medication.ts` (#537) | [`medication-v1.md`](../../docs/web/medication-v1.md) |
+| `package.json` 의 버전 · `eslint.config.mjs` · `ci-web.yml` · `ci-e2e-live.yml` · `Dockerfile` · 배포 | [`toolchain-deploy-v1.md`](../../docs/web/toolchain-deploy-v1.md) |
+| 웹 푸시 — `lib/push/` · `lib/native/push.ts`(앱 셸 창구) · `public/push-sw.js` · `WebPushBridge` · `ReminderField` 의 권한 묻기 · `NEXT_PUBLIC_FIREBASE_*` | [`web-push-v1.md`](../../docs/web/web-push-v1.md) |
 
 🚨 **같은 규칙이 이 파일의 요약과 `docs/web/` 원문 두 곳에 있으면 원문이 정본이다.** 규칙을 바꾸면 같은 PR 에서 둘 다 고친다.
 
@@ -67,15 +70,21 @@ Owner: 고태영 (프론트 리드)
 - `mocks/` = MSW 목 서버, **개발 환경 전용** (§7).
   🚨 `mocks/native-bridge.ts` 는 **MSW 가 아니다** — 최근 사진은 API 가 아니라 셸이 꽂는 값이라
   서비스 워커가 가로챌 대상이 없다. 스위치만 목과 같은 것을 쓴다
-- ⚠️ `lib/features.ts` = **실서버에 아직 없는 기능의 진입점** (08 사진으로 적기 · 11-2 검사지 · #409). 목이 뜨는 환경에서만 버튼이 선다. 서버에 엔드포인트가 생기면 그 항목을 지우고 호출부 조건을 걷어낸다
+- ⚠️ `lib/features.ts` = **실서버에 아직 없는 기능의 진입점** (11-2 검사지 · #409. 11-3 복약은 #713, 08 사진으로 적기는 #723 에서 풀었다). 목이 뜨는 환경에서만 버튼이 선다. 서버에 엔드포인트가 생기면 그 항목을 지우고 호출부 조건을 걷어낸다.
+  같은 파일의 `ACTIVITY_PHOTO_ENABLED`(08 아이 활동 사진 · #884)는 **목에서도 꺼 둔다** — 화면 문구가 11-03 결정과 반대라 문구를 고치기 전에는 켜지 않는다
+- ⚠️ `lib/store-policy.ts` = **스토어 정책 때문에 숨긴 기능** (11-3 복약 · 2026-11-07). 서버 API 에는 있다. 대화의 복약 답은 서버 스위치(`apps/api/app/agents/health/registry.py` 의 `MEDICATION_ENABLED` · #923)가 따로 끈다 — 켤 때 둘을 같이 켠다(자세한 건 파일 머리말). 🚨 켜기 전에 Google Play 건강 앱 선언부터 고친다 — 웹뷰라 웹 배포만으로 심사 없이 켜진다
 - `lib/native/` = **네이티브 셸이 꽂아 주는 것의 웹 쪽 약속.** 셸 구현은 `apps/mobile` 이다
 - `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3).
   🚨 `stores/draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문이라 `persist` 금지.
   🚨 `stores/photo-draft.ts`(**아이 사진 원본**) · `stores/safety-scan-draft.ts`(**알레르기 검사지
   사진** — 의료 기록이다) · `stores/conversation.ts`(**그날 대화** — 보낸 원문 · run 결과 · 되물은
-  질문이 그대로 들어 있다) 도 같다. 넷 다 로그아웃에서 `clearAll()` 로 놓는다 (`stores/session.ts`).
+  질문이 그대로 들어 있다) · `stores/medication-draft.ts`(**복약 초안** — 약 이름 · 복용 이유) 도 같다.
+  다섯 다 로그아웃에서 `clearAll()` 로 놓는다 (`stores/session.ts`).
   대화 스토어는 로그아웃에서 **도는 스트림도 끊는다**
-- `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다
+- `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다.
+  같은 자리의 `public/push-sw.js`(웹 푸시 · #609)는 **손으로 쓴 파일**이라 lint·prettier 대상이다
+- `src/app/icon.svg` · `favicon.ico` · `apple-icon.png`(파비콘 · #695)은 생성물이다. 손으로 고치지 않고
+  `apps/mobile/scripts/build-icons.py` 로 앱 아이콘과 함께 다시 만든다 (원본 로고가 `apps/mobile/assets/logo.svg` 하나라서)
 
 화면을 붙일 때 요청 · 응답 모양은 **Swagger(`/docs`)** 를 기준으로 잡는다. [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 은 갱신하지 않는 초안이라, 그 **화면 → 호출** 표는 어느 화면이 무엇을 부르는지 훑는 용도로만 본다.
 
@@ -97,7 +106,7 @@ Owner: 고태영 (프론트 리드)
 | └ 알레르기 구역은 11 과 **같은 컴포넌트**다 | `components/safety-section.tsx` |
 | 03 홈 | `/child/[childId]/home` |
 | 04 대화 (한 줄 입력의 결과 · 되묻기 답 · 하루 단위 · 지난 대화) | `/child/[childId]/chat?date=YYYY-MM-DD` (날짜는 09 에서 들어왔을 때만) |
-| 05 제안 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` (03 홈 버튼에서 오면 `run` 대신 `prompt=…`) |
+| 05 추천 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` (03 홈 버튼에서 오면 `run` 대신 `prompt=…`) |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
 | 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜를 싣는 화면은 지금 없다 · #503) |
@@ -109,6 +118,7 @@ Owner: 고태영 (프론트 리드)
 | 11 아이 프로필 | `/child/[childId]/profile` |
 | 11-1 키 · 몸무게 상세 | `/child/[childId]/profile/growth` |
 | 11-2 검사지에서 가져오기 | `/child/[childId]/profile/safety-scan` |
+| 11-3 복약 (회차 체크 · 게이트 아님 · #537) | `/child/[childId]/profile/medications` |
 | 계정 삭제 안내 (로그인 없이 · Play 스토어에 거는 주소) | `/account-deletion` |
 | 디자인 시스템 (내부 문서) | `/design-system` |
 
@@ -123,7 +133,7 @@ Owner: 고태영 (프론트 리드)
 - 🚨 **서버가 준 `deeplink` 를 주소로 쓰지 않는다.** 어느 구역인지 힌트로만 쓴다
 - 🚨 **기기 뒤로가기는 웹뷰 히스토리다** ([`apps/mobile/App.tsx`](../mobile/App.tsx)). 그래서 04 · 11-1 · 11-2 는 시트가 아니라 라우트고,
   돌아가는 길은 `router.back()` 이 아니라 링크다
-  ⚠️ **하단 네비 네 칸(홈 · 캘린더 · 기록/기억 · 아이)은 예외다.** 셸이 히스토리로 가지 않고 두 번 눌러 종료한다
+  ⚠️ **하단 네비 네 칸(홈 · 캘린더 · 기록과 기억 · 아이 프로필)은 예외다.** 셸이 히스토리로 가지 않고 두 번 눌러 종료한다
   ([`back-press.ts`](../mobile/src/native/back-press.ts) · #462). 그 화면 안에서 `push` 로 쌓은 상태는 기기 뒤로가기로 되돌릴 수 없다 —
   탭 안의 보기 전환은 지금처럼 `replace` 로 둔다. 탭 경로(`child-nav.tsx` 의 `TABS`)를 바꾸면 셸도 같이 고친다
 
@@ -140,7 +150,7 @@ Owner: 고태영 (프론트 리드)
 - 🚨 **하단 네비(`ChildNav`)는 가는 곳 네 화면과 설정에만 붙인다.** 흐름 중인 화면(04 · 05 · 11-2 · 탈퇴 · 문제 알리기)에 붙이면 고르는 도중에 새는 길이 생긴다
 - 🚨 **돌아가기는 `IconButtonLink`**(`label` 에 "뒤로" 가 아니라 가는 곳), **버튼처럼 보이는 링크는 `ButtonLink`** 다.
   `router.back()` · `<button onClick={router.push}>` 로 대신하지 않는다
-- 🚨 **승인 게이트 표식(`btn-approve` · `caution`)은 게이트 2곳 전용이다.** 05 채택 · 07 교정 확인 · 08 저장 · 가입 동의는 게이트가 아니다
+- 🚨 **승인 게이트 표식(`btn-approve` · `caution`)은 게이트 2곳 전용이다.** 05 채택 · 07 교정 확인 · 08 저장(넣을 일정이 없을 때) · 가입 동의는 게이트가 아니다. 08 맨 아래 버튼은 켠 일정이 있으면 게이트 ㉠ 이다 (#824 · [`event-draft-ui-v1.md`](../../docs/web/event-draft-ui-v1.md) §2 ㉢)
 - 🚨 **토스트는 "조용히 되돌아간 실패" 에만 쓰고, 바텀시트 안에서 부르지 않는다** (`<dialog>` top layer 뒤로 깔린다)
 - 🚨 **화면에서 부르는 말과 코드의 이름이 다르다** — 관찰(`observation`)은 **기록**, 프로필(`profile_affinity`)은 **기억**.
   화면 문구만 바꾸고 식별자·타입·쿼리 키는 계약서 이름 그대로 둔다
@@ -182,12 +192,18 @@ Owner: 고태영 (프론트 리드)
 ### API 호출
 
 - `fetch` 를 직접 부르지 않는다. **`src/lib/api` 의 `api.get/post/...` 만** 쓴다 — Bearer 토큰·에러 봉투·Idempotency 처리가 거기 한 곳에 있다.
+  - 예외 하나: S3 업로드(`operations.ts` 의 `putPhotoToS3`)는 `fetch` 를 직접 쓴다. 우리 서버가 아니라서 Bearer 토큰 · 쿠키가 S3 로 새면 안 되기 때문이다. 시간 제한을 걸어 둔다.
   예외(`sendClientError`)와 그 이유는 [`api-client-v1.md`](../../docs/web/api-client-v1.md) §1
 - 토큰은 `useSessionStore.signIn()` 이 `setAuthToken()` 으로 클라이언트에 밀어 넣는다. 컴포넌트에서 헤더를 직접 만들지 않는다.
 
 ### 🚨 되돌릴 수 없는 5곳 — `api.post` 로 직접 부르지 않는다
 
 `POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡ · 고치기 `PATCH` 포함) · **초안 제출**(게이트 ㉠ · `POST`/`PATCH` events).
+🚨 **복약 초안 제출**(`POST`/`PATCH` medications · #537)도 게이트 ㉡ 안의 메서드다 — 게이트를 늘린 것이 아니다 ([`medication-v1.md`](../../docs/web/medication-v1.md)).
+🚨 **대화의 삭제 확정**(`POST …/delete-proposals/{pid}/confirm` · #535)도 같은 표에 있다 ([`chat-run-v1.md`](../../docs/web/chat-run-v1.md) §5).
+🚨 **07 기록 지우기**(`DELETE …/observations/{kind}/{oid}` · #736)도 같은 표에 있다 — 게이트가 아니라 확인 창이다 ([`screen-rules-v1.md`](../../docs/web/screen-rules-v1.md) §3).
+🚨 **아이 삭제**(`DELETE /children/{cid}` · #751)도 같은 표에 있다 — 게이트가 아니라 확인 화면이다 ([`api-client-v1.md`](../../docs/web/api-client-v1.md) §2).
+🚨 **반복 묶음 고치기**(`PATCH` event-series · #738)도 게이트 ㉠ 안의 메서드다 ([`event-draft-ui-v1.md`](../../docs/web/event-draft-ui-v1.md) §3-9).
 메서드가 둘인 이유와 각 줄의 규칙 원문은 [`api-client-v1.md`](../../docs/web/api-client-v1.md) §2.
 
 **`lib/api/operations.ts` 의 전용 함수로만 부른다.** 키가 필수 인자라 빠뜨리면 `tsc` 가 잡는다.
@@ -205,7 +221,7 @@ const mutation = useMutation({
 - 🚨 **`rotate()` 를 실패 경로에서도, 끝을 확인하지 못한 경로에서도 부르지 않는다.** 재시도는 같은 키다
   (예외: 한 줄 입력의 run 이 SSE `failed` 로 끝나면 새 키다 — 서버가 "저장 없음" 을 보장한다 · [`api-client-v1.md`](../../docs/web/api-client-v1.md) §2)
 - 🚨 **사용자가 고쳐 쓸 수 있는 본문은 `current(text)` 로 본문을 넘긴다** — 키가 본문을 따라 바뀌어야 "같은 키 · 다른 본문" 422 에 안 갇힌다
-- `422 idempotency_key_reuse` 가 화면에 도달하면 **버그다.**
+- 서버는 같은 키면 본문을 보지 않고 처음 응답을 재생한다(422 · 409 는 만들지 않기로 함 · #438) — **본문이 바뀌었는데 같은 키로 보내면** 고친 본문이 저장되지 않는데 화면은 성공으로 그린다
 
 ### 에러
 
@@ -249,7 +265,7 @@ run 상태는 서버 상태도 클라이언트 상태도 아니다 (구독형). 
 
 최상위 §2 가 프론트에 떨어지는 지점만 추렸다. 어기면 서비스가 성립하지 않는다.
 
-- 🚨 **일반 추천과 개인화 추천을 한 컴포넌트로 그리지 않는다.** 일반 추천에는 "또래 기준 일반 추천" 을 **화면에 명시**하고 쌓인 기록 건수를 그대로 보여준다. 되물을 때 질문은 **1개**.
+- 🚨 **일반 추천과 개인화 추천을 한 컴포넌트로 그리지 않는다.** 일반 추천은 **"일반 추천"이라고 표시**하고, 선택 기준은 카드의 `basis`로 설명하며, 기록 수는 Agent별 `general[].record_count`로 보여 준다. 라벨에 "또래 기준" 을 붙이지 않는다 — 놀이 · 주제 · 재료를 정해 물은 요청이면 그 요청을 바탕으로 고르고, 기준은 서버 `basis` 가 말한다 (#597 · #740). 되물을 때 질문은 **1개**.
   ⚠️ **둘이 한 화면에 같이 선다** — 같은 Agent 안에서도 후보마다 아이 기록 근거로 `kind` 가 갈린다 (#512 리뷰). 그래도 컴포넌트는 나누고, 고르기 · 채택 · 묶음 안내만 05 가 합친다. 05 는 일반 추천이 위, 되묻는 질문이 아래다.
 - 🚨 **"근거 없음" 상태를 만들지 않는다.** `evidence` 가 빈 suggestion 은 서버가 버리고 `scarcity` 로 내린다. 그 상태를 화면에 그리면 버그를 UI 로 덮는 것이다.
 - 🚨 **`is_stale` 인 근거를 단독으로 보여주지 않는다** (6개월 · NF-08).
@@ -326,6 +342,7 @@ run 상태는 서버 상태도 클라이언트 상태도 아니다 (구독형). 
 pnpm test          # vitest run — 목 계약 · lib · 스토어 · 게이트 정적 검사
 pnpm test:e2e      # Playwright — 목 서버로 띄운 화면에서 화면 규칙 (make web-e2e)
 pnpm test:contract # 웹 API 타입 ↔ 서버 OpenAPI (make web-contract 가 서버 계약 덤프부터 돈다)
+pnpm test:e2e-live # Playwright — 실제 api + DB 위의 행복 경로 (make web-e2e-live · make db-up 먼저)
 ```
 
 무엇을 거는지와 규칙 원문은 [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) §2 다.
@@ -333,7 +350,8 @@ pnpm test:contract # 웹 API 타입 ↔ 서버 OpenAPI (make web-contract 가 �
 - 🚨 **테스트 전용 핸들러를 만들지 않는다.** `src/mocks/server.ts` 는 브라우저 워커와 같은 핸들러를 쓴다
 - 🚨 **목에 프로세스 수명만큼 사는 상태를 더하면 리셋 함수를 `src/test/setup.ts` 의 `afterEach` 에 건다**
 - 🚨 **`src/test/approval-gates.test.ts` 가 깨지면** 목록을 고치기 전에 **게이트를 늘리는 변경인지**부터 본다 (최상위 §2)
-- e2e 는 `next dev` 로만 돈다 · `page.route` 로 응답을 못 바꾼다 (실패를 만들려면 목 시나리오를 더한다)
+- 목 e2e 는 `next dev` 로만 돈다 · `page.route` 로 응답을 못 바꾼다 (실패를 만들려면 목 시나리오를 더한다)
+- 🚨 **실서버 e2e(`e2e-live/`)는 목 e2e 를 대신하지 않는다.** 화면 규칙과 예외는 목에, 저장하고 다시 읽는 행복 경로만 실서버에 건다
 - 🚨 **픽스처·테스트 문자열에 실제 사용자 발화나 아이 정보를 넣지 않는다**
 
 ---

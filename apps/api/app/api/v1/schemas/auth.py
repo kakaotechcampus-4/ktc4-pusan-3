@@ -9,8 +9,9 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, StrictBool, StringConstraints
+from pydantic import AfterValidator, StrictBool, StringConstraints
 
+from app.api.schema_base import ApiSchema
 from app.domains.consent.models import ConsentScope
 
 BIND_PATTERN = r"^[A-Za-z0-9_-]{43}$"
@@ -44,7 +45,7 @@ Nickname = Annotated[
 """
 
 
-class AuthStatusResponse(BaseModel):
+class AuthStatusResponse(ApiSchema):
     """GET /auth/{provider}/status — 명세 §3-1.
 
     죽은 버튼을 만들지 않으려고 있는 응답이다. ready: false 면 프론트가 버튼을
@@ -70,7 +71,7 @@ class AuthStatusResponse(BaseModel):
     """
 
 
-class ExchangeRequest(BaseModel):
+class ExchangeRequest(ApiSchema):
     """POST /auth/{provider} 요청 — 명세 §3-4. 웹·앱이 같은 바디를 보낸다."""
 
     code: str
@@ -80,14 +81,14 @@ class ExchangeRequest(BaseModel):
     """시작 때 만든 비밀의 원문. 형식이 틀리면 400 validation_failed (§8-1)."""
 
 
-class ConsentInput(BaseModel):
+class ConsentInput(ApiSchema):
     """동의 1건 — 명세 §3-5."""
 
     scope: ConsentScope
     policy_version: str
 
 
-class SignupRequest(BaseModel):
+class SignupRequest(ApiSchema):
     """POST /auth/{provider}/signup 요청 — 명세 §3-5."""
 
     consent_code: str
@@ -106,7 +107,7 @@ class SignupRequest(BaseModel):
     consents: list[ConsentInput]
 
 
-class ParentSummary(BaseModel):
+class ParentSummary(ApiSchema):
     """세션 응답에 함께 싣는 보호자 최소 정보 — 명세 §3-4."""
 
     id: UUID
@@ -115,7 +116,7 @@ class ParentSummary(BaseModel):
     계정은 null 일 수 있다 (§5-2)."""
 
 
-class RefreshResponse(BaseModel):
+class RefreshResponse(ApiSchema):
     """refresh 로 받은 새 access — #466. 회전된 refresh 는 본문이 아니라 쿠키로 나간다."""
 
     token: str
@@ -125,7 +126,7 @@ class RefreshResponse(BaseModel):
     """access 의 수명(초). 로그인 시각부터 정한 최대 기간이 얼마 안 남았으면 그만큼 짧다."""
 
 
-class SessionResponse(BaseModel):
+class SessionResponse(ApiSchema):
     """세션을 내주는 응답 — 명세 §3-4 · §3-5. 교환과 가입이 같은 모양을 쓴다."""
 
     token: str
@@ -146,7 +147,7 @@ class SessionResponse(BaseModel):
     """
 
 
-class ConsentRequiredResponse(BaseModel):
+class ConsentRequiredResponse(ApiSchema):
     """처음 보는 회원번호 — 아직 parent 가 없다 (§6-1).
 
     🚨 프론트는 status 필드 유무로 분기한다. token 유무로 판단하면 신규 응답에서
@@ -163,7 +164,7 @@ def _must_be_true(value: bool) -> bool:
     return value
 
 
-class WithdrawRequest(BaseModel):
+class WithdrawRequest(ApiSchema):
     """POST /auth/withdraw (#379).
 
     프론트 apps/web/src/lib/api/types.ts 의 WithdrawRequest 와 같다.
@@ -178,6 +179,6 @@ class WithdrawRequest(BaseModel):
     """
 
 
-class WithdrawResponse(BaseModel):
+class WithdrawResponse(ApiSchema):
     deleted_at: datetime
     """서버가 지운 시각. 화면이 계산하지 않는다."""

@@ -1,6 +1,7 @@
 import enum
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -9,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     SmallInteger,
     String,
     Text,
@@ -33,24 +35,34 @@ class ObservationStatus(enum.StrEnum):
 
       active       Memory Search O · Curator 집계 O
       stand_alone  Memory Search O · Curator 집계 X
-      inactive     Memory Search X · Curator 집계 X
       deleted      Memory Search X · Curator 집계 X · 목록/상세 X
 
     stand_alone 은 Correction once_only("이번만 그랬어요") 가 만드는 상태다.
     관찰 자체는 실제로 있었던 일이라 검색에는 남기고, 성향으로 집계되는 것만 막는다.
-    active / inactive 둘뿐이면 이 둘을 한 번에 빼거나 한 번에 남길 수밖에 없다.
+    지우는 것과 따로 둬야 둘 중 하나만 뺄 수 있다.
 
-    deleted 는 보호자의 삭제 요청이 만든다. 행을 지우지 않고 이 값으로 바꾼다.
-    inactive(Correction wrong)는 "잘못된 기록" 으로 목록에 남지만 deleted 는 보호자에게
-    어디서도 보이지 않는다. 되살리는 경로는 없다.
+    deleted 는 보호자의 삭제(기록 탭 · 대화 삭제 확정)가 만든다. 행을 지우지 않고 이 값으로
+    바꾼다. 보호자에게 어디서도 보이지 않고 되살리는 경로는 없다.
 
-    누가 이 값을 읽는지는 아직 코드에 없다 — 검색 필터와 Curator 집계는 후속 이슈다.
+    inactive 는 더 만들지 않는다. 기록의 Correction wrong("잘못된 기록")이 만들던 값인데, 그 버튼을
+    기록 지우기로 바꾸면서 남은 행을 deleted 로 옮겼다 (#736). 값은 DB CHECK 와 맞추려 남긴다.
+    그 뒤에 생긴 행은 아래 `GONE_STATUSES` 로 deleted 처럼 읽는다.
     """
 
     ACTIVE = "active"
     STAND_ALONE = "stand_alone"
     INACTIVE = "inactive"
     DELETED = "deleted"
+
+
+# 지운 것으로 읽는 상태. 기록 탭 · 상세 · 교정(repository), Memory Agent 기록 조회 · 고치기(store),
+# 추천 카드의 사용한 기록(evidence_view)이 같이 쓴다.
+# inactive 는 deleted 로 옮겼고(#736 · 90ac5aae7ad1) 새로 만드는 길도 막았지만, 배포 중 직전
+# 화면 · 서버가 떠 있는 틈이나 롤백된 동안 "잘못된 기록" 으로 새로 생길 수 있다. 마이그레이션은
+# 다시 돌지 않으니 그 행도 지운 것처럼 읽는다 — 보호자에게 안 보이는 기록을 Memory Agent 가
+# 보여 주거나 고치지 않게. 지우기(store `delete_observation`)만은 그 행도 받는다 — 지우면 deleted
+# 가 될 뿐이다. 추천 Agent 는 `memory_bridge` 의 허용 목록(active · stand_alone)으로 따로 거른다.
+GONE_STATUSES = (ObservationStatus.DELETED, ObservationStatus.INACTIVE)
 
 
 class EngagementLevel(enum.StrEnum):
@@ -123,7 +135,9 @@ class ObservationCommon:
     source_writer: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
     )
-    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("notice.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class Promotable:
@@ -190,10 +204,44 @@ class ObservationRoutine(Base, UUIDPk, Timestamps, ObservationCommon):
 
 
 class ObservationHealth(Base, UUIDPk, Timestamps):
-    """승격 파이프라인 밖. ObservationCommon 을 상속하지 않는다."""
+    """승격 파이프라인 밖. ObservationCommon 을 상속하지 않는다.
+
+    한 행 = 한 사건이다 — 증상 행이거나 먹인 약 행이다(#551). 약 행은 `symptom` 이 비고
+    `observed_time` 이 먹인 시각이다. `linked_symptom_id` 는 같은 말에서 함께 기록된 증상 행이고,
+    Memory 의 코드가 채운다(모델이 id 를 골라 잇지 않는다).
+
+    🚨 CHECK 는 마이그레이션 `e5b1d7c3a9f2` 와 같은 글자다.
+       autogenerate 는 CHECK 를 비교하지 않는다.
+    """
 
     __tablename__ = "observation_health"
-    __table_args__ = (Index("ix_observation_health_child_status", "child_id", "status"),)
+    __table_args__ = (
+        Index("ix_observation_health_child_status", "child_id", "status"),
+        CheckConstraint(
+            "temperature IS NULL OR temperature BETWEEN 30.0 AND 45.0",
+            name="observation_health_temperature_range",
+        ),
+        CheckConstraint(
+            "measure_site IN ('ear', 'forehead', 'armpit', 'oral', 'rectal')",
+            name="observation_health_measure_site",
+        ),
+        # 증상과 약이 한 행에 같이 있지 않다. "둘 다 없다" 는 DB 가 아니라 Memory 스키마가 막는다 —
+        # 증상이 빈 옛 행이 있어서 DB 에서 막으면 그 행의 soft delete · Correction 이 실패한다
+        CheckConstraint(
+            "cardinality(symptom) = 0 OR medication_given IS NULL",
+            name="observation_health_symptom_not_with_medication",
+        ),
+        CheckConstraint(
+            "linked_symptom_id IS NULL OR medication_given IS NOT NULL",
+            name="observation_health_link_needs_medication",
+        ),
+        # 약 행에는 체온이 없다 — 있으면 열 타임라인이 그 행을 체온 줄과 먹인 약 줄로 두 번 낸다
+        CheckConstraint(
+            "medication_given IS NULL OR "
+            "(temperature IS NULL AND measured_at IS NULL AND measure_site IS NULL)",
+            name="observation_health_medication_no_temperature",
+        ),
+    )
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
@@ -207,8 +255,12 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
     source_writer: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
     )
-    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    symptom: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("notice.id", ondelete="SET NULL"), nullable=True
+    )
+    # 약 행은 비어 있다(CHECK observation_health_symptom_not_with_medication).
+    # 증상 행은 1개 이상 — Memory 스키마가 막는다(옛 행에는 빈 것이 있을 수 있다)
+    symptom: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     severity: Mapped[HealthSeverity | None] = mapped_column(
         enum_col_py(HealthSeverity, name="health_severity"),
         nullable=True,
@@ -217,12 +269,23 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
     suspected_trigger: Mapped[str | None] = mapped_column(Text, nullable=True)
     action_taken: Mapped[str | None] = mapped_column(Text, nullable=True)
     observed_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 체온 세 칸 — 보호자가 말한 숫자 그대로(℃). 잰 시각은 observed_time 과 다르다
+    temperature: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), nullable=True)
+    measured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    measure_site: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # 먹인 약 두 칸 — 약 이름은 보호자가 말한 그대로
+    medication_given: Mapped[str | None] = mapped_column(Text, nullable=True)
+    linked_symptom_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("observation_health.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
 
 class ObservationLinkHold(Base, UUIDPk, Timestamps):
     """Curator 의 uncertain 횟수와 subject 해시를 관찰별로 보관한다.
 
-    아이 삭제는 child_id CASCADE, 관찰 soft delete 는 delete_observation 이 정리한다.
+    아이 삭제는 child_id CASCADE, 관찰 soft delete 는 store 의 delete_observation 이 정리한다.
     관찰 참조는 correction.target_id 처럼 FK 없이 domain 과 observation_id 로 식별한다.
     Profile 에 연결되면 행을 지우며 원문 subject 는 저장하지 않는다.
     """

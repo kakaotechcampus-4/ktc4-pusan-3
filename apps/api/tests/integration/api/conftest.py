@@ -1,18 +1,22 @@
 """이 폴더의 API 테스트가 같이 쓰는 픽스처."""
 
+import asyncio
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.entrypoint import PendingMemoryContext
 from app.agents.memory.schemas.task import WorkType
+from app.api import invite_attempts, quota
 from app.api.deps.auth import hash_token
-from app.api.runs import pending_reply, suggestion_retry
+from app.api.runs import pending_reply, photo_run, suggestion_retry
 from app.domains.child.models import Child, ParentChild, ParentChildRelation
 from app.domains.identity.models import Parent
 from app.domains.identity.repository import create_access, create_session
+from app.infra.db.session import engine
 
 Bearer = tuple[dict[str, str], uuid.UUID]
 """(Authorization 헤더, parent_id)."""
@@ -109,36 +113,85 @@ async def cid(session: AsyncSession, bearer: Bearer) -> uuid.UUID:
 
 
 @pytest.fixture
-def clean_in_memory_stores():
+async def pending_db(session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
+    """워커 밖 표(#877 — `run_hold` 의 되묻기 · 05 다시 시도 · 사진 run, `rate_event` 의 하루 한도 ·
+    초대 시도)가 테스트 트랜잭션 안에서 읽고 쓰게 한다.
+
+    보관함 함수는 자기 세션을 열고 바로 commit 한다. 그대로 두면 바깥 트랜잭션 밖이라 테스트가
+    만든 보호자 · 아이를 못 보고 FK 오류가 난다. 같은 연결에 savepoint 로 묶은 공장을 끼운다 —
+    테스트가 끝나면 루트 `session` 의 rollback 이 같이 되돌린다.
+    """
+    factory = async_sessionmaker(
+        bind=await session.connection(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    for store in (pending_reply, suggestion_retry, photo_run, quota, invite_attempts):
+        monkeypatch.setattr(store, "_session_factory", factory)
+    return factory
+
+
+@pytest.fixture
+def clean_in_memory_stores(pending_db):
     """`stash_in_memory` 를 쓰는 테스트가 받는다.
 
-    보관함은 프로세스 메모리라 비우지 않으면 다음 테스트로 샌다.
+    보관함은 표라 `pending_db` 의 rollback 이 비운다.
     """
-    pending_reply.clear()
-    suggestion_retry.clear()
-    yield
-    pending_reply.clear()
-    suggestion_retry.clear()
+    return pending_db
 
 
-def stash_in_memory(*, parent_id: uuid.UUID, child_id: uuid.UUID) -> str:
-    """메모리 보관함 둘(되묻기 · 05 다시 시도)에 그 보호자 · 아이의 항목을 하나씩 넣는다.
+async def stash_in_memory(*, parent_id: uuid.UUID, child_id: uuid.UUID) -> str:
+    """보관함 둘(되묻기 · 05 다시 시도, 둘 다 run_hold)에 그 보호자 · 아이의 항목을 하나씩 넣는다.
 
-    돌려준 run_id 로 `in_memory` 가 남아 있는지 본다 (#561).
+    돌려준 run_id 로 `in_memory` 가 남아 있는지 본다 (#561 · #877).
     🚨 `clean_in_memory_stores` 와 같이 쓴다.
     """
     run_id = uuid.uuid4().hex
     owner = {"parent_id": parent_id, "child_id": child_id}
     context = PendingMemoryContext("synthetic", "synthetic question", WorkType.OBSERVE)
-    pending_reply.put(run_id=run_id, context=context, **owner)
-    suggestion_retry.put_empty(run_id=run_id, agent="food", message="synthetic", **owner)
+    assert await pending_reply.put(run_id=run_id, context=context, **owner)
+    await suggestion_retry.put_empty(run_id=run_id, agent="food", message="synthetic", **owner)
     return run_id
 
 
-def in_memory(run_id: str, *, parent_id: uuid.UUID, child_id: uuid.UUID) -> tuple[bool, bool]:
+async def in_memory(run_id: str, *, parent_id: uuid.UUID, child_id: uuid.UUID) -> tuple[bool, bool]:
     """(되묻기 보관함에 있나, 05 다시 시도 보관함에 있나)."""
     owner = {"run_id": run_id, "parent_id": parent_id, "child_id": child_id}
     return (
-        pending_reply.get(**owner) is not None,
-        suggestion_retry.empty_message(agent="food", **owner) is not None,
+        await pending_reply.get(**owner) is not None,
+        await suggestion_retry.empty_message(agent="food", **owner) is not None,
     )
+
+
+async def backend_pid(session: AsyncSession) -> int:
+    """그 세션이 쥔 DB 연결의 pid — `wait_for_lock_wait` 에 넘긴다."""
+    return await session.scalar(text("SELECT pg_backend_pid()"))
+
+
+async def wait_for_lock_wait(
+    *, blocker: int | None = None, waiter: int | None = None, timeout: float = 5.0
+) -> None:
+    """다른 연결이 실제로 잠금에서 기다리기 시작할 때까지 기다린다 (겹치는 요청 테스트용).
+
+    `blocker` 를 주면 그 연결이 쥔 잠금에서 기다리는 연결을, `waiter` 를 주면 그 연결이 무엇이든
+    잠금에서 기다리는지를 본다.
+    🚨 `sleep` 으로 "그쯤이면 도착했겠지" 를 두면, 상대가 잠금에 닿기 전에 커밋해 버려 겹치지 않은
+       채 통과할 수 있다 — 검사가 아무것도 증명하지 못한다.
+    pg_stat_activity 는 트랜잭션 안에서 한 번 찍은 값을 계속 보여 줘서 매번 새 연결로 묻는다.
+    """
+    query = text(
+        "SELECT count(*) FROM pg_stat_activity"
+        " WHERE cardinality(pg_blocking_pids(pid)) > 0"
+        " AND (CAST(:waiter AS int) IS NULL OR pid = :waiter)"
+        " AND (CAST(:blocker AS int) IS NULL OR :blocker = ANY(pg_blocking_pids(pid)))"
+    )
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        async with engine.connect() as probe:
+            if await probe.scalar(query, {"waiter": waiter, "blocker": blocker}):
+                return
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError(
+                "겹치는 요청이 잠금에서 기다리지 않았다 — 테스트가 겹침을 재현하지 못했다"
+            )
+        await asyncio.sleep(0.02)

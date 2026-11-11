@@ -102,11 +102,11 @@ function CreateChildScreen() {
 
   function submit() {
     const next: typeof errors = {};
-    if (!nickname.trim()) next.nickname = "부르는 별명을 알려주세요.";
-    if (!birthDate) next.birthDate = "생일을 알려주세요.";
+    if (!nickname.trim()) next.nickname = "아이 별명을 알려 주세요.";
+    if (!birthDate) next.birthDate = "생일을 알려 주세요.";
     // 나이를 계산하는 게 아니라 입력을 막는 검사다 — 미래에 태어난 아이는 없다.
     // 달력이 이미 막지만, 값이 다른 경로로 들어올 수 있어 제출에서도 본다.
-    else if (birthDate > toISODate(today())) next.birthDate = "오늘보다 뒤일 수는 없어요.";
+    else if (birthDate > toISODate(today())) next.birthDate = "생일은 오늘 이후일 수 없어요.";
 
     setErrors(next);
     if (Object.keys(next).length > 0 || !consentsReady) return;
@@ -133,7 +133,7 @@ function CreateChildScreen() {
           <PageTitle>누구 이야기를 모아둘까요</PageTitle>
         </div>
         <p className="text-body text-ink-muted mt-3">
-          별명과 생일만 먼저 알려주세요.
+          별명과 생일만 먼저 알려 주세요.
           <br />
           나머지는 다음 화면에서 골라도 되고, 건너뛰어도 돼요.
         </p>
@@ -151,9 +151,9 @@ function CreateChildScreen() {
         />
 
         <DateField
-          placeholder="생일을 골라주세요"
+          placeholder="생일을 골라 주세요"
           label="생일"
-          hint="나이는 생일을 보고 서버가 계산해요."
+          hint="나이는 생일을 보고 계산해요."
           value={birthDate}
           onChange={setBirthDate}
           error={errors.birthDate}
@@ -164,9 +164,9 @@ function CreateChildScreen() {
 
       <div className="flex flex-col gap-3">
         <div>
-          <p className="text-section text-ink">아이 정보에 대한 동의</p>
+          <p className="text-section text-ink">아이 정보 동의</p>
           <p className="text-body-sm text-ink-muted mt-1">
-            아이를 등록하는 것과 같이 저장돼요. 동의하지 않으면 등록되지 않아요.
+            동의는 아이 등록과 함께 저장돼요. 동의하지 않으면 아이를 등록할 수 없어요.
           </p>
         </div>
 
@@ -179,7 +179,7 @@ function CreateChildScreen() {
           <>
             <CardFailed>
               <p>동의 항목을 불러오지 못했어요.</p>
-              <p className="mt-1">잠시 뒤에 다시 불러와 주세요. 적으신 것은 그대로예요.</p>
+              <p className="mt-1">잠시 뒤에 다시 불러와 주세요. 적은 것은 그대로예요.</p>
             </CardFailed>
             <Button variant="secondary" onClick={() => void policies.refetch()}>
               다시 불러오기
@@ -212,7 +212,7 @@ function CreateChildScreen() {
                 내가 이 아이의 법정대리인이고, 만 19세 이상이에요
               </>
             }
-            description="위 두 가지 동의는 법정대리인만 할 수 있어요. 함께 보는 보호자는 초대로 연결하면 돼요."
+            description="위 동의는 법정대리인만 할 수 있어요. 함께 보는 보호자는 초대로 연결하면 돼요."
           />
         </Card>
       </div>
@@ -229,17 +229,14 @@ function CreateChildScreen() {
               ? POLICY_CHANGED_MESSAGE
               : createChild.error instanceof Error
                 ? createChild.error.message
-                : "아이를 만들지 못했어요."}
+                : "아이를 등록하지 못했어요."}
           </CardFailed>
         ) : null}
 
         <Button block onClick={submit} disabled={!consentsReady || createChild.isPending}>
           {createChild.isPending ? <Spinner /> : null}
-          {createChild.isPending ? "만드는 중…" : "시작하기"}
+          {createChild.isPending ? "등록하는 중…" : "시작하기"}
         </Button>
-        <p className="text-caption text-ink-subtle text-center">
-          외부 서비스 연결은 요청하지 않아요.
-        </p>
       </div>
     </Screen>
   );

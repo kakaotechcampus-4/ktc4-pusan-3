@@ -2,21 +2,27 @@
 
 child_a's observation id로 child_b의 store에서 get/update/delete하면 차단되는지 검증한다.
 삭제 시 Promotable 모델의 embedding 비움을 검증한다.
+배포 틈에 남은 inactive 를 지운 기록처럼 읽는지 검증한다 (#736).
 잘못된 UUID 문자열이 ValueError 대신 None/False 를 반환하는지 검증한다.
 이벤트 날짜 필터가 KST 자정 경계를 올바르게 다루는지 검증한다.
 """
 
+import asyncio
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import delete, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.common.datetime_rules import DateRange
+from app.agents.memory.store.ports import DeleteCandidates
 from app.domains.child.models import Child
+from app.domains.delete_proposal.models import DeleteProposal
 from app.domains.identity.models import Parent
-from app.domains.memory.observation.models import ObservationFood
+from app.domains.memory.observation.models import ObservationFood, ObservationStatus
 from app.domains.memory.store.db_store import DbMemoryStore
 from app.domains.schedule.models import Event, EventCategory, EventCreatedBy, EventItem, EventType
 
@@ -132,6 +138,33 @@ class TestDeleteEmbeddingCleanup:
         )
         deleted = await store.delete_observation(domain="health", observation_id=row.id)
         assert deleted is True
+
+
+async def test_남은_inactive_는_검색_고치기에서_빠지고_지우기만_받는다(
+    session: AsyncSession, family: tuple, obs_of_a: str
+) -> None:
+    """배포 틈 · 롤백 중 "잘못된 기록" 으로 생긴 inactive(#736)는 보호자에게 안 보인다.
+    Memory Agent 의 기록 조회 · 고치기에도 걸리지 않아야 안 보이는 행을 모델에게 보여 주거나 고치지
+    않는다. 지우기는 받는다."""
+    _, child_a, _ = family
+    oid = UUID(obs_of_a)
+    await session.execute(
+        update(ObservationFood)
+        .where(ObservationFood.id == oid)
+        .values(status=ObservationStatus.INACTIVE)
+    )
+    store = DbMemoryStore(session, child_id=child_a.id)
+
+    assert await store.query_observations(domain="food", child_id=child_a.id) == []
+    assert await store.get_observation(domain="food", observation_id=obs_of_a) is None
+    edited = await store.update_observation(
+        domain="food", observation_id=obs_of_a, fields={"subject": "배"}
+    )
+    assert edited is None
+    assert await store.delete_observation(domain="food", observation_id=obs_of_a) is True
+    orm = await session.get(ObservationFood, oid)
+    await session.refresh(orm)
+    assert (orm.status, orm.subject) == (ObservationStatus.DELETED, "사과")
 
 
 class TestInvalidUuidDefence:
@@ -594,3 +627,209 @@ class TestUpdatedAtRefresh:
         orm = await session.get(ObservationFood, UUID(obs_of_a), populate_existing=True)
         assert orm is not None
         assert orm.updated_at > past
+
+
+class TestProposeDelete:
+    """삭제 제안 (#535) — 지우지 않고 제안만 남기고, 한 run 에 하나다."""
+
+    async def test_제안은_지우지_않고_한_run_에_하나다(
+        self, session: AsyncSession, family: tuple, obs_of_a: str
+    ) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        tab = DeleteCandidates("observation_food", False, (obs_of_a,), (obs_of_a,))
+
+        proposal_id = await store.propose_delete(parent_id=owner.id, run_id="run-1", tabs=[tab])
+
+        row = await session.get(DeleteProposal, UUID(proposal_id))
+        assert row is not None and row.child_id == child_a.id
+        assert store.wrote and store.proposal_id == row.id
+        assert store.proposal_expires_at == row.expires_at
+        # 관찰은 그대로다
+        assert await store.get_observation(domain="food", observation_id=obs_of_a) is not None
+        with pytest.raises(ValueError):
+            await store.propose_delete(parent_id=owner.id, run_id="run-1", tabs=[tab])
+
+
+async def test_같은_일정을_동시에_지우면_뒤의_것은_False_다() -> None:
+    """#535 — 실제로 지운 쪽만 True 다. 버튼 확정이 지운 건수를 두 번 세지 않게.
+
+    트랜잭션 둘이 실제로 겹쳐야 해서 롤백 픽스처를 쓰지 않는다. 심은 행은 끝에 직접 지운다.
+    a 가 지우고 커밋 전에 행 잠금을 쥐고 있으면 b 는 그 잠금에서 기다렸다가 0행을 지운다.
+    """
+    from app.infra.db.session import engine
+
+    async with AsyncSession(engine, expire_on_commit=False) as setup:
+        owner = Parent()
+        setup.add(owner)
+        await setup.flush()
+        child = Child(owner_parent_id=owner.id, nickname="동시", birth_date=date(2023, 1, 1))
+        setup.add(child)
+        await setup.flush()
+        event = Event(
+            child_id=child.id,
+            title="synthetic",
+            event_type=EventType.EPISODIC,
+            starts_at=datetime(2026, 10, 28, 1, tzinfo=timezone.utc),
+            all_day=False,
+            category=EventCategory.ACTIVITY,
+            created_by=EventCreatedBy.CAREGIVER,
+        )
+        setup.add(event)
+        await setup.commit()
+
+    try:
+        async with (
+            AsyncSession(engine, expire_on_commit=False) as a,
+            AsyncSession(engine, expire_on_commit=False) as b,
+        ):
+            store_a = DbMemoryStore(a, child_id=child.id)
+            store_b = DbMemoryStore(b, child_id=child.id)
+            assert await store_a.delete_event(event_id=str(event.id))
+            pending_b = asyncio.create_task(store_b.delete_event(event_id=str(event.id)))
+            await asyncio.sleep(0.2)
+            assert not pending_b.done()
+
+            await a.commit()
+            assert await pending_b is False
+            assert not store_b.wrote
+            await b.commit()
+    finally:
+        async with AsyncSession(engine) as cleanup:
+            await cleanup.execute(delete(Child).where(Child.id == child.id))
+            await cleanup.execute(delete(Parent).where(Parent.id == owner.id))
+            await cleanup.commit()
+
+
+class TestHealthTemperatureAndMedication:
+    """observation_health 체온 세 칸 · 먹인 약 두 칸 (#551).
+
+    한 행 = 한 사건 — DB 가 마지막에 막는다.
+    CHECK 위반은 savepoint 안에서 넣는다. 밖에서 넣으면 테스트 트랜잭션이 통째로 죽는다.
+    """
+
+    @staticmethod
+    async def _create(store: DbMemoryStore, owner, child, **fields):
+        return await store.create_observation(
+            domain="health",
+            child_id=child.id,
+            source_writer=owner.id,
+            raw_text="열이 나서 해열제 먹였어",
+            observed_on=date(2026, 10, 1),
+            observed_range=DateRange(start=date(2026, 10, 1), end=date(2026, 10, 2)),
+            fields={"confidence_source": "parent_direct", **fields},
+        )
+
+    async def _rejected(self, session: AsyncSession, family: tuple, **fields) -> bool:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        try:
+            async with session.begin_nested():
+                await self._create(store, owner, child_a, **fields)
+        except IntegrityError:
+            return True
+        return False
+
+    async def test_체온_세_칸_왕복(self, session: AsyncSession, family: tuple) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        kst = timezone(timedelta(hours=9))
+        measured = datetime(2026, 10, 1, 23, 0, tzinfo=kst)
+        row = await self._create(
+            store,
+            owner,
+            child_a,
+            symptom=["발열"],
+            temperature=Decimal("38.5"),
+            measured_at=measured,
+            measure_site="armpit",
+        )
+        session.expunge_all()  # 세션에 남은 값이 아니라 DB 가 돌려준 값을 본다
+
+        found = await store.get_observation(domain="health", observation_id=row.id)
+
+        assert found is not None
+        assert found.fields["temperature"] == Decimal("38.5")
+        assert found.fields["measured_at"] == measured
+        assert found.fields["measure_site"] == "armpit"
+
+    async def test_범위_밖_체온은_DB_가_거절(self, session: AsyncSession, family: tuple) -> None:
+        assert await self._rejected(session, family, symptom=["발열"], temperature=Decimal("29.9"))
+        assert await self._rejected(session, family, symptom=["발열"], temperature=Decimal("45.1"))
+        assert not await self._rejected(
+            session, family, symptom=["발열"], temperature=Decimal("45.0")
+        )
+
+    async def test_정하지_않은_부위는_DB_가_거절(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        assert await self._rejected(session, family, symptom=["발열"], measure_site="foot")
+
+    async def test_약_행은_증상이_비고_연결은_증상_행을_가리킨다(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        symptom = await self._create(store, owner, child_a, symptom=["발열"])
+        # tool 은 store 가 돌려준 문자열 id 를 그대로 넘긴다 — UUID 로 바꾸는 건 store 다
+        medicine = await self._create(
+            store, owner, child_a, medication_given="해열제", linked_symptom_id=symptom.id
+        )
+        session.expunge_all()
+
+        found = await store.get_observation(domain="health", observation_id=medicine.id)
+
+        assert found is not None
+        assert found.fields["symptom"] == []  # 칸을 안 넘기면 기본값 '{}'
+        assert found.fields["medication_given"] == "해열제"
+        assert found.fields["linked_symptom_id"] == UUID(symptom.id)
+
+    async def test_한_행에_증상과_약이_같이_있으면_DB_가_거절(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        assert await self._rejected(session, family, symptom=["발열"], medication_given="해열제")
+
+    async def test_증상도_약도_없는_행은_DB_가_아니라_스키마가_막는다(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        # DB 에서 막으면 증상이 빈 옛 행이 그 CHECK 에 걸려 soft delete · Correction 이 실패한다.
+        # 새 행은 Memory 스키마(ObservationHealthCreate)가 막는다 — unit 의 test_observation_health
+        assert not await self._rejected(session, family)
+
+    async def test_약_행에_체온이_있으면_DB_가_거절(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        # 열 타임라인이 그 행을 체온 줄과 먹인 약 줄로 두 번 낸다 (최종 리뷰 F2)
+        measured = datetime(2026, 10, 1, 23, 0, tzinfo=timezone(timedelta(hours=9)))
+        for extra in (
+            {"temperature": Decimal("38.5")},
+            {"measured_at": measured},
+            {"measure_site": "ear"},
+        ):
+            assert await self._rejected(session, family, medication_given="해열제", **extra), extra
+
+    async def test_수정으로_약_행에_체온을_넣어도_DB_가_거절(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        medicine = await self._create(store, owner, child_a, medication_given="해열제")
+
+        with pytest.raises(IntegrityError):
+            async with session.begin_nested():
+                await store.update_observation(
+                    domain="health",
+                    observation_id=medicine.id,
+                    fields={"temperature": Decimal("38.5")},
+                )
+
+    async def test_증상_행에_연결이_있으면_DB_가_거절(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        first = await self._create(store, owner, child_a, symptom=["발열"])
+
+        assert await self._rejected(
+            session, family, symptom=["기침"], linked_symptom_id=UUID(first.id)
+        )

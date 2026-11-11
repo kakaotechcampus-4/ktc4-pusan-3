@@ -54,12 +54,13 @@ import { TextArea } from "@/components/ui/text-area";
 import { Tabs } from "@/components/ui/tabs";
 import { TextInput } from "@/components/ui/text-input";
 import { TimeField } from "@/components/ui/time-field";
-import { EventDraftCard } from "@/components/event-draft-card";
+import { EventDraftCard, SeriesDraftCard } from "@/components/event-draft-card";
 import {
   OBSERVATION_KINDS,
   type Agent,
   type EventDraft,
   type EventDraftFields,
+  type SeriesDraft,
 } from "@/lib/api/types";
 import { severityFieldHint, severityOptions } from "@/lib/health-safety";
 import { contrastRatio, meetsAA, parseColor } from "./contrast";
@@ -510,8 +511,8 @@ const DS_DOMAIN_OPTIONS = [
 
 const DS_STATE_OPTIONS = [
   { value: "all", label: "전체" },
-  { value: "confirmed", label: "확인됨" },
-  { value: "candidate", label: "후보" },
+  { value: "confirmed", label: "여러 번 보였어요" },
+  { value: "candidate", label: "지켜보는 중" },
 ] as const;
 
 /** 에러 바운더리 예시용. 렌더 도중 던져야 바운더리가 잡는다 (이벤트 핸들러 안은 안 잡힌다). */
@@ -535,7 +536,7 @@ function ComponentSection() {
   const [date, setDate] = useState("");
   const [range, setRange] = useState({ from: "", to: "" });
   const [query, setQuery] = useState("계란");
-  const [conditions, setConditions] = useState(["식사", "확인됨"]);
+  const [conditions, setConditions] = useState(["식사", "여러 번 보였어요"]);
   const [checked, setChecked] = useState(true);
   const [text, setText] = useState("");
   const [area, setArea] = useState("");
@@ -620,7 +621,7 @@ function ComponentSection() {
             labelHidden
             variant="bare"
             maxHeightPx={104}
-            placeholder="오늘 있었던 일, 말하듯 적어주세요"
+            placeholder="오늘 있었던 일, 말하듯 적어 주세요"
             value={bar}
             onChange={(e) => setBar(e.target.value)}
           />
@@ -796,7 +797,7 @@ function ComponentSection() {
           items={[
             { key: "a", label: "기록", href: "#design-system-tabs" },
             { key: "b", label: "기억", href: "#design-system-tabs" },
-            { key: "c", label: "제안 피드백", href: "#design-system-tabs" },
+            { key: "c", label: "추천 피드백", href: "#design-system-tabs" },
           ]}
           active="a"
           label="탭 예시"
@@ -824,7 +825,7 @@ function ComponentSection() {
         아이 알레르기 기록에 없는 재료예요. 보호자가 확인해 주셔야 넣을 수 있어요.
       </Banner>
       <Banner tone="danger" title="알레르기 기록에 추가했어요">
-        이 재료가 들어간 제안은 넣지 않아요.
+        이 재료가 들어간 추천은 넣지 않아요.
       </Banner>
 
       <SubTitle>고르기 상자</SubTitle>
@@ -931,7 +932,7 @@ function ComponentSection() {
       <div>
         <Button
           variant="secondary"
-          onClick={() => toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러주세요.")}
+          onClick={() => toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러 주세요.")}
         >
           토스트 띄우기
         </Button>
@@ -1022,7 +1023,7 @@ function ComponentSection() {
       <EmptyState
         icon={NotebookPen}
         title="아래에 한 줄 적으면 여기에 쌓여요"
-        description="기록이 없으면 제안도 만들지 않아요."
+        description="기록이 없으면 추천도 만들지 않아요."
         count={0}
       />
       <Card>
@@ -1053,7 +1054,7 @@ function ComponentSection() {
       <SubTitle>아이콘 · 기록 종류</SubTitle>
       <p className="text-caption text-ink-subtle">
         기록 한 건(07 · 09 기록 줄 · 기록 상세 · 04 기록 줄)에만 쓴다. growth 만 교육 · 생활습관
-        둘로 갈리고, 색은 둘 다 growth 다 (#501). 필터 · 제안은 Agent 라 위의 도메인 아이콘
+        둘로 갈리고, 색은 둘 다 growth 다 (#501). 필터 · 추천은 Agent 라 위의 도메인 아이콘
         그대로다.
       </p>
       <ul className="flex flex-col gap-2">
@@ -1093,13 +1094,13 @@ function EventDraftSection() {
   return (
     <Section
       title="일정 초안"
-      note="한 줄 입력 · 제안 카드 · 사진 셋이 같은 카드를 쓴다. 제출이 승인 게이트 ㉠ 다."
+      note="한 줄 입력 · 추천 카드 · 사진 셋이 같은 카드를 쓴다. 제출이 승인 게이트 ㉠ 다."
     >
-      <SubTitle>제안에서 온 초안 — 일자가 비어 있다</SubTitle>
+      <SubTitle>추천에서 온 초안 — 일자가 비어 있다</SubTitle>
       <p className="text-caption text-ink-subtle">
-        🚨 제안 문장만으로는 언제인지 알 수 없어서 `starts_at` 이 null 로 온다. 프론트가 오늘로
+        🚨 추천 문장만으로는 언제인지 알 수 없어서 `starts_at` 이 null 로 온다. 프론트가 오늘로
         채우지 않고, 보호자가 고르기 전에는 제출 버튼이 잠긴다. 🚨 알레르기 사전검사는 이 카드가
-        아니라 **승인 시트**가 진다 — 게이트 ㉡ 이고 제안 경로에만 오기 때문이다.
+        아니라 **승인 시트**가 진다 — 게이트 ㉡ 이고 추천 경로에만 오기 때문이다.
       </p>
       <EventDraftCard draft={DS_DRAFT_FROM_SUGGESTION} onSubmit={() => {}} />
 
@@ -1127,6 +1128,21 @@ function EventDraftSection() {
         비교한다 — 서버가 준 `changed` 는 보호자가 값을 고치는 순간 못 쓴다.
       </p>
       <EventDraftCard draft={DS_DRAFT_UPDATE} onSubmit={() => {}} />
+
+      <SubTitle>요일 반복 새 일정 — 날짜는 고르지 않는다 (#738)</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 회차 날짜는 서버 규칙이 정해서 날짜 칸 대신 반복 문구(서버 문구)와 첫 회차가 선다. 시각 ·
+        하루 종일 · 준비물 · 알림은 회차마다 같아서 고친다.
+      </p>
+      <EventDraftCard draft={DS_DRAFT_REPEAT} onSubmit={() => {}} />
+
+      <SubTitle>반복 일정 전부 고치기 — 읽기 전용 (#738)</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 범위(아직 시작하지 않은 회차 전부)를 먼저 말하고, `before` 와 비교한 변화를 그린다. 고칠
+        칸이 없다 — 다르게 하려면 대화로 다시 말한다. 제출도 게이트 ㉠ 이다.
+      </p>
+      <SeriesDraftCard draft={DS_DRAFT_SERIES} onSubmit={() => {}} />
+      <SeriesDraftCard draft={DS_DRAFT_SERIES} state="submitted" onSubmit={() => {}} />
 
       <SubTitle>사진에서 온 초안 — 확인이 필요한 것</SubTitle>
       <p className="text-caption text-ink-subtle">
@@ -1191,6 +1207,52 @@ const DS_DRAFT_CREATE: EventDraft = {
     { item_id: null, item_name: "수영복" },
     { item_id: null, item_name: "여벌옷" },
   ],
+};
+
+const DS_REPEAT = {
+  weekdays: [1, 3],
+  until: "2026-12-20",
+  label: "12월 20일까지 매주 월, 수",
+};
+
+const DS_DRAFT_REPEAT: EventDraft = {
+  draft_id: "d_repeat",
+  op: "create",
+  event_id: null,
+  event: {
+    title: "등원",
+    starts_at: "2026-11-09T08:30:00+09:00",
+    ends_at: null,
+    all_day: false,
+    event_type: "core",
+    category: "institution",
+  },
+  items: [{ item_id: null, item_name: "물통" }],
+  repeat: DS_REPEAT,
+};
+
+const DS_SERIES_FIELDS: SeriesDraft["event"] = {
+  title: "수영",
+  starts_time: "16:00",
+  ends_time: null,
+  all_day: false,
+  event_type: "core",
+  category: "activity",
+};
+
+const DS_DRAFT_SERIES: SeriesDraft = {
+  draft_id: "d_series",
+  op: "update_series",
+  series_id: "series_1",
+  event: DS_SERIES_FIELDS,
+  repeat: DS_REPEAT,
+  before: {
+    ...DS_SERIES_FIELDS,
+    starts_time: "15:00",
+    repeat: DS_REPEAT,
+    items: ["수영복", "수건"],
+  },
+  items: ["수영복", "수건", "물안경"],
 };
 
 const DS_DRAFT_UPDATE: EventDraft = {

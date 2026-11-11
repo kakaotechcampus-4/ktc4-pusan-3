@@ -1,8 +1,8 @@
 """Growth 안전 필터 검증.
 
 - 음식 용어: 교육 · 루틴 후보에 나오면 **아이 · 월령 · 동의와 무관하게** 뺀다.
-- 등록한 이름: 교육만, `active` 행만. 대응표는 없고 식품 사전에 없는 알레르기 이름(꽃가루 ·
-  라텍스)에는 확인 문구가 붙는다. `environmental`(고소공포 같은 것)에는 붙지 않는다.
+- 등록한 이름: 교육만, `active` 행만. 식품 사전에 없는 알레르기 이름(꽃가루 · 라텍스 · 동물털)은
+  사람이 정한 대응표의 낱말이 든 후보를 뺀다. `environmental`(고소공포 같은 것)은 대상이 아니다.
 - 위험 용어: 차단은 뺀다. 경고는 후보와 함께 나간다 — **0–17개월은 경고도 차단이다**
   (Activity 와 같다).
 - 사전을 못 읽으면 빈 사전으로 통과시키지 않는다.
@@ -13,6 +13,7 @@
 
 import pytest
 
+from app.agents.common.allergy import allergy_related_table, related_blocks
 from app.agents.common.reference import allergen_groups, food_safety_terms
 from app.agents.growth.doc_seed import growth_doc_seed
 from app.agents.growth.store.ports import SafetyEntry
@@ -21,13 +22,12 @@ from app.agents.growth.tools.safety import (
     SafetyRules,
     SafetyRulesUnavailable,
     SafetyVerdict,
-    allergy_cautions,
     check_learning_candidate,
     check_routine_candidate,
     load_safety_rules,
 )
 from app.rules.allergen import ALLERGEN_NAMES
-from app.rules.term_match import Term
+from app.rules.term_match import Term, match_fields
 
 
 def fake_rules(
@@ -171,42 +171,6 @@ class TestVerdict:
             SafetyVerdict(allowed=True, removed_by="food_term")
 
 
-class TestNonFoodAllergyCaution:
-    """식품 사전에 없는 알레르기 이름에 확인 문구를 붙인다 (#282 리뷰).
-
-    식품 알레르기는 이름 대조와 음식 용어 스캔이 뺀다. 식품이 아닌 것(꽃가루 · 라텍스)은 뺄 활동을
-    코드가 못 정해서, 보호자가 적은 이름을 보여 주고 확인하게 한다. 어느 행에 붙일지는 Activity 와
-    같은 공용 판정(`non_food_allergies`)이 고른다 — 판정 사례는
-    tests/unit/agents/common/test_allergy.py.
-    """
-
-    POLLEN = "등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."
-
-    def test_식품_사전에_없는_알레르기에_확인_문구를_낸다(self):
-        assert allergy_cautions([SafetyEntry("allergy", "꽃가루", "active")]) == (self.POLLEN,)
-
-    def test_environmental_은_알레르기가_아니라_문구를_내지_않는다(self):
-        # data_model.md — environmental 은 고소공포 같은 것이다.
-        # "등록된 알레르기(고소공포)" 가 되면 안 된다
-        assert allergy_cautions([SafetyEntry("environmental", "고소공포", "active")]) == ()
-
-    def test_식품이_아닌_알레르기에만_적은_이름_그대로_붙인다(self):
-        entries = [
-            SafetyEntry("environmental", "고소공포", "active"),
-            SafetyEntry("allergy", "꽃가루", "active"),
-            SafetyEntry("allergy", "우유", "active"),
-            SafetyEntry("allergy", "라텍스 알레르기", "active"),
-        ]
-        assert allergy_cautions(entries) == (
-            self.POLLEN,
-            "등록된 알레르기(라텍스 알레르기)가 있어요. 장소랑 재료를 한 번 확인해 주세요.",
-        )
-
-    def test_어디가_위험한지는_말하지_않는다(self):
-        (text,) = allergy_cautions([SafetyEntry("allergy", "꽃가루", "active")])
-        assert "공원" not in text and "위험" not in text
-
-
 class TestDefaultRules:
     """실제 사전(`allergen_terms.yaml` · `hazard_terms.yaml`)과 공용 판정으로 만든 규칙."""
 
@@ -224,6 +188,37 @@ class TestDefaultRules:
     @pytest.mark.parametrize("text", ["공 밀기", "카드 게임", "블록 쌓기", "비밀 상자 열기"])
     def test_한_글자_별칭은_놀이_문장에서_쓰지_않는다(self, rules, text):
         assert rules.food_terms(text) == ()
+
+    @pytest.mark.parametrize(
+        "text", ["콩으로 숫자 세기", "검은콩 세기", "콩주머니 던지기", "잣 까기"]
+    )
+    def test_한_글자_식품_콩_잣은_문장에서도_찾는다(self, rules, text):
+        """C48-food — 아이와 상관없이 뺀다. 콩주머니에도 실제 콩이 든다."""
+        assert rules.food_terms(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "콩콩 뛰기 놀이",
+            "콩닥콩닥 심장 소리 듣기",
+            "콩쥐팥쥐 동화 읽기",
+            "홍콩 지도 보기",
+            "강낭콩 키우기",  # 대두가 아닌 콩은 사전 guard 다 — 심고 기르는 활동
+            "잦은 실수 줄이기",
+        ],
+    )
+    def test_콩_잣이_식품이_아닌_자리는_걸리지_않는다(self, rules, text):
+        assert rules.food_terms(text) == ()
+
+    def test_guard_는_띄어쓰기를_넘지_않는다(self, rules):
+        """'꽃 게임' 은 띄어 썼다 — guard '꽃게' 로 덮지 않는다.
+
+        Activity · Food 의 match_fields 와 같다. "꽃" 은 대응표 별칭(꽃가루 · 화분증)이 아니라
+        이름 대조만 한다 — 표 판정은 plan1 테스트가 본다.
+        """
+        flower = (SafetyEntry("allergy", "꽃", "active"),)
+        assert rules.registered_names("꽃 게임 하기", flower)
+        assert rules.registered_names("꽃게 그리기", flower) == ()
 
     def test_18개월_미만은_경고도_차단이다(self, rules):
         hits = rules.hazards("풍선으로 숫자 세기", 15)
@@ -383,6 +378,153 @@ class TestDefaultRules:
     @pytest.mark.parametrize(
         ("label", "text", "blocked"),
         [
+            ("밤", "알밤 줍기", True),
+            ("밤", "군밤 까서 맛보기", True),
+            ("견과류", "도토리 줍기", True),
+            ("밤", "오늘 밤 별 보기", False),
+            ("밤", "밤하늘 그리기", False),
+        ],
+    )
+    def test_밤_도토리를_막는다(self, rules, label, text, blocked):
+        """ "밤" 한 글자는 문장에서 대조하지 않고 붙은 이름으로 막는다 — Activity 와 같다 (#582)."""
+        entries = [SafetyEntry("allergy", label, "active")]
+        assert bool(rules.registered_names(text, entries)) is blocked
+
+    @pytest.mark.parametrize(
+        ("label", "text", "blocked"),
+        [
+            ("땅콩", "피넛버터 바르기", True),
+            ("호두", "월넛 쿠키 굽기", True),
+            ("돼지고기", "아기 돼지 삼형제 동화 읽기", False),
+            ("조개류", "전복 모양 스티커 붙이기", False),
+            ("조개류", "전복죽 맛보기", True),
+            ("전복", "전복구이 그림 그리기", True),
+            ("돼지고기", "돼지국밥 그림 그리기", True),
+            ("돼지고기", "돼지껍데기 구이 그림", True),
+            ("돼지고기", "돼지 바비큐 그림", True),
+            ("콩", "콩콩 뛰기 놀이", False),
+            ("콩", "콩주머니 던지기", True),
+        ],
+    )
+    def test_등록_이름_대조는_Activity_와_같은_판정이다(self, rules, label, text, blocked):
+        """등록한 아이에게는 외래어 별칭도 막고, 다른 뜻이 흔한 별칭(돼지 · 전복)은 뺀다 (#582).
+        아이와 상관없이 빼는 음식 용어 스캔만 외래어를 뺀다."""
+        entries = [SafetyEntry("allergy", label, "active")]
+        assert bool(rules.registered_names(text, entries)) is blocked
+
+    def test_외래어는_아이와_상관없는_스캔에서만_뺀다(self, rules):
+        assert rules.food_terms("월넛 그림 카드 고르기") == ()
+        assert rules.food_terms("피넛 그림 카드 고르기") == ()
+
+    @pytest.mark.parametrize("text", ["아기 돼지 삼형제 동화 읽기", "전복 모양 스티커 붙이기"])
+    def test_문장에서_다른_뜻인_별칭은_스캔에서도_뺀다(self, rules, text):
+        assert rules.food_terms(text) == ()
+
+    @pytest.mark.parametrize(
+        "text", ["전복죽 맛보기", "돼지국밥 그림 그리기", "돼지껍데기 구이 그림"]
+    )
+    def test_돼지_전복이_든_음식_이름은_스캔에서_뺀다(self, rules, text):
+        """HEAD 의 스캔이 막던 것이다 — 단독으로 쓴 다른 뜻만 풀고 음식 이름은 계속 뺀다."""
+        assert rules.food_terms(text) != ()
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "쿠키 반죽 빚어 굽기",
+            "국수 가락 세어 보기",
+            "빵 가게 역할놀이",
+            "소시지 꼬치 만들기",
+            "떡 만들기 놀이",
+            "사과 깎아 먹기",  # 헷갈리는 낱말도 다루는 말이 곁에 있으면 음식이다
+            "물고기 구워 먹기",
+            "대구 구워 먹기",
+            "은행 구워 먹기",
+            "소라 구워 먹기",
+            "가재 삶아 먹기",
+        ],
+    )
+    def test_요리_이름도_음식_용어로_뺀다(self, rules, text):
+        """19종 별칭과 질식 위험 음식만 보던 스캔이 쿠키 · 빵 · 국수를 놓쳤다 — "쿠키 반죽 빚어
+        굽기" 가 밀로 등록해도 통과했다. Food 음식 어휘를 더한다 (#582)."""
+        assert rules.food_terms(text) != ()
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "새 우산 쓰고 산책하기",  # 새우 — 띄어쓰기를 넘지 않는다. 오탐이 모든 아이에게 간다
+            "거울 보고 미소 짓기",  # 미소(된장) — 헷갈리는 낱말, 곁에 다루는 말이 없다
+            "친구에게 사과하기",
+            "양지바른 곳에서 쉬기",  # 양지(소고기)
+            "갈비뼈 만져 보기",  # 갈비
+            "비지땀 흘리며 달리기",  # 비지
+            "빵빵 경적 소리 흉내 내기",
+            "떡잎이 나는 모습 관찰하기",
+            "낮과 밤 나눠 주기",  # 밤 — 시드의 낮 · 밤 놀이. "주기" 는 먹이는 말이 아니다
+            "새싹반 친구들과 인사하기",  # 새싹 — 어린이집 반 이름
+            "소주제 정해서 이야기 나누기",
+            "종이로 게 만들기",  # 한 글자는 곁에 만들기가 있어도 음식으로 보지 않는다
+            "종이로 돼지 저금통 만들기",
+            "은행 저금 놀이",  # 은행 · 대구 · 조기 · 방어는 놀이 문장 규칙에서는 강하게 찾지만
+            "은행에 가요 역할놀이",  # 모든 아이에게서 빼는 스캔에서는 곁의 말이 있을 때만 본다
+            "은행나무 잎 줍기",
+            "대구 여행 이야기",
+            "조기 축구",
+            "공 방어 연습",
+            "사과하고 화해하기",
+            "사과할 때 쓰는 말",
+            "사과 편지 쓰기",
+            "물고기 그리기",
+            "물고기 세기 놀이",
+            "크림색 종이 접기",
+            "커피색 크레파스",
+            "초콜릿색 물감",
+            "카카오 프렌즈 스티커",
+            "귤",  # 준비물 칸처럼 낱말 하나 — 흔한 재료 목록(known_foods)은 항목 규칙만 읽는다.
+            "오이",  # 스캔이 읽으면 이 준비물이 든 교육 후보가 모든 아이에게서 빠진다
+            "미역",
+            "블루베리",
+            "종이로 물고기 만들기",  # 만들기 · 부치기는 다루는 말이 아니다 — 가장 흔한 공작 동사
+            "친구에게 줄 사과 카드 만들기",
+            "대구 지도 만들기",
+            "미소 그림 만들기",
+            "물고기 먹이 주기",  # 먹이는 먹는 말이 아니다(동물에게 주는 것)
+            "사과 편지 부치기",
+            "파이팅 외치기",  # 파이 · 크림 · 고기 · 허니 — 글자만 든 다른 낱말
+            "선크림 바르기",
+            "핸드크림 바르기",
+            "고기잡이 배 그리기",
+            "허니비 그림 그리기",
+            "소라 껍데기 줍기",  # 소라 · 가재 · 새싹은 동물 · 식물이다
+            "가재 관찰하기",
+            "새싹 관찰 일기 쓰기",
+        ],
+    )
+    def test_다른_뜻의_낱말은_음식_용어로_보지_않는다(self, rules, text):
+        """모든 아이의 후보에서 빼는 스캔이라 오탐이 곧 전원 손실이다. 시드에 없는 말은 시드 전수가
+        못 잡아서 낱말로 고정한다 (#582)."""
+        assert rules.food_terms(text) == ()
+
+    @pytest.mark.parametrize("text", ["핫 도그 놀이", "마시 멜로 쌓기", "팝 콘 터뜨리기"])
+    def test_질식_위험_음식은_띄어_써도_뺀다(self, rules, text):
+        """위험 용어는 띄어쓰기를 넘는다 — "물 놀이" 도 물놀이다. 띄어쓰기를 넘지 않는 규칙은
+        알레르기 이름에만 쓴다("새 우산" 이 새우가 아니다). 같이 묶으면 질식 위험 음식이 통과한다
+        (#582 리뷰)."""
+        assert rules.food_terms(text) != ()
+
+    def test_교육_시드는_음식_용어_스캔에_걸리지_않는다(self, rules):
+        """Food 음식 어휘를 더하면 시드 문장의 다른 뜻("낮과 밤")이 걸릴 수 있다 — 시드 전수."""
+        rows = [entry.to_row() for entry in growth_doc_seed()]
+        found = [
+            (row.doc_key, text)
+            for row in rows
+            for text in (row.title, row.body, *row.materials)
+            if rules.food_terms(text)
+        ]
+        assert found == []
+
+    @pytest.mark.parametrize(
+        ("label", "text", "blocked"),
+        [
             ("쌀", "쌀 촉감놀이", True),
             ("팥", "팥 주머니 던지기", True),
             ("꽃", "꽃과 풀 가까이서 보기", True),
@@ -480,7 +622,8 @@ class TestLoanwordAliases:
         assert rules.food_terms(text) == ()
 
     def test_한국어_이름은_그대로_찾는다(self, rules):
-        assert rules.food_terms("돈육 그림 카드") == ("10",)
+        # 같은 음식이 Food 음식 어휘(돈육)로도 잡힌다 — 비었는지만 본다
+        assert "10" in rules.food_terms("돈육 그림 카드")
 
     def test_외래어로_등록한_이름도_한국어_별칭으로_찾는다(self, rules):
         """보호자가 검사지 영어 이름(pork)으로 적었으면 그 항목의 한국어 별칭으로 본다."""
@@ -507,8 +650,8 @@ class TestRulesUnavailable:
             load_safety_rules()
 
     def test_이름_사전을_못_읽어도_같다(self, monkeypatch):
-        """확인 문구를 고르는 이름 사전(`allergy_book`)도 게이트에서 먼저 읽는다 — 못 읽으면 문구
-        없이 넘기지 않는다."""
+        """보호자가 적은 이름을 읽는 사전(`allergy_book`)도 게이트에서 먼저 읽는다 — 못 읽으면 이름
+        대조 없이 넘기지 않는다."""
 
         def broken():
             raise ValueError("allergen_groups.yaml 깨짐")
@@ -516,6 +659,23 @@ class TestRulesUnavailable:
         monkeypatch.setattr("app.agents.growth.tools.safety.allergy_book", broken)
         with pytest.raises(SafetyRulesUnavailable):
             load_safety_rules()
+
+    def test_음식_어휘를_못_읽어도_같다(self, monkeypatch):
+        """음식 어휘(`common/food_words`)는 첫 스캔에서 느리게 만들어진다 — 그때 터지면 교육이
+        닫히지 않고 예외가 그대로 나간다. 게이트에서 먼저 읽어 같은 길로 닫는다 (#582 리뷰)."""
+        from app.agents.common import food_words
+
+        def broken():
+            raise OSError("chronic_restriction.yaml 없음")
+
+        food_words._static_scan.cache_clear()
+        monkeypatch.setattr("app.agents.common.food_words.chronic_restriction_terms", broken)
+        try:
+            with pytest.raises(SafetyRulesUnavailable):
+                load_safety_rules()
+        finally:
+            monkeypatch.undo()
+            food_words._static_scan.cache_clear()
 
     def test_원인을_잃지_않는다(self, monkeypatch):
         monkeypatch.setattr(
@@ -525,3 +685,92 @@ class TestRulesUnavailable:
         with pytest.raises(SafetyRulesUnavailable) as caught:
             load_safety_rules()
         assert isinstance(caught.value.__cause__, ValueError)
+
+
+POLLEN = SafetyEntry("allergy", "꽃가루", "active")
+
+
+class TestAllergyRelated:
+    """식품 아닌 알레르기는 확인 문구 대신 사람이 정한 대응표로 막는다 (PM 확인)."""
+
+    @pytest.fixture
+    def rules(self) -> SafetyRules:
+        return load_safety_rules()
+
+    def test_표_낱말이_든_후보를_뺀다(self, rules):
+        verdict = check_learning_candidate(
+            ("나뭇잎 세기", "주운 잎을 센다"), months=30, entries=[POLLEN], rules=rules
+        )
+        assert verdict == SafetyVerdict(allowed=False, removed_by="allergy_related")
+
+    def test_꽃가루로_등록한_아이에게_잔디_활동을_막는다(self, rules):
+        # 잔디는 꽃가루의 별칭이라("잔디" 로 적으면 꽃가루로 읽는다) 막을 낱말에도 있어야 한다
+        # (#452 리뷰). 없으면 "꽃가루" 로 등록한 아이에게만 잔디 놀이가 통과한다
+        verdict = check_learning_candidate(
+            ("잔디밭에서 공 굴리기", "공을 굴린다"), months=30, entries=[POLLEN], rules=rules
+        )
+        assert verdict == SafetyVerdict(allowed=False, removed_by="allergy_related")
+
+    def test_준비물_칸도_본다(self, rules):
+        # "풍선" 은 위험 용어 경고도 걸리지만, 표가 위험 용어보다 먼저 본다
+        verdict = check_learning_candidate(
+            ("숫자 세기", "하나씩 센다", "풍선"),
+            months=30,
+            entries=[SafetyEntry("allergy", "라텍스", "active")],
+            rules=rules,
+        )
+        assert verdict.removed_by == "allergy_related"
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            SafetyEntry("allergy", "꽃가루", "retracted"),
+            SafetyEntry("allergy", "꽃가루", "none"),
+            SafetyEntry("environmental", "꽃가루", "active"),
+        ],
+    )
+    def test_active_allergy_가_아니면_표로_막지_않는다(self, rules, entry):
+        verdict = check_learning_candidate(
+            ("나뭇잎 세기",), months=30, entries=[entry], rules=rules
+        )
+        assert verdict.removed_by != "allergy_related"
+
+    def test_표에_없는_이름은_이름_대조만_한다(self, rules):
+        mite = SafetyEntry("allergy", "집먼지진드기", "active")
+        named = check_learning_candidate(
+            ("집먼지진드기 관찰",), months=30, entries=[mite], rules=rules
+        )
+        other = check_learning_candidate(("먼지 관찰",), months=30, entries=[mite], rules=rules)
+        assert named.removed_by == "allergy_name"
+        assert other.allowed
+
+    @pytest.mark.parametrize("label", ["강아지 털", "강아지", "고양이", "애완동물"])
+    def test_동물_이름으로_적어도_동물털_낱말이_든_후보를_뺀다(self, rules, label):
+        """동물털 알레르기를 흔히 적는 이름으로 적어도 깃털 · 동물원 후보가 안 나간다."""
+        entry = SafetyEntry("allergy", label, "active")
+        for text in ("깃털 날리기", "동물원 구경", "털실 만지기"):
+            verdict = check_learning_candidate((text,), months=30, entries=[entry], rules=rules)
+            assert verdict.removed_by in {"allergy_related", "allergy_name"}, (label, text)
+
+    def test_결과에_알레르기_이름이나_낱말을_싣지_않는다(self, rules):
+        verdict = check_learning_candidate(
+            ("나뭇잎 세기",), months=30, entries=[POLLEN], rules=rules
+        )
+        assert "꽃가루" not in repr(verdict) and "나뭇잎" not in repr(verdict)
+
+
+def _seed_learning_rows():
+    return [
+        entry.to_row()
+        for entry in growth_doc_seed()
+        if entry.meta.status == "approved" and entry.to_row().row_type == "learning_activity"
+    ]
+
+
+@pytest.mark.parametrize(("label", "count"), [("꽃가루", 9), ("라텍스", 0), ("동물털", 0)])
+def test_시드_교육_행에서_표에_걸리는_수(label, count):
+    """표 낱말을 바꾸면 이 수가 바뀐다 — 바뀐 수를 보고 과차단인지 사람이 판단한다."""
+    terms = related_blocks([label], allergy_related_table())
+    rows = _seed_learning_rows()
+    hit = [r for r in rows if match_fields((r.title, r.body, *r.materials), terms)]
+    assert len(rows) == 80 and len(hit) == count

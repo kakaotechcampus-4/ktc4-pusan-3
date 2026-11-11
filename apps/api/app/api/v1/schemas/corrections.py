@@ -6,8 +6,9 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from app.api.schema_base import ApiSchema
 from app.api.v1.schemas.affinities import AffinityOut
 from app.api.v1.schemas.common import Ref
 from app.api.v1.schemas.observations import ObservationOut
@@ -21,36 +22,41 @@ TargetKind = Literal[
 ]
 
 
-class TargetRef(BaseModel):
-    kind: TargetKind = Field(description="observation_health 는 첫 배포 범위 밖이라 받지 않는다")
+class TargetRef(ApiSchema):
+    kind: TargetKind = Field(
+        description=(
+            "observation_health 는 받지 않는다(400). 건강 기록은 기록 탭에서 삭제로만 손댄다 (#764)"
+        )
+    )
     id: str = Field(description="기록 또는 기억의 id")
 
 
-class CorrectionRequest(BaseModel):
+class CorrectionRequest(ApiSchema):
     target_ref: TargetRef = Field(description="고칠 대상 1건. 배열이 아니라 객체다")
     verdict: Literal["once_only", "need_more_observation", "outdated", "wrong"] = Field(
         description=(
-            "기록은 once_only(이번만 그랬어요) · wrong(잘못된 기록), "
+            "기록은 once_only(이번만 그랬어요)만 받는다 — 잘못된 기록은 "
+            "기록 지우기(DELETE /children/{cid}/observations/{kind}/{oid})로 지운다 (#736). "
             "기억은 need_more_observation · outdated · wrong. 어긋나면 400"
         )
     )
     child_id: str = Field(description="연결된 보호자의 아이만 가능하다. 아니면 403")
 
 
-class CorrectionMade(BaseModel):
+class CorrectionMade(ApiSchema):
     id: str
     verdict: Literal["once_only", "need_more_observation", "outdated", "wrong"]
     created_at: datetime
 
 
-class Cascade(BaseModel):
+class Cascade(ApiSchema):
     affinities_recomputed: list[Ref] = Field(description="이 고치기로 다시 계산한 기억")
     suggestions_recalculated: list[str] = Field(
         description="다시 계산한 추천 id. 추천을 다시 만드는 서버 코드가 아직 없어 늘 빈 배열이다"
     )
 
 
-class CorrectionResponse(BaseModel):
+class CorrectionResponse(ApiSchema):
     correction: CorrectionMade
     target: ObservationOut | AffinityOut = Field(description="고친 뒤의 대상 상태")
     cascade: Cascade

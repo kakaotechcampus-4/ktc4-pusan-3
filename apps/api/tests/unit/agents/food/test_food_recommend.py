@@ -10,22 +10,29 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.agents.common.evidence import RankedEvidence
+from app.agents.common.food_safety import filter_food_safety
 from app.agents.common.refs import Ref
 from app.agents.food.context import FoodContext
+from app.agents.food.meal_pool import build_pool
 from app.agents.food.readouts import GENERAL_REASON_TODDLER, GENERAL_REASON_WEANING, READOUTS
 from app.agents.food.result import ErrorCode
 from app.agents.food.schemas.common import EvidenceRef
-from app.agents.food.schemas.recommend import MealCandidate, ProposeMealCandidatesArgs
-from app.agents.food.store import SafetyEntry
+from app.agents.food.schemas.recommend import (
+    GeneratedMeal,
+    MealCandidate,
+    ProposeMealCandidatesArgs,
+)
+from app.agents.food.store import InMemoryRecipeCatalog, MenuCatalogRow, SafetyEntry
 from app.agents.food.tools.recommend import propose_meal_candidates
-from app.agents.food.tools.safety import filter_food_safety
 from app.rules.menu_evidence import menu_evidence_id
 from tests.unit.agents.food.support import MEAL_DOC, context, day, doc_row, menu_row
 
 MILK = [SafetyEntry(kind="allergy", label="우유", status="active")]
 GENERAL_REASON = READOUTS.get(GENERAL_REASON_TODDLER).template
 
-TOFU = menu_row("두부조림", source="mafra_recipe", ingredients=("두부", "간장"))
+TOFU = menu_row(
+    "두부조림", source="mafra_recipe", ingredients=("두부", "간장"), main_ingredients=("두부",)
+)
 EGGROLL = menu_row(
     "계란말이",
     source="mafra_recipe",
@@ -35,7 +42,12 @@ EGGROLL = menu_row(
 MILKBREAD = menu_row(
     "우유식빵", source="mafra_recipe", ingredients=("우유", "식빵"), allergen_codes=frozenset({2})
 )
-SPINACH = menu_row("시금치나물", source="mafra_recipe", ingredients=("시금치", "참기름"))
+SPINACH = menu_row(
+    "시금치나물",
+    source="mafra_recipe",
+    ingredients=("시금치", "참기름"),
+    main_ingredients=("시금치",),
+)
 
 
 # 일반 추천은 문서 행이 근거다 (루트 §2). 기본 후보는 이 행을 인용하고, shown() 이 보여 준다
@@ -122,8 +134,8 @@ async def test_띄어쓰기만_다르게_옮겨_쓴_menu_key_는_보여_준_후�
     assert [p.menu_key for p in ctx.state.picks] == ["두부조림"]
 
 
-# ── 메뉴 이름 · 재료는 카탈로그에서 ───────────────────────────────────
-async def test_메뉴_이름과_재료는_카탈로그_행에서_온다() -> None:
+# ── 메뉴 이름 · 준비 재료는 카탈로그에서 ──────────────────────────────
+async def test_메뉴_이름과_준비_재료는_카탈로그_행에서_온다() -> None:
     ctx = shown(*FULL, exhausted=True)
 
     result = await propose_meal_candidates(ctx, args(pick("두부조림"), pick("시금치나물")))
@@ -131,8 +143,8 @@ async def test_메뉴_이름과_재료는_카탈로그_행에서_온다() -> Non
     assert result.success
     first, second = ctx.state.picks
     assert first.draft.content == "두부조림"
-    assert first.draft.items == ("두부", "간장")
-    assert (second.draft.content, second.draft.items) == ("시금치나물", ("시금치", "참기름"))
+    assert first.draft.items == ("두부",)
+    assert (second.draft.content, second.draft.items) == ("시금치나물", ("시금치",))
     assert (first.menu_key, first.meal_slot) == ("두부조림", "dinner")
 
 
@@ -224,6 +236,109 @@ async def test_추천의_allergens_는_안전_필터_결과와_같다() -> None:
     assert by_key["계란말이"].allergens == verdict.allergens["계란말이"]
     assert by_key["계란말이"].allergens  # 비어 있지 않다 — 승인할 때 묻는 목록이다
     assert by_key["두부조림"].allergens == verdict.allergens.get("두부조림", ())
+
+
+# ── items — 준비 목록은 주재료에서만 (#474) ───────────────────────────
+async def items_of(row: MenuCatalogRow, *, safety=()) -> tuple[str, ...]:
+    """`row` 하나를 골랐을 때 추천 초안의 준비물."""
+    ctx = shown(row, safety=safety, exhausted=True)
+
+    result = await propose_meal_candidates(ctx, args(pick(row.menu_key)))
+
+    assert result.success
+    [picked] = ctx.state.picks
+    return picked.draft.items
+
+
+async def test_준비물은_전체_재료가_아니라_주재료에서_만든다() -> None:
+    row = menu_row(
+        "두부부침",
+        source="mafra_recipe",
+        ingredients=("두부", "양파", "간장"),
+        main_ingredients=("두부",),
+    )
+
+    assert await items_of(row) == ("두부",)
+
+
+async def test_주재료여도_상비_재료는_준비물에서_빠지고_밀가루는_남는다() -> None:
+    row = menu_row(
+        "밀전병",
+        source="mafra_recipe",
+        ingredients=("밀가루", "식용유", "후추", "소금"),
+        main_ingredients=("밀가루", "식용유", "후추"),
+    )
+
+    assert await items_of(row) == ("밀가루",)
+
+
+async def test_주재료가_비어_있어도_전체_재료로_되돌아가지_않는다() -> None:
+    row = menu_row(
+        "정체불명국", source="mafra_recipe", ingredients=("두부", "양파"), main_ingredients=()
+    )
+
+    assert await items_of(row) == ()
+
+
+async def test_주재료가_모두_상비_재료면_준비물은_빈_튜플로_정상_추천이다() -> None:
+    row = menu_row(
+        "양념밥",
+        source="mafra_recipe",
+        ingredients=("쌀", "소금", "참기름"),
+        main_ingredients=("소금", "참기름"),
+    )
+
+    assert await items_of(row) == ()
+
+
+@pytest.mark.parametrize(
+    ("label", "ingredients", "codes"),
+    [
+        ("우유", ("두부", "우유"), frozenset()),
+        ("우유", ("두부", "양파"), frozenset({2})),
+        ("밀", ("두부", "밀가루"), frozenset()),
+        ("밀", ("두부", "양파"), frozenset({6})),
+        ("호두", ("두부", "호두"), frozenset()),
+        ("호두", ("두부", "양파"), frozenset({14})),
+    ],
+)
+async def test_준비물에서_빠진_재료도_안전_필터는_계속_본다(
+    label: str, ingredients: tuple[str, ...], codes: frozenset[int]
+) -> None:
+    # 주재료는 두부뿐이라 준비 목록에 알레르기 재료가 없다. 그래도 전체 재료 · 코드가 후보를 막는다
+    row = menu_row(
+        "두부요리",
+        source="mafra_recipe",
+        ingredients=ingredients,
+        allergen_codes=codes,
+        main_ingredients=("두부",),
+    )
+    ctx = shown(row, safety=[SafetyEntry(kind="allergy", label=label, status="active")])
+
+    await propose_meal_candidates(ctx, args(pick("두부요리")))
+
+    assert ctx.state.picks == ()
+    assert ctx.state.blocked_keys == {"두부요리"}
+
+
+async def test_같은_이름_레시피를_묶은_주재료_합집합이_순서대로_준비물이_된다() -> None:
+    beef = menu_row(
+        "샤브샤브",
+        source="mafra_recipe",
+        source_id="a",
+        ingredients=("쇠고기", "배추", "소금"),
+        main_ingredients=("쇠고기", "소금"),
+    )
+    shrimp = menu_row(
+        "샤브샤브",
+        source="mafra_recipe",
+        source_id="b",
+        ingredients=("새우", "배추", "소금"),
+        main_ingredients=("새우", "쇠고기", "소금"),
+    )
+    [merged] = await build_pool(context(recipes=InMemoryRecipeCatalog([beef, shrimp])))
+
+    assert await items_of(merged.row) == ("쇠고기", "새우")
 
 
 # ── reason 문장 규칙 ─────────────────────────────────────────────────
@@ -593,3 +708,186 @@ async def test_피한_음식을_근거로_달았으면_이유에_그_음식을_�
     )
 
     assert result.success, result.error
+
+
+# ── 보호자가 정한 조건 · 레시피북 밖 생성 후보 (#740) ─────────────────────────
+def generated_meal(name: str = "파프리카볶음", **overrides) -> GeneratedMeal:
+    base = {
+        "name": name,
+        "main_ingredients": ["파프리카"],
+        "ingredients": ["파프리카", "올리브유"],
+        "meal_slot": "dinner",
+        "reason": "요청하신 조건에 맞아서 골랐어요",
+    }
+    return GeneratedMeal.model_validate({**base, **overrides})
+
+
+def asked(
+    *,
+    food: str | None = "파프리카",
+    kind: str | None = "ingredient",
+    generated: list[GeneratedMeal] | None = None,
+    candidates: list[MealCandidate] | None = None,
+) -> ProposeMealCandidatesArgs:
+    return ProposeMealCandidatesArgs(
+        requested_food=food,
+        requested_kind=kind,
+        generated=generated or [],
+        candidates=candidates or [],
+    )
+
+
+def said(ctx: FoodContext, text: str) -> FoodContext:
+    ctx.state.utterance = text
+    return ctx
+
+
+PAPRIKA_STIR = menu_row(
+    "파프리카볶음", source="mafra_recipe", ingredients=("파프리카", "올리브유"),
+    main_ingredients=("파프리카",),
+)  # fmt: skip
+
+
+async def test_보호자가_조건을_말했으면_생성_후보를_요청_기반_일반_추천으로_받는다() -> None:
+    ctx = said(shown(*FULL, exhausted=True), "파프리카 들어간 반찬 추천해줘")
+
+    result = await propose_meal_candidates(ctx, asked(generated=[generated_meal()]))
+
+    assert result.success
+    (picked,) = ctx.state.picks
+    assert picked.draft.content == "파프리카볶음"
+    assert picked.draft.kind == "general" and picked.draft.requested is True
+    assert picked.draft.citations == ()
+
+
+async def test_모델이_조건을_지어냈으면_생성_후보를_받지_않는다() -> None:
+    ctx = said(shown(*FULL), "저녁 뭐 먹일까?")
+
+    result = await propose_meal_candidates(ctx, asked(generated=[generated_meal()]))
+
+    assert not result.success
+    assert result.error is not None
+    assert "1번 후보" in result.error["message"]
+    assert "generated" in result.error["message"]
+    assert ctx.state.picks == ()
+
+
+async def test_조건_맞는_레시피가_샘플에_있으면_그만큼_생성_자리가_준다() -> None:
+    ctx = said(shown(PAPRIKA_STIR, *FULL, exhausted=True), "파프리카 들어간 반찬 추천해줘")
+    ctx.state.requested_keys = frozenset({"파프리카볶음"})  # 샘플 안 조건 맞는 레시피 1개
+    three = [
+        generated_meal("파프리카전"),
+        generated_meal("파프리카무침"),
+        generated_meal("파프리카밥"),
+    ]
+
+    over = await propose_meal_candidates(ctx, asked(generated=three))
+
+    assert not over.success  # 자리는 3 - 1 = 2 개다
+    assert over.error is not None and "1번 후보" not in over.error["message"]
+    assert "3번 후보" in over.error["message"]
+
+    ok = await propose_meal_candidates(
+        ctx, asked(candidates=[pick("파프리카볶음", evidence=[])], generated=three[:2])
+    )
+
+    assert ok.success
+    assert [p.draft.content for p in ctx.state.picks] == [
+        "파프리카볶음",
+        "파프리카전",
+        "파프리카무침",
+    ]
+
+
+async def test_요리_종류_조건은_조건_맞는_레시피를_세지_않는다() -> None:
+    ctx = said(shown(PAPRIKA_STIR, *FULL, exhausted=True), "태국음식 추천해줘")
+    ctx.state.requested_keys = frozenset({"파프리카볶음"})
+
+    result = await propose_meal_candidates(
+        ctx,
+        asked(
+            food="태국음식",
+            kind="cuisine",
+            generated=[generated_meal("팟타이"), generated_meal("똠얌"), generated_meal("카오팟")],
+        ),
+    )
+
+    assert result.success
+    assert len(ctx.state.picks) == 3
+
+
+async def test_안전_필터에_걸린_생성_후보는_풀에서_뺀다_사유를_돌려주지_않는다() -> None:
+    egg = [SafetyEntry(kind="allergy", label="달걀", status="active")]
+    ctx = said(shown(*FULL, safety=egg), "파프리카 들어간 반찬 추천해줘")
+
+    result = await propose_meal_candidates(
+        ctx, asked(generated=[generated_meal(ingredients=["파프리카", "계란"])])
+    )
+
+    assert result.success  # 거절이 아니다 — 모델에게 사유를 돌려주지 않는다
+    assert ctx.state.blocked_keys == {"파프리카볶음"}
+    assert ctx.state.picks == ()
+
+
+async def test_조건_불일치로_두_번_거절되면_조건_없는_요청으로_돌려_레시피북_추천으로_끝낸다() -> (
+    None
+):
+    # 모델이 요리 이름을 재료로 적는 등 조건을 못 맞추면 루프에 갇혀 0개로 끝나지 않게 한다
+    ctx = said(shown(*FULL, exhausted=True), "파프리카 들어간 반찬 추천해줘")
+    wrong = asked(candidates=[pick("두부조림", evidence=[])])
+
+    first = await propose_meal_candidates(ctx, wrong)
+    second = await propose_meal_candidates(ctx, wrong)
+    third = await propose_meal_candidates(ctx, wrong)
+
+    assert not first.success and not second.success
+    assert third.success  # 조건을 지키지 못한 채 요청 기반이라 말하지 않고 지금처럼 낸다
+    (picked,) = ctx.state.picks
+    assert picked.draft.requested is False
+    assert picked.draft.reason != "요청하신 조건을 바탕으로 골랐어요."
+
+
+async def test_조건_불일치가_한_번이면_계속_조건을_건다() -> None:
+    ctx = said(shown(*FULL, exhausted=True), "파프리카 들어간 반찬 추천해줘")
+
+    await propose_meal_candidates(ctx, asked(candidates=[pick("두부조림", evidence=[])]))
+    retry = await propose_meal_candidates(ctx, asked(generated=[generated_meal()]))
+
+    assert retry.success
+    assert ctx.state.picks[0].draft.requested is True
+
+
+NUT = [SafetyEntry(kind="allergy", label="견과류", status="active")]
+NUT_YOGURT = generated_meal(
+    "견과류요거트", main_ingredients=["견과류"], ingredients=["견과류", "요거트"]
+)
+
+
+async def test_요청한_재료가_알레르기와_겹치면_생성_후보를_받지_않고_사유에_음식_이름이_없다() -> (
+    None
+):
+    # 견과류 알레르기 아이의 "견과류 들어간 메뉴" — 생성 메뉴는 전부 필터에 걸린다. 받아서 빼면
+    # 재호출 제외 목록으로 그 이름이 모델에게 다시 가고, 모델은 또 견과류 메뉴를 쓴다(T49)
+    ctx = said(shown(*FULL, safety=NUT, exhausted=True), "견과류 들어간 메뉴 추천해줘")
+
+    result = await propose_meal_candidates(ctx, asked(food="견과류", generated=[NUT_YOGURT]))
+
+    assert not result.success
+    assert result.error is not None
+    assert "1번 후보" in result.error["message"]
+    assert "견과류" not in result.error["message"]
+    assert ctx.state.blocked_keys == set()
+    assert ctx.state.picks == ()
+
+
+async def test_요청한_재료가_알레르기와_겹치면_조건_없이_후보_목록에서_고른다() -> None:
+    ctx = said(shown(*FULL, safety=NUT, exhausted=True), "견과류 들어간 메뉴 추천해줘")
+
+    result = await propose_meal_candidates(
+        ctx, asked(food="견과류", candidates=[pick("두부조림", evidence=[])])
+    )
+
+    assert result.success  # 재료 조건(견과류)을 걸지 않는다 — 걸면 고를 수 있는 메뉴가 없다
+    (picked,) = ctx.state.picks
+    assert picked.draft.requested is False
+    assert ctx.state.request_misses == 0

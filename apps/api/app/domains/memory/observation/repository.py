@@ -8,11 +8,12 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.memory.observation.models import (
+    GONE_STATUSES,
     ObservationActivity,
     ObservationEducation,
     ObservationFood,
@@ -132,12 +133,13 @@ async def set_observation_status(
     observation_id: uuid.UUID,
     status: ObservationStatus,
 ) -> ObservationRecord | None:
-    """교정의 once_only/wrong 결과만 반영한다. 이력·성향 재계산은 호출자가 묶는다.
+    """교정의 once_only 결과(stand_alone)만 반영한다. 이력·성향 재계산은 호출자가 묶는다.
 
+    inactive 는 더 만들지 않는다 — 기록용 wrong 은 기록 지우기로 바꿨다 (#736).
     지운(deleted) 행은 교정 대상이 아니라 None 이다.
     """
     status = ObservationStatus(status)
-    if status not in {ObservationStatus.STAND_ALONE, ObservationStatus.INACTIVE}:
+    if status is not ObservationStatus.STAND_ALONE:
         raise ValueError("교정으로 설정할 수 없는 observation 상태다")
     resolved = ObservationDomain(domain)
     model = _MODEL_BY_DOMAIN[resolved]
@@ -156,12 +158,10 @@ async def count_active_observations(
     child_id: uuid.UUID,
     period_start: date,
     period_end: date,
-    exclude_health: bool = False,
     statuses: Collection[ObservationStatus] = (ObservationStatus.ACTIVE,),
 ) -> ActiveObservationCounts:
     """홈의 전체 수와 지정 기간 겹침 수. 종료일은 열린 경계다.
 
-    exclude_health — 첫 배포 범위에서 건강 기록을 세지 않는다 (#259).
     statuses — 셀 상태. 기본은 active 만이다. deleted 는 받지 않는다.
     """
     wanted = sorted({ObservationStatus(s).value for s in statuses})
@@ -176,7 +176,6 @@ async def count_active_observations(
                 "child_id": child_id,
                 "period_start": period_start,
                 "period_end": period_end,
-                "exclude_health": exclude_health,
                 "statuses": wanted,
             },
         )
@@ -241,7 +240,8 @@ async def page_observations(
     statuses 를 주면 status 대신 그 상태들을 합쳐서 본다. deleted 는 목록 필터로 열지 않는다.
     보호자에게 보이지 않는 상태다.
 
-    q 는 raw_text · subject 부분 일치(대소문자 무시)다. `%` · `_` · `\\` 는 글자 그대로 본다.
+    q 는 raw_text · subject 부분 일치(대소문자 무시)다. 건강 기록은 약 이름 · 증상이 subject 자리다.
+    `%` · `_` · `\\` 는 글자 그대로 본다.
     offset 은 앞에서 건너뛸 건수다 — 번호 쪽(page)을 쓰는 목록 API 가 준다. cursor 와 같이 줄 수
     없다(어느 쪽을 따를지 모호하다). 캘린더처럼 cursor 로 끝까지 도는 호출은 offset 을 안 준다.
     """
@@ -333,7 +333,7 @@ async def list_active_refs_by_affinity(
 ) -> dict[uuid.UUID, list[tuple[ObservationDomain, uuid.UUID]]]:
     """기억마다 묶인 active 관찰의 (도메인, id). 최근 관찰이 앞이다.
 
-    기억 카드의 "지금까지 N번" 과 근거 목록이 쓴다. 집계에서 빠지는 stand_alone · inactive 는
+    기억 카드의 "지금까지 N번" 과 근거 목록이 쓴다. 집계에서 빠지는 stand_alone · deleted 는
     세지 않는다 — Curator 가 세는 것과 같은 기준이어야 카드 숫자가 상태와 어긋나지 않는다.
     `domains` 를 주면 그 관찰 표만 본다 — 기억은 자기 도메인의 관찰만 묶이므로 결과는 같고
     조회만 준다. 없으면 세 표를 다 본다.
@@ -417,13 +417,18 @@ def _to_record(domain: ObservationDomain, row: Any) -> ObservationRecord:
 
 
 def _not_deleted(model: type[Any]) -> Any:
-    """지운 행은 조회·수정·교정 어디에도 걸리지 않는다."""
-    return model.status != ObservationStatus.DELETED
+    """지운 행(남은 inactive 포함 · `GONE_STATUSES`)은 조회·수정·교정 어디에도 걸리지 않는다.
+
+    응답 status 에 inactive 가 없어서, 남은 inactive 를 여기서 거르지 않으면 상세 · 지난 대화 ·
+    삭제 카드가 응답을 못 만들고 500 이 된다.
+    """
+    return model.status.notin_(GONE_STATUSES)
 
 
 # -- 필드 검증 --
 
-# status 는 set_observation_status(교정)와 delete_observation(삭제)만 쓴다
+# status 는 set_observation_status(교정)와 store 의 delete_observation(삭제)만 쓴다.
+# 지우기는 store 하나다 — 아이 잠금 · 검색 벡터 비우기 · 기억 재계산이 같이 가야 한다 (#736)
 _MANAGED_FIELDS = frozenset(
     {
         "id",
@@ -536,40 +541,6 @@ async def update_observation(
         .returning(model)
     )
     return _to_record(resolved, row) if row is not None else None
-
-
-async def delete_observation(
-    session: AsyncSession,
-    *,
-    domain: ObservationDomain | str,
-    child_id: uuid.UUID,
-    observation_id: uuid.UUID,
-) -> bool:
-    """행과 원문은 남기고 status 만 deleted 로 바꾼다.
-
-    이미 지운 행은 대상이 아니라 False 다.
-    soft delete 라 FK CASCADE 가 발동하지 않으므로, Curator 보류 기록(observation_link_hold)을
-    코드에서 직접 지운다.
-    """
-    resolved = ObservationDomain(domain)
-    model = _MODEL_BY_DOMAIN[resolved]
-    result = await session.scalar(
-        update(model)
-        .where(model.id == observation_id, model.child_id == child_id, _not_deleted(model))
-        .values(status=ObservationStatus.DELETED)
-        .returning(model.id)
-    )
-    if result is not None:
-        # Curator 보류 기록 정리 — soft delete 에서 CASCADE 가 안 먹히므로 코드가 지운다
-        from app.domains.memory.observation.models import ObservationLinkHold
-
-        await session.execute(
-            delete(ObservationLinkHold).where(
-                ObservationLinkHold.domain == resolved.value,
-                ObservationLinkHold.observation_id == observation_id,
-            )
-        )
-    return result is not None
 
 
 _COUNT_ACTIVE_SQL = text(

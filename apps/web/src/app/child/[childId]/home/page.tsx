@@ -21,6 +21,12 @@ import { HomeComposer } from "@/components/home-composer";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { PROMPT_PILL } from "@/components/agent-prompts";
 import { ScreenTransition } from "@/components/route-transition";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
+import {
+  TodayMedications,
+  TodayMedicationsFailed,
+  todayCourses,
+} from "@/components/today-medications";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -33,11 +39,22 @@ import { phaseOf, Swap } from "@/components/ui/swap";
 import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { useTodayChat } from "@/hooks/use-chat-history";
 import { useChildId } from "@/hooks/use-child-id";
+import { useLocationConsent } from "@/hooks/use-consents";
+import { useOnline } from "@/hooks/use-online";
 import { hasOpenQuestion, isBusy, sendLine, useConversation } from "@/stores/conversation";
 import { useDraftStore, useDraftText } from "@/stores/draft";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
-import { api, isApiError, qk, type HomeResponse, type Me } from "@/lib/api";
+import {
+  api,
+  isApiError,
+  qk,
+  type HomeResponse,
+  type Me,
+  type MedicationsResponse,
+} from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
+import { homeEmptyTour, homeTour } from "@/lib/tour/screens/home";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -46,6 +63,8 @@ import { FORWARD } from "@/lib/view-transition";
  * 🚨 **보내는 순간 04 대화 화면으로 넘어간다** (#226). 202 를 기다리지 않는다 — 말풍선이 먼저 서고
  *    요청은 뒤에서 나간다 (`stores/conversation.ts`). 그래서 **이 화면은 실패를 그리지 않는다.**
  *    보내기 실패 · 429 · 400 은 대화 화면의 그 말풍선 아래 한 곳에 선다.
+ *    예외는 **기기가 끊긴 것이 확실할 때**(`navigator.onLine === false`) 하나다 — 보내지도 넘어가지도 않고
+ *    입력창 위에 안내만 선다 (#865 · `send`). 보낸 것이 없으니 실패한 말풍선도 없다.
  *
  * 🚨 **아직 안 보낸 원문은 이 화면이 들고 있지 않다** (`stores/draft.ts`). 하단 네비가
  *    보내기 버튼 바로 아래에 다른 화면으로 가는 문을 세 개 열어서, 화면 로컬 상태로 두면
@@ -65,6 +84,8 @@ export default function HomePage() {
 
 function HomeScreen() {
   const childId = useChildId();
+  /** 위치 동의가 켜져 있으면 입력에 흐린 위치를 싣는다 (#593 · `lib/location.ts`). */
+  const shareLocation = useLocationConsent(childId);
   const router = useRouter();
 
   // 🚨 `useState` 가 아니다 — 네비로 다녀와도 쓰던 글이 살아 있어야 한다 (위 주석 · stores/draft.ts).
@@ -88,6 +109,17 @@ function HomeScreen() {
    */
   const [leaving, setLeaving] = useState<string | null>(null);
   const chatHref = `/child/${childId}/chat`;
+  /**
+   * 끊긴 채로 보내기를 눌렀다 (#865 · `send`). 안내는 연결 상태를 따라 바뀌고, 보내는 데 성공하면 걷힌다 —
+   * 다시 연결됐다고 바로 대신 보내지 않는다. 그 사이 글을 고쳤을 수 있고, 보내기는 보호자가 누른다.
+   */
+  const [offlineBlocked, setOfflineBlocked] = useState(false);
+  const online = useOnline();
+  const offlineNotice = !offlineBlocked
+    ? null
+    : online
+      ? "다시 연결됐어요. 이제 보내면 돼요."
+      : "인터넷 연결이 끊겨 있어요. 쓴 글은 그대로 있어요. 연결되면 다시 보내 주세요.";
 
   // 보내는 순간 넘어가야 해서 미리 받아 둔다. 안 받아 두면 첫 이동이 그 주소를 받는 동안 멈춘다.
   useEffect(() => {
@@ -99,6 +131,21 @@ function HomeScreen() {
     queryFn: () => api.get<HomeResponse>(`/children/${childId}/home`),
   });
 
+  /**
+   * 오늘 먹일 약 (#563 리뷰). 🚨 **홈 쿼리와 같이 시작한다** — 구역 안에서 부르면 홈 응답을 받은 뒤에야 나가서, 뜬 화면
+   *    한가운데에 구역이 뒤늦게 끼어들며 아래 카드를 밀었다 (디자인 시스템 §8). 홈은 둘 다 끝난 뒤 한 번에 그린다.
+   */
+  const medications = useQuery({
+    queryKey: qk.medications(childId),
+    queryFn: () => api.get<MedicationsResponse>(`/children/${childId}/medications`),
+    // 스토어 선언 때문에 꺼 둔 동안은 부르지 않는다 (`lib/store-policy.ts`). 데이터도 실패도 없어 구역이 서지 않는다.
+    enabled: MEDICATION_ENABLED,
+  });
+  /**
+   * 🚨 `isPending` 을 그대로 쓰지 않는다 — 꺼 둔 쿼리는 데이터가 없어 영영 `pending` 이라, 홈이 스켈레톤에 멈춘다.
+   */
+  const medicationsPending = MEDICATION_ENABLED && medications.isPending;
+
   // 🚨 이름은 스토어에 캐시하지 않는다. 개인정보는 화면이 필요할 때 Query 로 가져온다 (§3).
   const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
   const nickname = me.data?.children.find((c) => c.child_id === childId)?.nickname;
@@ -109,8 +156,16 @@ function HomeScreen() {
    *    대화 화면이고, 입구가 "답을 기다리는 질문이 있어요" 로 그리로 부른다.
    */
   function send() {
+    // 🚨 **끊긴 채로는 보내지도 넘어가지도 않는다** (#865). 넘어가는 순간 대화 화면을 받으러 가는데,
+    //    그 요청이 실패하면 Next 가 브라우저 전체 이동으로 바꿔서 앱 대신 브라우저 오류 화면이 뜨고,
+    //    메모리에만 있던 쓴 글과 말풍선이 같이 사라진다. 글은 입력창에 그대로 두고 안내만 세운다.
+    if (!navigator.onLine) {
+      setOfflineBlocked(true);
+      return;
+    }
     const line = text;
-    if (!sendLine(childId, line, { asReply: false, source: "home_input" })) return;
+    if (!sendLine(childId, line, { asReply: false, source: "home_input", shareLocation })) return;
+    setOfflineBlocked(false);
     // 셋이 한 번에 그려진다 — 입력창은 막 보낸 글자를 든 채로 대화 화면으로 넘어간다.
     setLeaving(line);
     clearDraft(childId);
@@ -118,6 +173,11 @@ function HomeScreen() {
   }
 
   const consentBlocked = isApiError(home.error, "consent_required") ? home.error : null;
+  /**
+   * 🚨 기록이 없는 홈과 있는 홈은 다른 투어다 (`lib/tour/screens/home.ts`). 받기 전에는 기록 있는 쪽으로
+   *    두지만 `ready` 가 꺼져 있어 뜨지 않는다.
+   */
+  const tour = home.data?.observation_count === 0 ? homeEmptyTour : homeTour;
 
   /**
    * 🚨 **버튼의 `prompt_key` 를 그대로 넘긴다** (#286). 빼면 "저녁" 버튼을 눌러도 Agent 는
@@ -146,6 +206,7 @@ function HomeScreen() {
               locked={leaving !== null}
               busyLabel={leaving !== null ? "보내는 중이에요" : "답을 기다리는 중이에요"}
               sentLine={leaving !== null}
+              notice={offlineNotice}
               promptsPending={home.isPending}
               lead={
                 // 🚨 **오늘 대화가 있을 때만 선다** — 빈 대화로 가는 문을 세우지 않는다. 앱을 다시 켜면 대화
@@ -168,7 +229,9 @@ function HomeScreen() {
                 🚨 이름 뒤에 "이" 를 붙이지 않는다 — 별명은 보호자가 정한 그대로 부르는 말이라
                 ("민준이" 처럼 이미 붙어 있거나 받침이 없으면) 붙인 글자가 이름을 바꾼다. */}
             <PageTitle>{nickname ? `오늘 ${nickname}` : "오늘"}</PageTitle>
-            {home.data ? (
+            {/* 🚨 빈 홈에서는 이 줄을 세우지 않는다 (#868) — 아래 빈 상태가 "쌓인 기록 0건" 을 말해서 0건이 두 번 섰다.
+                건수를 숨기는 것이 아니라 한 곳에서만 말한다 (`isEmptyHome`). */}
+            {home.data && isEmptyHome(home.data) ? null : home.data ? (
               <p className="text-body-sm text-ink-subtle mt-2">
                 지금까지 함께 쌓은 기록 {home.data.observation_count}건
               </p>
@@ -178,6 +241,7 @@ function HomeScreen() {
             ) : null}
           </div>
           {/* 설정은 자주 가는 곳이 아니라 아래 네비에 칸을 주지 않는다 — 제목 옆 아이콘 하나다. */}
+          <TourHelpButton tour={tour} />
           <IconButton
             label="설정"
             onClick={() => router.push(`/child/${childId}/settings`, FORWARD)}
@@ -187,8 +251,8 @@ function HomeScreen() {
         </header>
 
         {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
-        <Swap id={phaseOf(home)}>
-          {home.isPending ? (
+        <Swap id={medicationsPending ? "pending" : phaseOf(home)}>
+          {home.isPending || medicationsPending ? (
             <HomeBodySkeleton />
           ) : consentBlocked ? (
             // 🚨 403 consent_required 를 일반 실패로 그리면 "다시 시도" 만 누르게 된다 — 다시 시도해도
@@ -196,11 +260,11 @@ function HomeScreen() {
             <ConsentRequiredCard
               childId={childId}
               error={consentBlocked}
-              what="오늘 기록을 보여드릴 수 없어요."
+              what="오늘 기록을 보여 드릴 수 없어요."
             />
           ) : home.isError ? (
             <CardFailed>
-              <p>홈을 불러오지 못했어요. 적어주신 기록은 그대로 있어요.</p>
+              <p>홈을 불러오지 못했어요. 적어 주신 기록은 그대로 있어요.</p>
               <Button
                 variant="tertiary"
                 size="compact"
@@ -211,12 +275,28 @@ function HomeScreen() {
               </Button>
             </CardFailed>
           ) : home.data ? (
-            <HomeBody data={home.data} />
+            <HomeBody
+              data={home.data}
+              medications={
+                medications.isError ? (
+                  <Section label="오늘 먹일 약">
+                    <TodayMedicationsFailed onRetry={() => void medications.refetch()} />
+                  </Section>
+                ) : medications.data && todayCourses(medications.data).length > 0 ? (
+                  <Section label="오늘 먹일 약">
+                    <TodayMedications childId={childId} courses={todayCourses(medications.data)} />
+                  </Section>
+                ) : null
+              }
+            />
           ) : null}
         </Swap>
 
         {/* 🚨 고른 파일을 여기서 올리지 않는다. 08 이 업로드·스트림·저장을 통째로 소유하고,
           홈은 파일 하나를 스토어에 놓고 넘긴다 — 두 화면이 같은 흐름을 두 벌 갖지 않게. */}
+        {/* 막 보내고 대화로 넘어가는 순간에는 띄우지 않는다 (`leaving`). */}
+        <ScreenTour tour={tour} ready={home.isSuccess && leaving === null} />
+
         <PhotoSourceSheet
           open={photoSheetOpen}
           onClose={() => setPhotoSheetOpen(false)}
@@ -241,6 +321,7 @@ function HomeScreen() {
 function ChatEntryLink({ href, asking }: { href: string; asking: boolean }) {
   return (
     <Link
+      data-tour="chat-entry"
       href={href}
       {...FORWARD}
       className={cn(
@@ -259,16 +340,31 @@ function ChatEntryLink({ href, asking }: { href: string; asking: boolean }) {
   );
 }
 
-function HomeBody({ data }: { data: HomeResponse }) {
+/** 기록도 기억도 없는 홈. 제목 아래 건수 줄과 본문 빈 상태가 같은 조건으로 갈린다. */
+function isEmptyHome(data: HomeResponse): boolean {
+  return data.highlight === null && data.observation_count === 0;
+}
+
+/**
+ * @param medications 오늘 먹일 약 구역 (#563 리뷰). 🚨 **오늘 회차가 있을 때만** 홈 화면이 넘긴다 — 없으면 `null` 이고
+ *   아무것도 그리지 않는다. 기록이 0건인 빈 홈에서도 먹일 약은 있을 수 있어서 빈 상태 위에 따로 세운다.
+ */
+function HomeBody({ data, medications }: { data: HomeResponse; medications: ReactNode }) {
   // 🚨 기억이 0건이면 빈 상태다. 경보가 아니라 건수를 그대로 보여준다 (문서 §7).
-  if (data.highlight === null && data.observation_count === 0) {
+  if (isEmptyHome(data)) {
     return (
-      <EmptyState
-        icon={NotebookPen}
-        title="아래에 한 줄 적으면 여기에 쌓여요"
-        description="기록이 없으면 제안도 만들지 않아요. 지어내지 않으려고요."
-        count={0}
-      />
+      <div className="flex flex-col gap-6">
+        {medications}
+        <EmptyState
+          data-tour="empty"
+          icon={NotebookPen}
+          title="아래에 한 줄 적으면 여기에 쌓여요"
+          // 🚨 무엇을 적으면 되는지 예를 하나 든다 (#868). 빈 칸만 있으면 처음 온 보호자는 무엇을 쓸지 모른다.
+          //    예시는 지어낸 문장이다 — 실제 발화를 넣지 않는다 (최상위 §9).
+          description="‘오늘 저녁 브로콜리를 남겼어’처럼 있었던 일을 그대로 적어 주세요. 기록이 쌓이기 전에 받는 추천은 일반 추천이라고 적어 드려요."
+          count={0}
+        />
+      </div>
     );
   }
 
@@ -277,7 +373,7 @@ function HomeBody({ data }: { data: HomeResponse }) {
       <Counts week={data.week_count} upcoming={data.upcoming_count} />
 
       {data.today.length > 0 ? (
-        <Section label="오늘">
+        <Section label="오늘" tour="today">
           <Card className="flex flex-col gap-3">
             {data.today.map((item) =>
               item.kind === "meal" ? (
@@ -290,8 +386,10 @@ function HomeBody({ data }: { data: HomeResponse }) {
         </Section>
       ) : null}
 
+      {medications}
+
       {data.highlight ? (
-        <Section label="눈여겨볼 것">
+        <Section label="눈여겨볼 것" tour="highlight">
           <Card tone="accent">
             <div className="flex items-start gap-3">
               <IconTile icon={Repeat} />
@@ -348,9 +446,18 @@ function CountSkeleton() {
 }
 
 /** 섹션 제목. 🚨 브랜드색 라벨이라 화면에 초록이 규칙적으로 들어온다 (문서 §2-2 "canvas 위 브랜드 텍스트"). */
-function Section({ label, children }: { label: string; children: ReactNode }) {
+function Section({
+  label,
+  tour,
+  children,
+}: {
+  label: string;
+  /** 화면 투어가 비추는 자리 (`lib/tour/screens/home.ts`). */
+  tour?: string;
+  children: ReactNode;
+}) {
   return (
-    <section>
+    <section data-tour={tour}>
       <h2 className="text-label text-brand">{label}</h2>
       <div className="mt-2">{children}</div>
     </section>

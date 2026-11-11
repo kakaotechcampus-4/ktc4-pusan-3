@@ -4,16 +4,17 @@
 실패해도 관찰은 이미 저장돼 있고, 벡터·연결이 안 된 관찰은
 다음 실행(list_unembedded / list_unlinked)이 자동으로 집는다.
 
-호출 시점: Memory 가 commit 된 직후. 러너(api/runs/runner.py `_curator_trigger`)가 이 함수를 감싼
+호출 시점: Memory 가 commit 된 직후. 러너(api/runs/runner.py `curator_trigger`)가 이 함수를 감싼
 콜백을 만들어 entrypoint 로 넘기고, pipeline 이 (child_id, 기준일) 로 부른다.
 """
 
 import asyncio
 import logging
 from datetime import date
+from time import monotonic
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from app.agents.curator.embedding.embed_step import TextEmbedder
 from app.agents.curator.embedding.judge import IdentityJudge
@@ -21,17 +22,19 @@ from app.agents.curator.embedding.linker import link_observations
 from app.domains.child.models import Child
 from app.domains.memory.curator.db_store import DbCuratorStore
 from app.domains.memory.curator.recompute import recompute_after_linking
+from app.domains.memory.profile.service import lock_child_memory
 from app.infra.db.session import async_session_factory
 
 logger = logging.getLogger(__name__)
 
-_CURATOR_LOCK_NS = 1
-"""pg_advisory_xact_lock(int4, int4) 의 첫 번째 인자.
-다른 기능이 advisory lock 을 쓸 때 다른 값을 준다."""
-
 # asyncio 는 태스크를 약하게만 잡는다. 여기 잡아두지 않으면 GC 가 도중에 거둬
 # Curator 가 조용히 사라진다 (runner.py 주석 참고).
 _background_tasks: set[asyncio.Task[None]] = set()
+
+
+def running_tasks() -> list[asyncio.Task[None]]:
+    """아직 도는 Curator 태스크. 종료 때 lifespan 이 끝까지 기다린다(drain, #882)."""
+    return [t for t in _background_tasks if not t.done()]
 
 
 async def _run_curator(
@@ -42,14 +45,14 @@ async def _run_curator(
 ) -> None:
     """별도 세션·트랜잭션에서 Curator 를 돌리고 recompute 한다."""
     async with async_session_factory() as session:
+        started = monotonic()
+        locked: float | None = None
         try:
             # 같은 아이의 동시 curator 실행을 직렬화한다.
             # xact_lock 이라 트랜잭션이 끝나면 자동으로 풀린다.
             # 두 int4 오버로드 — ns 로 curator 잠금과 다른 기능의 잠금이 겹치지 않는다.
-            await session.execute(
-                text("SELECT pg_advisory_xact_lock(:ns, :key)"),
-                {"ns": _CURATOR_LOCK_NS, "key": child_id.int % (2**31)},
-            )
+            await lock_child_memory(session, child_id)
+            locked = monotonic()
             # 잠금 대기 중 바뀐 생일도 반영한다. PATCH 자체를 잠그는 것은 아니다.
             birth_date = (
                 await session.execute(
@@ -77,6 +80,16 @@ async def _run_curator(
                 child_id,
                 type(exc).__name__,
             )
+        finally:
+            if locked is not None:
+                # 잠금을 쥔 시간 — 그동안 같은 아이의 관찰 수정 · 삭제가 기다린다 (#636).
+                # 길면 임베딩 · judge 를 잠금 밖으로 빼는 근거가 된다. 커밋 · 롤백까지 센다
+                logger.info(
+                    "curator 아이 잠금 child_id=%s wait_ms=%d held_ms=%d",
+                    child_id,
+                    (locked - started) * 1000,
+                    (monotonic() - locked) * 1000,
+                )
 
 
 def trigger_curator_background(

@@ -24,10 +24,14 @@ import { cn } from "@/lib/cn";
  * 🚨 **`is_stale` 인 프로필을 단독 근거처럼 보이게 두지 않는다** (NF-08). 6개월이 지났다는
  *    날짜 사실은 `state_reason` 이 말하고, 그래서 어떻게 되는지는 고정 문구가 말한다.
  */
-/** 상세 시트의 고치기 결과 줄도 이 표를 쓴다 — 같은 상태가 화면마다 다른 이름으로 불리지 않게. */
+/**
+ * 상세 시트의 고치기 결과 줄 · 07 필터도 이 표를 쓴다 — 같은 상태가 화면마다 다른 이름으로 불리지 않게.
+ * 🚨 **"확인됨" 이라고 부르지 않는다** (#868) — 부모가 "내가 확인했나?" 로 읽었다. 확인한 사람은 없고
+ *    서로 다른 날 반복된 횟수가 올린 것이다. 🚨 후보를 "한 번 봤어요" 로 부르지도 않는다 — 기록이 둘인 후보도 있다.
+ */
 export const STATE_LABEL: Record<AffinityState, string> = {
-  candidate: "후보",
-  confirmed: "확인됨",
+  candidate: "지켜보는 중",
+  confirmed: "여러 번 보였어요",
   archived: "보관됨",
 };
 
@@ -43,8 +47,8 @@ function polarityLabel(affinity: Affinity): string | null {
   if (affinity.state !== "confirmed") return null;
   if (affinity.polarity === 1) return "좋아해요";
   if (affinity.polarity === -1) return "안 좋아해요";
-  if (affinity.polarity === 0) return "반응이 갈려요";
   // confirmed 면 NOT NULL 이다. 비어 오면 지어내지 않고 줄을 세우지 않는다.
+  // 0 도 여기로 온다 — 서버 #847 부터 0 기억은 오지 않는다(#287). 그 전에 0 이 와도 줄만 세우지 않는다.
   return null;
 }
 
@@ -127,7 +131,7 @@ function AffinityCard({ affinity, onOpen }: { affinity: Affinity; onOpen: () => 
 
         {stale ? (
           <span className="text-caption text-ink-muted">
-            6개월이 지나서 이 기억만으로는 추천을 만들지 않아요.
+            6개월이 지나서 이 기억만으로는 추천하지 않아요.
           </span>
         ) : null}
       </span>

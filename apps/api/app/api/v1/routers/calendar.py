@@ -21,6 +21,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ErrorEnvelope
 from app.api.quota import KST, today_kst
+from app.api.v1.card_rows import event_out
 from app.api.v1.observation_outs import to_observation_outs
 from app.api.v1.routers.observations import LISTED_STATUSES, VISIBLE_DOMAINS
 from app.api.v1.schemas.calendar import (
@@ -30,22 +31,23 @@ from app.api.v1.schemas.calendar import (
     MyDiaryOut,
     SharedPhotoOut,
 )
-from app.api.v1.schemas.suggestions import CalendarEventOut, EventItemOut
 from app.domains.chat.repository import count_turns
 from app.domains.memory.observation.repository import (
     ObservationRecord,
     count_observations_by_day,
     page_observations,
 )
-from app.domains.schedule.models import Event, EventItem
+from app.domains.schedule.models import Event
 from app.domains.schedule.repository import (
     find_diary,
     list_diary_dates,
     list_events,
     list_items_by_event,
+    list_my_reminders,
     list_shared_photo_dates,
     list_shared_photos,
 )
+from app.domains.schedule.series import series_by_id
 
 router = APIRouter()
 
@@ -124,6 +126,10 @@ async def get_calendar_day(
         ends_after=_midnight(date),
     )
     items = await list_items_by_event(session, event_ids=[e.id for e in events])
+    reminders = await list_my_reminders(
+        session, parent_id=parent.parent_id, event_ids=[e.id for e in events]
+    )
+    series = await series_by_id(session, series_ids={e.series_id for e in events})
     records = await _observations_on(session, child_id=child.child_id, day=date)
     chats = await count_turns(
         session, parent_id=parent.parent_id, child_id=child.child_id, day=date
@@ -135,7 +141,10 @@ async def get_calendar_day(
             SharedPhotoOut(id=str(p.id), image_url=p.image_url, created_at=p.created_at)
             for p in photos
         ],
-        events=[_event_out(e, items.get(e.id, [])) for e in events],
+        events=[
+            event_out(e, items.get(e.id, []), reminders.get(e.id), series.get(e.series_id))
+            for e in events
+        ],
         observations=await to_observation_outs(session, records, today=today_kst()),
         chat_count=chats,
     )
@@ -174,27 +183,3 @@ async def _observations_on(
         if page.next_cursor is None:
             return records
         cursor = page.next_cursor
-
-
-def _event_out(event: Event, items: list[EventItem]) -> CalendarEventOut:
-    return CalendarEventOut(
-        id=str(event.id),
-        title=event.title,
-        event_type=str(event.event_type),
-        starts_at=event.starts_at.isoformat(),
-        ends_at=event.ends_at.isoformat() if event.ends_at else None,
-        all_day=event.all_day,
-        category=str(event.category),
-        created_by=str(event.created_by),
-        source_notice_id=str(event.source_notice_id) if event.source_notice_id else None,
-        source_refs=event.source_refs or [],
-        items=[
-            EventItemOut(
-                item_id=str(i.item_id),
-                item_name=i.item_name,
-                is_prepared=i.is_prepared,
-                prepared_at=i.prepared_at.isoformat() if i.prepared_at else None,
-            )
-            for i in items
-        ],
-    )

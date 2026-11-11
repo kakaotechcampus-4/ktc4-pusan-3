@@ -1,9 +1,10 @@
-"""tool 22개의 이름 · 호출 조건 · argument 모델 정의.
+"""tool 23개의 이름 · 호출 조건 · argument 모델 정의.
 
 언제 부르고 언제 부르지 않는지 tool의 경계를 적는다.
 """
 
 from app.agents.common.tool_schema import ToolDefinition
+from app.agents.memory.schemas.notice import NoticeQuery
 from app.agents.memory.schemas.observation import (
     ObservationActivityCreate,
     ObservationActivityUpdate,
@@ -17,18 +18,22 @@ from app.agents.memory.schemas.observation import (
     ObservationRoutineCreate,
     ObservationRoutineUpdate,
 )
+from app.agents.memory.schemas.proposal import ProposeDeleteArgs
 from app.agents.memory.schemas.schedule import (
     EventCreate,
     EventItemCreate,
     EventItemRef,
     EventItemUpdate,
     EventQuery,
-    EventRef,
     EventUpdate,
 )
 
+_SCOPE_NOTE = (
+    "대상이 반복 일정(query_event 결과에 series 가 있는 일정)이면 scope 를 정한다. "
+    "날짜를 집어 말했으면 one, 날짜 없이 그 반복 일정 자체를 말했으면 series 이고, "
+    "찾은 결과를 보고도 정해지지 않으면 묻는다."
+)
 _NEEDS_QUERY = "대상 id 를 모르면 먼저 조회 tool을 부른다. id를 지어내지 않는다."
-_CAN_DELETE = "기록 한 건을 통째로 지울 때도 이 tool 이다. status=deleted 만 넣는다."
 
 TOOL_DEFINITIONS: list[ToolDefinition] = [
     # observation_food
@@ -47,26 +52,31 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="update_observation_food",
-        description=f"이미 저장된 음식 기록의 내용을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
+        description=f"이미 저장된 음식 기록의 내용을 고친다. {_NEEDS_QUERY}",
         args=ObservationFoodUpdate,
     ),
     # observation_health
     ToolDefinition(
         name="create_observation_health",
         description=(
-            "관찰된 증상이나 컨디션을 기록한다. 발화에 드러난 것만 담고 원인을 추정하지 않는다. "
+            "관찰된 증상이나 컨디션, 이미 먹인 약을 기록한다. 발화에 드러난 것만 담고 원인을 "
+            "추정하지 않는다. 증상과 먹인 약을 같이 말했으면 이 tool 한 번에 같이 넣는다. "
             "알레르기·만성질환 등록에는 쓰지 않는다 — 그건 보호자가 직접 입력한다."
         ),
         args=ObservationHealthCreate,
     ),
     ToolDefinition(
         name="query_observation_health",
-        description=f"저장된 증상 기록을 날짜나 키워드로 찾는다. {_NEEDS_QUERY}",
+        description=(
+            "저장된 증상 · 먹인 약 기록을 날짜나 키워드로 찾는다. "
+            "결과의 kind 가 symptom 이면 증상, medication 이면 먹인 약 기록이다. "
+            f"{_NEEDS_QUERY}"
+        ),
         args=ObservationQueryArgs,
     ),
     ToolDefinition(
         name="update_observation_health",
-        description=f"이미 저장된 증상 기록을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
+        description=f"이미 저장된 증상 기록을 고친다. {_NEEDS_QUERY}",
         args=ObservationHealthUpdate,
     ),
     # observation_education
@@ -85,7 +95,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="update_observation_education",
-        description=f"이미 저장된 학습 기록을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
+        description=f"이미 저장된 학습 기록을 고친다. {_NEEDS_QUERY}",
         args=ObservationEducationUpdate,
     ),
     # observation_activity
@@ -104,7 +114,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="update_observation_activity",
-        description=f"이미 저장된 활동 기록을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
+        description=f"이미 저장된 활동 기록을 고친다. {_NEEDS_QUERY}",
         args=ObservationActivityUpdate,
     ),
     # observation_routine
@@ -124,7 +134,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="update_observation_routine",
-        description=f"이미 저장된 생활 행동 기록을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
+        description=f"이미 저장된 생활 행동 기록을 고친다. {_NEEDS_QUERY}",
         args=ObservationRoutineUpdate,
     ),
     # event
@@ -134,6 +144,9 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
             "앞으로의 일정을 초안으로 만든다. 운동회·병원·참관수업처럼 날짜가 있는 예정에 쓴다. "
             "챙길 준비물이 같이 나오면 items 에 모두 넣는다. 이 tool 한 번으로 끝내고 "
             "준비물을 따로 부르지 않는다. "
+            "요일마다 되풀이되면 repeat_weekdays 와 repeat_until(끝 날짜)을 "
+            "같이 넣어 한 번에 만든다. "
+            "끝 날짜를 말하지 않았으면 부르지 말고 먼저 묻는다. "
             "이미 지난 일을 기록하는 건 observation이다."
         ),
         args=EventCreate,
@@ -142,7 +155,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="query_event",
         description=(
             "일정을 날짜 범위나 이름으로 찾는다. 준비물도 함께 돌려준다. "
-            "일정 수정·삭제, 준비물 추가 전에 id 를 얻으려면 먼저 이 tool 을 부른다."
+            "일정 수정 · 삭제 제안, 준비물 추가 전에 id 를 얻으려면 먼저 이 tool 을 부른다."
         ),
         args=EventQuery,
     ),
@@ -150,14 +163,10 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="update_event",
         description=(
             "이미 저장된 일정을 고친 초안을 만든다. 보호자가 확인해야 반영된다. "
-            f'끝나는 시각을 없애려면 clear=["ends_at"]을 쓴다. {_NEEDS_QUERY}'
+            f'끝나는 시각을 없애려면 clear=["ends_at"]을 쓴다. {_NEEDS_QUERY} '
+            f"{_SCOPE_NOTE} scope=series 는 오늘 이후 회차 전체를 고치는 초안이다."
         ),
         args=EventUpdate,
-    ),
-    ToolDefinition(
-        name="delete_event",
-        description=f"일정 한 건을 지운다. 연결된 준비물도 함께 삭제한다. {_NEEDS_QUERY}",
-        args=EventRef,
     ),
     # event_item
     ToolDefinition(
@@ -165,7 +174,8 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         description=(
             "이미 있는 일정에 챙길 준비물을 하나 추가한다. "
             "새 일정이면 create_event의 items를 쓴다. "
-            f"준비물이 여러 개면 준비물마다 따로 부르되, 한 응답에 모두 부른다. {_NEEDS_QUERY}"
+            f"준비물이 여러 개면 준비물마다 따로 부르되, 한 응답에 모두 부른다. {_NEEDS_QUERY} "
+            f"{_SCOPE_NOTE}"
         ),
         args=EventItemCreate,
     ),
@@ -173,13 +183,42 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="update_event_item",
         description=(
             "준비물 이름을 고치거나 챙김 여부를 표시한다. "
-            f"이름을 고치면 보호자 확인을 거치고, 챙김 표시는 바로 반영된다. {_NEEDS_QUERY}"
+            f"이름을 고치면 보호자 확인을 거치고, 챙김 표시는 바로 반영된다. {_NEEDS_QUERY} "
+            f"{_SCOPE_NOTE} 챙김 표시는 늘 그날 회차 하나라 scope 를 넣지 않는다."
         ),
         args=EventItemUpdate,
     ),
     ToolDefinition(
         name="delete_event_item",
-        description=f"준비물 한 개를 목록에서 뺀다. {_NEEDS_QUERY}",
+        description=(
+            f"준비물 한 개를 목록에서 뺀다. {_NEEDS_QUERY} {_SCOPE_NOTE} "
+            "scope=series 는 묶음 초안에서 그 준비물을 빼는 것이라 보호자가 확인해야 반영된다."
+        ),
         args=EventItemRef,
+    ),
+    # 기관 공지 (#832) — 읽기만 한다
+    ToolDefinition(
+        name="query_notice",
+        description=(
+            "기관에서 받은 공지(알림장 · 가정통신문 · 식단표 · 기관 문자)를 "
+            "날짜 · 낱말 · 종류로 찾는다. "
+            "공지 원문과 항목(일정 · 할 일 · 안내)의 모든 칸을 돌려준다. "
+            "원문은 내용을 확인하려고 읽는 자료이고 그대로 옮기지 않는다. "
+            "받은 날이나 항목의 날짜(행사 · 마감)가 그 기간에 걸리면 찾는다. "
+            "공지는 읽기만 하고 고치거나 지우지 않는다."
+        ),
+        args=NoticeQuery,
+    ),
+    # 삭제 제안 (#535)
+    ToolDefinition(
+        name="propose_delete",
+        description=(
+            "기록 · 일정을 지워 달라는 요청에 부른다. 지우지 않고 제안만 남긴다. "
+            "고른 것이 미리 체크되고, 같은 종류의 나머지 조회 결과도 체크 없이 카드에 보인다. "
+            "종류 전부는 all_kinds, 그중 빼기는 except_ids, 하나씩은 ids 로 고른다. "
+            "보호자가 카드에서 체크를 고치고 삭제 버튼을 눌러야 지워진다. "
+            "조회 tool 을 먼저 부른다. run 에 한 번만 부른다."
+        ),
+        args=ProposeDeleteArgs,
     ),
 ]

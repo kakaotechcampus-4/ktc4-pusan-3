@@ -139,7 +139,7 @@ export function SafetyScanReview({
       {/* 🚨 못 읽은 줄 수를 그대로 말한다 — "다 읽었다" 고 넘기면 빠진 항목을 모른다 (머리말 ㉣). */}
       {unreadableCount > 0 ? (
         <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field px-3 py-2">
-          읽지 못한 줄이 {unreadableCount}개 있어요. 검사지를 보고 직접 더해 주세요.
+          읽지 못한 줄이 {unreadableCount}개 있어요. 등록을 마친 뒤 프로필에서 직접 더해 주세요.
         </p>
       ) : null}
 
@@ -185,7 +185,7 @@ export function SafetyScanReview({
             value={picked.length > 0 ? `${picked.length}건` : "아직 없음"}
           />
           {savedCount > 0 ? <SummaryRow term="등록한 것" value={`${savedCount}건`} /> : null}
-          <SummaryRow term="출처" value="알레르기 검사지 · 보호자 확인" />
+          <SummaryRow term="출처" value="보호자가 확인한 알레르기 검사지" />
         </dl>
 
         {/* 🚨 **몇 건이 빠지는지 숫자로 말한다.** 확인 안 한 것이 조용히 사라지면
@@ -223,8 +223,8 @@ export function SafetyScanReview({
                 🚨 **색이 단독 신호가 아니다** — 무엇을 왜 다시 봐야 하는지를 글자가 말한다.
                 🚨 굵게 강조하지 않는다: 손글씨는 굵기 대비가 약해 이 크기에서 거의 안 보인다 (§4). */}
             <p className="text-body-sm text-caution mt-4">
-              등록하면 앞으로 식사 제안이 이 목록을 보고 걸러요. 사진에서 옮긴 값이라 이름이 실제와
-              다를 수 있으니, 검사지와 같은지 한 번만 더 봐 주세요.
+              등록하면 앞으로 식사를 추천할 때 이 목록에 있는 것을 빼요. 사진에서 옮긴 값이라 이름이
+              실제와 다를 수 있으니, 검사지와 같은지 한 번만 더 봐 주세요.
             </p>
 
             {/* 🚨 승인 게이트 ㉡ — 되돌릴 수 없는 확정이라 `btn-approve` 다. */}
@@ -253,7 +253,7 @@ export function SafetyScanReview({
       {/* 🚨 "식사 제안이 이 목록을 보고 걸러요" 는 승인 버튼 옆으로 올렸다 — 결정하는 자리에
           있어야 하는 말이고, 두 곳에 있으면 둘 다 흘려 읽게 된다. 여기 남는 것은 §2 의 약속이다. */}
       <p className="text-caption text-ink-subtle">
-        등록한 것은 AI 가 만들지도 고치지도 못해요. 보호자가 확인한 것만 저장돼요.
+        등록한 것은 AI가 만들지도 고치지도 못해요. 보호자가 확인한 것만 저장돼요.
       </p>
 
       <SafetyScanRowSheet

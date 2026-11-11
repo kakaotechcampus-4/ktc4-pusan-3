@@ -1,8 +1,8 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { hashKey, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { josa } from "es-hangul";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { STATE_LABEL } from "@/components/affinity-list";
 import { CORRECTED_OBSERVATION, CorrectionButtons } from "@/components/correction-buttons";
@@ -10,8 +10,9 @@ import { DomainMeta, ObservationMeta } from "@/components/domain-chip";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { phaseOf, Swap } from "@/components/ui/swap";
-import { api, isApiError, qk } from "@/lib/api";
+import { api, deleteObservation, isApiError, qk } from "@/lib/api";
 import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type {
   Affinity,
@@ -21,10 +22,14 @@ import type {
   CorrectionVerdict,
   Observation,
   ObservationDetailResponse,
+  ObservationHealth,
   Ref,
 } from "@/lib/api/types";
 import { isHealthObservation } from "@/lib/api/types";
+import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
 import { formatDay, formatTimeOfDay } from "@/lib/format";
+import { isMedicationRow, temperatureLabel } from "@/lib/health-observation";
+import { useMotionCue } from "@/lib/motion";
 
 /**
  * 07 상세 · 교정 시트 — 관찰과 프로필이 **같은 시트**를 쓴다.
@@ -38,6 +43,11 @@ import { formatDay, formatTimeOfDay } from "@/lib/format";
  *
  * 🚨 **고친 뒤 시트를 자동으로 닫지 않는다.** 무엇이 다시 계산됐는지(`cascade`)를 보여주는
  *    자리가 여기뿐이라, 닫아 버리면 부모는 자기가 뭘 바꿨는지 모른 채로 목록으로 돌아간다.
+ *
+ * 🚨 **기록 지우기는 고치기가 아니다** (#736 · #779). 서버는 응답에 `cascade` 를 싣지 않고(204), 지운 기록은
+ *    목록에서 빠지는 것으로 끝이 보인다 — 그래서 지우면 시트를 닫는다. 확인 띠는 승인 게이트가 아니라 확인 창이다
+ *    (최상위 §2 — 보호자가 직접 누르는 삭제). 그래도 `btn-danger` 다 — 기록을 지우면 묶인 기억이 다시 계산돼
+ *    그 한 건 밖까지 바뀐다 (디자인 시스템 §11 · 04 삭제 카드와 같은 이유).
  */
 export type MemoryTarget =
   { type: "observation"; observation: Observation } | { type: "affinity"; affinity: Affinity };
@@ -67,6 +77,20 @@ export function MemoryDetailSheet({
    * 🚨 시트를 연 순간의 값이 아니다 — 한 시트에서 두 번 고치면 두 번째의 직전은 첫 번째 응답이다.
    */
   const [stateBefore, setStateBefore] = useState<AffinityState | null>(null);
+  /** "기록 지우기" 를 눌러 확인 띠가 열려 있다. */
+  const [deleting, setDeleting] = useState(false);
+  /** 고치기 확인 패널이 열려 있다 (`CorrectionButtons` 의 `onAskingChange`). */
+  const [asking, setAsking] = useState(false);
+  /** 고치기 버튼 ↔ 지우기 확인 띠는 같은 자리의 **교체**다 (디자인 시스템 §8). */
+  const { ref: actionsRef, cue: cueActions } = useMotionCue<HTMLDivElement>();
+  /**
+   * 🚨 지우기의 키. 실패 뒤 다시 누르면 같은 키다 — 서버는 이미 지운 기록을 다시 지우면 404 라, 응답만 잃은
+   *    204 를 재생받으려면 키가 같아야 한다. 본문이 없어서 **기록에 묶는다** (`current(kind/id)`) —
+   *    시트는 기록을 바꿔 가며 다시 열리므로, 묶지 않으면 앞 기록의 키로 다음 기록을 지운다.
+   */
+  const deleteKey = useIdempotencyKey();
+  /** 지우는 중에 들어온 닫기 요청. 요청이 끝나면 닫는다 (아래 `requestClose`). */
+  const closeWhenSettled = useRef(false);
 
   const ref: Ref | null =
     target === null
@@ -104,6 +128,8 @@ export function MemoryDetailSheet({
             : target.affinity.state,
       );
       setResult(response);
+      // 성공하면 버튼 묶음이 새로 마운트돼 패널이 닫힌다 — 그 사이 걷었던 "닫기" 를 다시 세운다.
+      setAsking(false);
       // 교정 하나가 관찰·프로필·제안을 동시에 바꾼다. 아이 스코프를 통째로 무효화한다.
       void queryClient.invalidateQueries({ queryKey: qk.child(childId) });
     },
@@ -116,22 +142,89 @@ export function MemoryDetailSheet({
   });
   const alreadyCorrected = isApiError(correct.error, "already_corrected");
 
+  /**
+   * 지운 뒤 다시 받는다. 기록 목록 · 기억(기록 수가 다시 세진다) · 홈 기록 수 · 캘린더가 모두 아이 스코프 아래다.
+   * 🚨 지운 그 기록의 상세는 다시 받지 않는다 — 서버가 404 를 주고, 닫히는 동안의 시트가 "이 기록은 제안 근거에서
+   *    빠져 있어요" 로 한 번 바뀐다.
+   */
+  function refreshAfterDelete(target: Observation) {
+    const gone = hashKey(qk.observation(childId, target.kind, target.id));
+    void queryClient.invalidateQueries({
+      queryKey: qk.child(childId),
+      predicate: (query) => query.queryHash !== gone,
+    });
+  }
+
+  const remove = useMutation({
+    mutationFn: (target: Observation) =>
+      deleteObservation(
+        childId,
+        target.kind,
+        target.id,
+        deleteKey.current(`${target.kind}/${target.id}`),
+      ),
+    onSuccess: (_response, target) => {
+      deleteKey.rotate();
+      refreshAfterDelete(target);
+      close();
+    },
+    onError: (error, target) => {
+      // 🚨 404 는 실패가 아니다 — 이미 지워진 기록이다 (다른 보호자가 먼저 지웠거나, 응답만 잃은 앞의 요청).
+      //    목록을 다시 받아 그 줄을 뺀다. 다시 눌러도 같은 404 라 버튼은 거둔다.
+      if (isApiError(error, "not_found")) refreshAfterDelete(target);
+    },
+    onSettled: () => {
+      if (!closeWhenSettled.current) return;
+      closeWhenSettled.current = false;
+      close();
+    },
+  });
+
+  function askDelete(open: boolean) {
+    cueActions("fade");
+    if (!open) remove.reset();
+    setDeleting(open);
+  }
+
+  /**
+   * 🚨 **지우는 중에는 닫지 않는다** (10 설정의 연결 끊기 시트와 같은 처리). `onSuccess` 는 화면이 아니라 요청에 붙어 있어
+   *    닫은 뒤에도 돈다 — 그 사이 다른 기록을 열었으면 그 시트를 닫고, 같은 기록을 다시 열어 누르면 같은 키가 동시에 나간다.
+   *    `dismissible={false}` 는 승인 시트 전용이라 쓰지 않는다.
+   * ⚠️ 그래서 ESC 는 막지 못한다 — `<dialog>` 가 먼저 닫힌다. 그 요청을 버리면 부모의 `target` 이 남아 다음 줄을 눌러도
+   *    시트가 안 열리므로(`open` 이 그대로 true), 기억해 뒀다가 요청이 끝나면 닫는다(`onSettled`). 스크림과 닫기 버튼은 그동안 막힌다.
+   */
+  function requestClose() {
+    if (remove.isPending) {
+      closeWhenSettled.current = true;
+      return;
+    }
+    close();
+  }
+
   function close() {
     setResult(null);
     setStateBefore(null);
+    setDeleting(false);
+    setAsking(false);
     correct.reset();
+    remove.reset();
     onClose();
   }
 
   return (
     <BottomSheet
       open={target !== null}
-      onClose={close}
+      onClose={requestClose}
       title={target?.type === "affinity" ? "기억 상세" : "기록 상세"}
+      // 🚨 **확인 패널이 열린 동안은 "닫기" 를 걷는다** (#868). 패널에 "그만두기" 가 있어서, 한 창에 둘이 서면
+      //    어느 쪽이 무엇을 하는지 헷갈린다. 시트를 닫는 길은 스크림 · ESC 로 남는다.
       footer={
-        <Button variant="secondary" block onClick={close}>
-          닫기
-        </Button>
+        // ⚠️ 이미 지워진 기록(404)이면 확인 띠에 "그만두기" 가 없다 — 그때는 닫기를 남긴다.
+        asking || (deleting && !isApiError(remove.error, "not_found")) ? undefined : (
+          <Button variant="secondary" block disabled={remove.isPending} onClick={requestClose}>
+            닫기
+          </Button>
+        )
       }
     >
       {target === null ? null : (
@@ -142,24 +235,48 @@ export function MemoryDetailSheet({
             <AffinityDetail affinity={target.affinity} />
           )}
 
-          {/* 🚨 고친 기록에는 버튼을 세우지 않는다 — 서버가 `active` 기록만 받는다 (#277).
-              방금 이 시트에서 고쳤으면 아래 결과 줄이 같은 말을 하므로 안내도 겹쳐 세우지 않는다.
-              🚨 기억은 몇 번이든 다시 고칠 수 있다(서버가 막지 않는다) — 이 갈래는 기록에만 있다. */}
-          {observationStatus !== null && observationStatus !== "active" ? (
-            result ? null : (
-              <CorrectedNote status={observationStatus} />
-            )
-          ) : alreadyCorrected ? null : (
-            // 🚨 성공하면 **다시 세운다.** 확인 패널이 열린 채로 두면 방금 바꾼 것을 또 바꾸라고
-            //    묻는 화면이 된다 — 실패했을 때는 `correction.id` 가 그대로라 패널이 남고,
-            //    부모가 같은 자리에서 다시 누를 수 있다 (그게 재시도다).
-            <CorrectionButtons
-              key={result?.correction.id ?? "new"}
-              targetKind={target.type}
-              onSelect={(verdict) => correct.mutate(verdict)}
-              pending={correct.isPending ? (correct.variables ?? null) : null}
-            />
-          )}
+          <div ref={actionsRef}>
+            {observation && deleting ? (
+              <DeleteConfirm
+                hasAffinity={!isHealthObservation(observation) && observation.affinity !== null}
+                pending={remove.isPending}
+                error={remove.error}
+                onConfirm={() => remove.mutate(observation)}
+                onCancel={() => askDelete(false)}
+              />
+            ) : observationStatus !== null && observationStatus !== "active" ? (
+              // 🚨 고친 기록에는 고치기 버튼을 세우지 않는다 — 서버가 `active` 기록만 받는다 (#277).
+              //    방금 이 시트에서 고쳤으면 아래 결과 줄이 같은 말을 하므로 안내도 겹쳐 세우지 않는다.
+              //    🚨 **지우기는 선다** (#736) — 서버는 `deleted` 가 아닌 기록을 상태와 상관없이 지운다.
+              <div className="flex flex-col gap-3">
+                {result ? null : <CorrectedNote status={observationStatus} />}
+                <Button
+                  variant="secondary"
+                  size="compact"
+                  className="self-start"
+                  onClick={() => askDelete(true)}
+                >
+                  기록 지우기
+                </Button>
+              </div>
+            ) : alreadyCorrected ? null : (
+              // 🚨 성공하면 **다시 세운다.** 확인 패널이 열린 채로 두면 방금 바꾼 것을 또 바꾸라고
+              //    묻는 화면이 된다 — 실패했을 때는 `correction.id` 가 그대로라 패널이 남고,
+              //    부모가 같은 자리에서 다시 누를 수 있다 (그게 재시도다).
+              //    🚨 기억은 몇 번이든 다시 고칠 수 있다(서버가 막지 않는다) — 지우기는 기록에만 있다.
+              <CorrectionButtons
+                key={result?.correction.id ?? "new"}
+                targetKind={target.type}
+                onSelect={(verdict) => correct.mutate(verdict)}
+                pending={correct.isPending ? (correct.variables ?? null) : null}
+                onDelete={observation ? () => askDelete(true) : undefined}
+                // 🚨 건강 기록은 판정 없이 지우기만 선다 (#764) — 서버가 건강 기록 고치기를 400 으로 막는다.
+                //    "이번만 그랬어요" 는 기억 집계에서 빼는 일인데 건강 기록은 기억에 묶이지 않아서다.
+                deleteOnly={observation !== null && isHealthObservation(observation)}
+                onAskingChange={setAsking}
+              />
+            )}
+          </div>
 
           {/* 🚨 실패를 빨강으로 칠하지 않는다 (문서 §3). 409 는 실패가 아니라 이미 끝난 일이라
               "다시 눌러주세요" 를 쓰지 않는다 — 다시 눌러도 같은 409 다. */}
@@ -169,7 +286,7 @@ export function MemoryDetailSheet({
             </p>
           ) : correct.isError ? (
             <p className="text-body-sm text-ink-muted" role="status">
-              지금은 고치지 못했어요. 잠시 뒤에 다시 눌러주세요.
+              지금은 고치지 못했어요. 잠시 뒤에 다시 눌러 주세요.
             </p>
           ) : null}
 
@@ -209,14 +326,18 @@ function CascadeResult({
   return (
     <div className="bg-surface-muted rounded-field p-3.5" role="status">
       <p className="text-body-sm text-ink">
-        {josa(VERDICT_LABEL[result.correction.verdict], "으로/로")} 반영했어요.
+        {/* 🚨 라벨에 조사를 붙여 말하지 않는다 — "기록이 더 필요해요로 반영했어요" 가 됐다 (#815).
+            ⚠️ 기록 쪽 문장은 기록 교정이 `once_only` 하나뿐이라는 전제다 (`CorrectionButtons` 의 `VERDICTS.observation`).
+               판정이 늘면 `result.correction.verdict` 로 가른다. */}
+        {affinity ? "남긴 의견을 반영했어요." : "이번 한 번만 있던 일로 바꿨어요."}
       </p>
       {affinity && stateBefore ? (
         <div className="mt-1">
           <p className="text-caption text-ink-muted">
             {stateBefore === affinity.state
               ? "기억의 상태는 바뀌지 않았어요."
-              : `기억이 ${STATE_LABEL[stateBefore]}에서 ${josa(STATE_LABEL[affinity.state], "으로/로")} 바뀌었어요.`}
+              : // 🚨 상태 이름이 문장형이라("여러 번 보였어요") 조사를 붙여 잇지 않는다 (#868 · #815 와 같은 이유).
+                `이 기억은 이제 '${STATE_LABEL[affinity.state]}' 상태예요.`}
           </p>
           <p className="text-caption text-ink-muted">{affinity.state_reason}</p>
         </div>
@@ -255,12 +376,93 @@ function useObservationDetail(childId: string, observation: Observation | null) 
   });
 }
 
+/**
+ * 기록 지우기 확인 띠 (#736 · #779). 고치기의 확인 패널과 같은 자리 · 같은 모양이다.
+ *
+ * 🚨 **일어날 일만 적는다.** 목록에서 빠지고 제안의 근거로 쓰이지 않는 것은 서버가 지키는 사실이다
+ *    (`deleted` 를 목록 · 근거 · 검색이 모두 뺀다). 기억은 **묶인 기억이 있을 때만** 말한다 — 생활 기록처럼
+ *    묶인 기억이 없는 기록에 "다시 계산돼요" 를 쓰면 없는 일을 약속한다.
+ * 🚨 `btn-approve` 도 `caution` 도 쓰지 않는다 — 승인 게이트가 아니다 (최상위 §2).
+ * 🚨 실패를 빨강으로 칠하지 않는다. "기록은 그대로" 라고 단정하지 않는다 — 응답만 잃었으면 서버는 이미 지웠다.
+ */
+function DeleteConfirm({
+  hasAffinity,
+  pending,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  hasAffinity: boolean;
+  pending: boolean;
+  error: Error | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  // 🚨 다시 눌러도 같은 응답이 오는 실패다 — 버튼을 잠근다 (04 삭제 카드의 `stuckBy` 와 같다).
+  const denied = isApiError(error, "child_access_denied");
+
+  if (isApiError(error, "not_found")) {
+    return (
+      <div className="border-line rounded-card bg-surface-muted border p-4" role="status">
+        <p className="text-body text-ink">이미 지워진 기록이에요.</p>
+        <p className="text-body-sm text-ink-muted mt-1">목록에서도 빠져요.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-line rounded-card bg-surface-muted border p-4">
+      <div role="status">
+        <p className="text-body text-ink">이 기록을 지울까요?</p>
+        <p className="text-body-sm text-ink-muted mt-1">
+          {hasAffinity
+            ? "목록에서 빠지고 추천의 근거로도 쓰이지 않아요. 묶인 기억은 다시 계산돼요."
+            : "목록에서 빠지고 추천의 근거로도 쓰이지 않아요."}
+        </p>
+        {/* 🚨 **대화의 삭제 카드(`record-tabs-card.tsx`)와 같은 말을 한다** (#748). 지우는 길이 둘이고
+            서버가 하는 일은 같다 — 기록은 빠져도 지난 대화의 말풍선(`chat_turn.raw_text`)은 남는다.
+            한쪽에서만 말하면 어디서 지웠느냐에 따라 보호자가 아는 것이 달라진다. */}
+        <p className="text-body-sm text-ink-muted mt-1">
+          대화에 적은 말은 지난 대화에 그대로 남아요.
+        </p>
+        <p className="text-caption text-ink-subtle mt-2">지운 기록은 되살릴 수 없어요.</p>
+      </div>
+
+      {error ? (
+        <p className="text-body-sm text-ink-muted mt-3" role="status">
+          {denied
+            ? "이 아이의 기록을 지금은 지울 수 없어요."
+            : "지금은 지우지 못했어요. 잠시 뒤에 다시 눌러 주세요."}
+        </p>
+      ) : null}
+
+      <div className="mt-3 flex gap-2">
+        <Button
+          variant="danger"
+          size="compact"
+          className="flex-1"
+          disabled={pending || denied}
+          onClick={onConfirm}
+        >
+          {pending ? <Spinner /> : null}
+          {pending ? "지우는 중이에요" : "지우기"}
+        </Button>
+        <Button variant="tertiary" size="compact" disabled={pending} onClick={onCancel}>
+          그만두기
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** 이미 고친 기록을 열었을 때 버튼 자리에 서는 한 덩이. 무엇으로 고쳤고 그래서 어떻게 되는지. */
-function CorrectedNote({ status }: { status: "stand_alone" | "inactive" }) {
+function CorrectedNote({ status }: { status: "stand_alone" }) {
   const { label, note } = CORRECTED_OBSERVATION[status];
   return (
     <div className="bg-surface-muted rounded-field p-3.5">
-      <p className="text-body-sm text-ink">{josa(label, "으로/로")} 고친 기록이에요.</p>
+      <p className="text-body-sm text-ink">
+        ‘{label}’{josa.pick(label, "으로/로")} 고친 기록이에요.
+      </p>
       <p className="text-caption text-ink-muted mt-1">{note}</p>
     </div>
   );
@@ -325,8 +527,12 @@ function ObservationDetail({
                 </li>
               ))}
             </ul>
+          ) : isHealthObservation(observation) ? (
+            // 🚨 건강 기록은 고칠 수 없어서 근거에서 "빠질" 일이 없다 (#764). 빠졌다고 말하면 보호자가 무언가를
+            //    해서 뺀 것처럼 읽힌다 — 아직 쓴 추천이 없다는 사실만 말한다.
+            <p className="text-body-sm text-ink-muted mt-2">아직 이 기록을 쓴 추천이 없어요.</p>
           ) : (
-            <p className="text-body-sm text-ink-muted mt-2">이 기록은 제안 근거에서 빠져 있어요.</p>
+            <p className="text-body-sm text-ink-muted mt-2">아직 이 기록을 쓴 추천이 없어요.</p>
           )}
         </Swap>
       </section>
@@ -352,10 +558,16 @@ function ObservationDetail({
  *    `symptom` 은 **배열**이다 (apps/web/CLAUDE.md §4).
  * 🚨 여기 있는 값은 전부 보호자가 적은 것을 서버가 담은 것이다. 화면이 증상을 해석하거나
  *    심각도를 판단하지 않는다 — Health Agent 도 진단하지 않는다 (CLAUDE.md §2).
+ *    체온도 숫자와 잰 부위만 옮긴다 — 정상 범위 · 높다/낮다 · 색이 없다.
+ * 🚨 한 행 = 한 사건이다 (#551). 먹인 약 행은 증상이 비어 있고 `observed_time` 이 먹인 시각이다.
  */
-function HealthFields({ fields }: { fields: { symptom?: string[]; [key: string]: unknown } }) {
+function HealthFields({ fields }: { fields: ObservationHealth["domain_fields"] }) {
   const symptoms = fields.symptom;
+  const medicine = isMedicationRow(fields);
   const bodyPart = typeof fields.body_part === "string" ? fields.body_part : null;
+  const temperature = temperatureLabel(fields);
+  const measuredAt =
+    typeof fields.measured_at === "string" ? formatTimeOfDay(fields.measured_at) : null;
   const when =
     typeof fields.observed_time === "string" ? formatTimeOfDay(fields.observed_time) : null;
 
@@ -364,8 +576,11 @@ function HealthFields({ fields }: { fields: { symptom?: string[]; [key: string]:
       {symptoms && symptoms.length > 0 ? (
         <MetaRow label="증상">{symptoms.join(", ")}</MetaRow>
       ) : null}
+      {medicine ? <MetaRow label="먹인 약">{fields.medication_given}</MetaRow> : null}
+      {temperature ? <MetaRow label="체온">{temperature}</MetaRow> : null}
+      {measuredAt ? <MetaRow label="잰 시간">{measuredAt}</MetaRow> : null}
       {bodyPart ? <MetaRow label="부위">{bodyPart}</MetaRow> : null}
-      {when ? <MetaRow label="시간">{when}</MetaRow> : null}
+      {when ? <MetaRow label={medicine ? "먹인 시간" : "시간"}>{when}</MetaRow> : null}
     </>
   );
 }
@@ -392,8 +607,8 @@ function AffinityDetail({ affinity }: { affinity: Affinity }) {
           "프로필" 이 아니라 "기억" 이다 — 탭 이름과 카드 문구가 그렇게 부른다. */}
       {affinity.is_stale ? (
         <p className="text-body-sm text-ink-muted">
-          6개월이 지나서 이 기억만으로는 추천을 만들지 않아요. 요즘도 그렇다면 홈에서 한 줄 적어
-          주세요. 새로 기록되면 다시 추천에 써요.
+          6개월이 지나서 이 기억만으로는 추천하지 않아요. 요즘도 그렇다면 홈에서 한 줄 적어 주세요.
+          새로 기록되면 다시 추천에 써요.
         </p>
       ) : null}
     </div>

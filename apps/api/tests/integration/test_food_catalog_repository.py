@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.domains.food import repository
 from app.domains.food.models import MenuCatalog, RecipeCatalog
+from app.rules.menu_evidence import menu_evidence_id
 
 NOW = datetime(2026, 10, 14, tzinfo=UTC)
 LATER = datetime(2026, 10, 15, tzinfo=UTC)
@@ -142,6 +143,25 @@ async def test_내린_레시피도_행은_남는다(session):
 
     rows = {r.source_id: r.resolved for r in (await session.scalars(select(RecipeCatalog))).all()}
     assert rows == {"1": True, "2": False}
+
+
+async def test_후보_풀_레시피는_메뉴_근거_id_로_이름과_소스를_돌려준다(session):
+    # 05 가 근거 카드의 출처 기관을 소스로 고른다 (#510) — 이름만 돌려주면 소스를 알 수 없다
+    await repository.upsert_recipes(
+        session,
+        rows=[
+            recipe("1"),
+            recipe("2", source="nics_recipe"),
+            recipe("3", resolved=False),  # 후보 풀 밖
+        ],
+    )
+
+    found = await repository.resolved_recipe_names(session)
+
+    assert found == {
+        menu_evidence_id("mafra_recipe", "1"): repository.ResolvedRecipe("레시피1", "mafra_recipe"),
+        menu_evidence_id("nics_recipe", "2"): repository.ResolvedRecipe("레시피2", "nics_recipe"),
+    }
 
 
 async def test_보존할_번호가_비면_거절한다(session):

@@ -18,13 +18,13 @@
 | 패키지 관리 | uv |
 | 테스트 | pytest |
 | 린트·포맷 | ruff |
-| import 규칙 강제 | import-linter (CI, 예정 — #79 API CI 와 함께) |
+| import 규칙 강제 | 리뷰 (import-linter 는 아직 설정하지 않았다) |
 
 ---
 
 ## 레이어 경계
 
-import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설정이 생기기 전까지는 리뷰가 막는다.
+import-linter 설정은 아직 없다 — API CI(`ci-api.yml`)에도 들어 있지 않다. 지금은 리뷰가 막는다.
 
 ### `app/rules/`
 - **허용**: 표준 라이브러리만
@@ -45,12 +45,18 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
   | `domains/memory/curator/db_store.py` | `agents.curator.embedding.ports` |
   | `domains/memory/curator/recompute.py` | `agents.curator.embedding.linker`(`LinkResult` 타입) |
   | `domains/memory/curator/trigger.py` | `agents.curator.embedding.embed_step` · `.judge`(Protocol) · `.linker.link_observations`(실행) |
-  | `domains/safety/agent_reader.py` | `agents.common.ports`(`SafetyLookupError`) · `agents.food.store.ports` · `agents.activity.store.ports`(`SafetyEntry`) |
+  | `domains/safety/agent_reader.py` | `agents.common.ports`(`SafetyLookupError`) · `agents.food.store.ports` · `agents.activity.store.ports` · `agents.growth.store.ports`(`SafetyEntry`) · `agents.health.store.ports`(`HealthSafetyEntry`) |
   | `domains/food/agent_reader.py` | `agents.food.store.ports`(`MenuCatalogRow` · `RECIPE_SOURCES`) |
+  | `domains/daycare_meal/agent_reader.py` | `agents.food.store.ports`(`DaycareMealRow` · `DaycareLookupError`) |
+  | `domains/child/agent_reader.py` | `agents.growth.store.ports`(`GrowthMeasurement`) · `agents.health.store.ports`(`ChildBasic`) |
+  | `domains/medication/agent_reader.py` | `agents.health.store.ports`(`MedicationCourse` · `MedicationDose` · `DoseSlot`) |
   | `domains/memory/profile/agent_reader.py` | `agents.common.evidence`(`AffinityRow`) |
   | `domains/place/agent_reader.py` | `agents.activity.store.ports`(`PlaceRow` · `CoarseLocation` · `UpstreamUnavailable` · `PLACE_MAX_RADIUS_M` · `PLACE_TOP_K`) · `agents.activity.schemas.common`(`PlaceCategory`) |
   | `domains/place/models.py` | `agents.activity.store.ports`(`PLACE_SOURCES` — source CHECK 를 포트와 같은 값으로 만든다) |
 
+  - Agent 가 직접 쓰는 것은 `DbMedicationStore.stop_course`(보호자가 확인한 복약 중단 UPDATE) 하나뿐이다.
+    복약 어댑터에 다른 쓰기 메서드를 두지 않는다 — 명세의 "Agent role 은 중단 UPDATE 만" 을 DB 역할
+    분리 없이 어댑터 모양으로 대신하는 것이다.
   - `trigger.py` 만 타입이 아니라 agents 의 함수를 부른다. Curator 판정 흐름은 agents 몫이고 세션 ·
     트랜잭션 · advisory lock 은 domains 몫이라 여기서 만난다. 실행을 api 로 옮기려면 api 가
     entrypoint 밖의 agents 를 import 해야 해서 지금은 이 자리에 둔다.
@@ -58,7 +64,12 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
 ### `app/agents/`
 - **허용**: domains, rules, providers, core
   — core 는 역할별 LLM 설정(`core/agent_config.py`), 일정 초안 payload 계약(`core/event_draft.py`),
-    날씨 원문 계약(`core/weather_raw.py`), 화면 딥링크 값(`core/deeplinks.py` — api 의 05 guard · 동의 오류와 같이 쓴다)을 쓴다
+    날씨 원문 계약(`core/weather_raw.py`), 화면 딥링크 값(`core/deeplinks.py` — api 의 05 guard · 동의 오류와 같이 쓴다),
+    LLM 사용량 기록(`core/llm_usage.py` — 호출은 `record`, 보호자 · run 귀속은 api 가 `attribute`. providers 도 같이 쓴다),
+    프롬프트 지문의 해시 규칙(`core/prompt_hash.py` — 표준 라이브러리만. providers 의 OCR 두 곳도 같은 규칙을 써야 해서 core 에 둔다, #770)을 쓴다
+- 🚨 **프롬프트 · tool spec · 응답 스키마를 바꾸면** 그 프롬프트의 평가 문서(`docs/agents/eval/<이름>_EVAL.md`) 측정 이력에
+  바꾸기 전 · 후 행을 더한다. 지문(`agents/common/prompt_fingerprint.py`)이 달라지면 `test_prompt_history.py` 가 실패한다.
+  모델에 system 메시지를 보내는 새 자리를 만들면 `register_prompt` 와 평가 문서, `test_prompt_call_sites.py` 의 표를 같이 더한다
 - **금지**: fastapi, infra 직접 접근
 - ⚠️ **내부 구조는 이시하(AI Owner)가 정한다.** 이 문서는 경계만 정하고 하위 폴더를
   미리 만들지 않았다 (`CLAUDE.md` §8 "기능 내부 기술 결정 → 해당 기능 Owner").
@@ -91,16 +102,21 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
 - **허용**: core, 사용하는 외부 SDK·HTTP 클라이언트
 - **금지**: api, domains, agents, infra import
 - Agent 포트가 받는 모양을 integration 이 만들어야 하면 그 모양은 `core` 에 둔다 — 날씨 어댑터는
-  `core/weather_raw.py` 의 원문 DTO 를 싣고, 해석은 Activity `weather.py` 가 한다.
+  `core/weather_raw.py` 의 원문 DTO 를 싣고, 해석은 Activity `weather.py` 가 한다. 병원 어댑터
+  (`integrations/hospital/`)도 `core/hospital_raw.py` 를 싣고 "지금 진료 중" 은 Health 가 판정한다.
 - 인증 라우터는 카카오 integration을 호출할 수 있지만, 카카오 응답 모양을 다른 도메인으로
   퍼뜨리지 않는다.
 
 ### `app/providers/`
 - 외부 모델 SDK 전용
+- **허용**: core — 설정(`core/config.py`)은 이미 쓰고 있다. 모델 호출은 `core/llm_usage.py` 의 `record` 로 사용량을 남긴다.
+  호출 로그의 프롬프트 지문은 `core/prompt_hash.py` 로 만든다 — agents 의 지문 등록과 같은 값이어야 한다
 - **금지**: domains, agents import
 
 ### `app/workers/`
 - **허용**: domains, rules, core
+  — 그리고 배치가 부르는 외부 발송 integration(`discord` · `fcm`)과, 실행 진입점(`__main__`)의
+    DB 세션(`infra/db/session`). 정리 배치(`cleanup.py`)와 일정 알림 발송(`reminder_dispatch.py`)이 쓴다
 - **금지**: agents import
   — 승인 없는 알림 발송 경로를 구조적으로 차단 ([루트 §2 실행](../../CLAUDE.md#실행))
 
@@ -139,6 +155,22 @@ raw SQL 대상 예시: 승격 판정 집계, observation 4테이블 병합 페�
 - `--autogenerate` 결과를 확인 없이 커밋하지 않는다.
   자동 인식 안 되는 것: `enum`, `CHECK` 제약, `daterange`, `vector` 타입, `GRANT`
 - 첫 revision 에 `CREATE EXTENSION IF NOT EXISTS vector` 를 직접 넣는다.
+- 🚨 **새 표를 만들면 같은 마이그레이션에서 삭제 트리거를 건다** (#758) — 트리거가 없는 표에서 지운 행은
+  백업을 복원하면 되살아난다. 표를 만든 뒤 한 줄(`CREATE TRIGGER deletion_log AFTER DELETE ON "새_표" FOR EACH ROW
+  EXECUTE FUNCTION log_deletion()`), downgrade 에는 표를 지우기 전에 `DROP TRIGGER`. 걸지 않을 표는
+  `app/domains/deletion_log/models.py` 의 `NOT_LOGGED` 에 이유와 함께 적는다 — 둘 다 안 하면
+  `tests/integration/test_deletion_log.py` 가 실패한다. 행을 지우지 않고 상태만 바꾸는 "삭제"(`status='deleted'` 같은)를
+  새로 만들면 같은 파일의 `STATUS_DELETES` 와 마이그레이션의 상태 트리거에 같이 더한다 — **둘 다 빠뜨리면 테스트가
+  잡지 못한다.** 상세는 그 파일 머리말.
+- 🚨 **expand-only** — 배포 롤백은 DB 를 안 되돌려서, 직전 코드가 새 스키마에서 돌아야 한다.
+  CI 의 `python -m scripts.check_expand_only` 가 `upgrade()`(와 거기서 부르는 같은 파일 함수)의 컬럼 · 테이블 삭제,
+  이름 바꾸기, NOT NULL 조이기 · 기본값 떼기, `server_default` 없는 NOT NULL 컬럼 추가, CHECK 교체, 넓히기가 아닌
+  `type_` 바꾸기를 막는다. 이런 변경은 배포 두 번에 나누고, 두 번째 마이그레이션의 **그 연산 바로 위 줄**에
+  `# contract: #<앞 배포 PR 번호>` 를 적으면 그 연산만 통과한다. CHECK 에 값을 더하기만 하는 것처럼 넓히기면 `# expand-ok: <이유>`.
+  🚨 contract PR 은 **앞 PR 이 prod(main) 에 배포된 뒤에** develop 에 머지한다 — 둘이 한 번에 prod 에 실리면 롤백이 깨진다.
+  검사 대상은 스크립트의 `BASELINE` 과 그 조상을 뺀 revision 이다 — 규칙을 넓힐 때만 prod DB 의 `alembic current` 로 올린다.
+  헬퍼 안에 단 `# expand-ok:` 는 그 헬퍼의 모든 호출에 통하니, 넓히기 표시를 단 헬퍼는 넓히기에만 쓴다.
+  상세: [`docs/ops/deploy-v1.md`](../../docs/ops/deploy-v1.md) 롤백 절.
 
 ---
 

@@ -1,11 +1,16 @@
 {
   "name": "@icatch/mobile",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
     "expo": "57.0.28",
-    "expo-constants": "~57.0.21",
+    "expo-build-properties": "~57.0.22",
+    "expo-constants": "~57.0.22",
     "expo-dev-client": "~57.0.20",
+    "expo-location": "~57.0.22",
+    "expo-notifications": "~57.0.24",
+    "expo-speech-recognition": "57.1.1",
+    "expo-splash-screen": "~57.0.10",
     "expo-status-bar": "~57.0.1",
     "expo-web-browser": "~57.0.3",
     "react": "19.2.3",

@@ -6,33 +6,52 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from app.agents.activity.readouts import CAUTION_NON_FOOD_ALLERGY, READOUTS
+from app.agents.activity.readouts import (
+    CAUTION_NON_FOOD_ALLERGY,
+    READOUTS,
+    REQUEST_FOOD_AGE_BLOCK,
+    REQUEST_FOOD_CONFLICT,
+)
 from app.agents.activity.rules import is_recent_duplicate
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import SafetyEntry
+from app.agents.common.age import stage_of
 from app.agents.common.allergy import (
-    SINGLE_CHAR_NAMES,
+    LabelBook,
     allergy_book,
+    allergy_related_table,
     for_sentences,
     non_food_allergies,
     read_label,
+    read_label_pieces,
+    split_label,
 )
-from app.agents.common.reference import allergen_terms, hazard_terms
+from app.agents.common.food_safety import menu_codes
+from app.agents.common.food_words import (
+    ITEM,
+    SENTENCE,
+    FoodVerdict,
+    WordRules,
+    check_foods,
+    food_phrases,
+)
+from app.agents.common.readout import Readout
+from app.agents.common.reference import AgeRule, allergen_terms, hazard_terms
 from app.rules.allergen import ALLERGEN_NAMES
-from app.rules.term_match import Term, match_fields, normalize
+from app.rules.particle import topic_particle
+from app.rules.term_match import Term, match_fields
 
 # 알레르기 사전(allergen_terms.yaml)은 메뉴 이름용이라 놀이 문장에 그대로 대조하면 다른 뜻으로
-# 걸린다. Activity 는 대조할 때만 아래 두 규칙으로 걸러 쓴다 — 보호자가 적은 이름을 읽을 때는
-# 사전을 그대로 쓴다("에그" 로 등록하면 난류다).
-#
-# 한 글자 이름은 허용 목록(`common/allergy.SINGLE_CHAR_NAMES` — 잣 · 콩 · 깨 · 쑥 · 쌀 · 팥 · 꽃)만
-# 그 guard 와 함께 쓴다. Growth 의 등록 이름 대조와 같은 목록이다.
-# 두 글자 이상이어도 놀이 문장에서 다른 뜻으로 읽히는 별칭 (#261 리뷰 — "플라스틱 포크" ·
-# "에그 쉐이커" · "밀크 카톤" · "피치색 물감" · "전복 모양" · "돼지저금통")
-EXCLUDED_ALIASES = frozenset({"포크", "에그", "밀크", "피치", "전복", "돼지"})
+# 걸린다. 대조할 때만 `common/allergy.for_sentences` 로 거르고 문장용 guard 를 더해 쓴다 — 보호자가
+# 적은 이름을 읽을 때는 사전을 그대로 쓴다("에그" 로 등록하면 난류다). 한 글자는 허용 목록
+# (`SINGLE_CHAR_NAMES` — 잣 · 콩 · 깨 · 쑥 · 쌀 · 팥 · 꽃)만 쓴다. Growth 의 등록 이름 대조와 같다.
 
 # 로그와 사유에 남기는 이름. 알레르기 이름 · 활동명은 남기지 않는다
 HEALTH_SAFETY = "health_safety"
+# 음식 칸 · 음식 활동 문장의 연령 규칙(꿀 · 떡 …)에 걸렸다 — 알레르기와 상관없다 (#582)
+FOOD_AGE = "food_age"
+# 음식 칸에 사전이 모르는 음식이 왔고 아이에게 음식 알레르기가 있다 — "확인 못 함" 이라 뺀다 (#582)
+FOOD_UNKNOWN = "food_unknown"
 
 
 @dataclass(frozen=True)
@@ -40,8 +59,15 @@ class SafetyTerms:
     """이번 run 의 health_safety 행으로 만든 대조표. 후보마다 다시 만들지 않는다."""
 
     blocking: tuple[Term, ...]  # status='active' 행 — 걸리면 차단. content 대조용
-    blocking_items: tuple[Term, ...]  # 같은 행의 materials 대조용 — 다른 뜻 별칭도 막는다
-    allergens: tuple[Term, ...]  # 놀이에 든 알레르기 항목 표시용 — 상태 무관, key 가 정식 명칭
+    blocking_items: tuple[Term, ...]  # 같은 행의 materials · foods 대조용 — 다른 뜻 별칭도 막는다
+    # 놀이에 든 알레르기 항목 표시용 — 상태 무관. key 는 19종이면 정식 명칭, 등록된 19종 밖 이름이면
+    # 보호자가 적은 이름(구분 기호로 나눈 조각, 꼬리말만 뗌 — "고양이 털")이다. 05 가 그대로 묻는다
+    allergens: tuple[Term, ...]
+    # 음식 칸 · 음식 활동 문장을 Food 판정(`common/food_words.check_foods`)에 넘길 행 (#582).
+    # check_foods 가 retracted · none 을 스스로 거른다
+    rows: tuple[SafetyEntry, ...] = ()
+    # 활성 음식 알레르기가 있는가 — 사전이 모르는 음식을 뺄지 정한다(`_has_food_allergy`)
+    food_allergy: bool = False
 
 
 @dataclass(frozen=True)
@@ -51,7 +77,8 @@ class SafetyCheck:
     blocked: bool
     hits: tuple[str, ...]  # 걸린 위험 축 이름 · "health_safety". 로그용 — 원문을 싣지 않는다
     warnings: tuple[str, ...]  # 경고 축의 warning_text (상수). 차단이면 비어 있다
-    allergens: tuple[str, ...]  # 놀이에 든 알레르기 항목 정식 명칭 (suggestion.allergens)
+    # 놀이에 든 알레르기 항목 (suggestion.allergens). 19종은 정식 명칭, 밖은 보호자가 적은 이름
+    allergens: tuple[str, ...]
 
 
 def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
@@ -64,9 +91,9 @@ def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
       도 걸린다.
     - 사전에 없는 조각(키위 · 꽃가루)은 그 글자 그대로 대조한다. 허용 목록의 한 글자(쌀)는 그
       guard 와 함께 대조한다 — "쌀쌀한 날씨" 는 걸리지 않는다.
-    - 대조에 쓰는 이름은 `SINGLE_CHAR_NAMES` · `EXCLUDED_ALIASES` 로 거른다. 19종 밖 식품
-      (`allergy_book()` 의 별칭 표)과 글자 그대로 대조하는 이름은 `for_sentences` 로 문장용 guard 를
-      더한다("은행" 으로 등록해도 "은행놀이" 는 통과). 문장에서 다른 뜻이
+    - 대조에 쓰는 이름은 `for_sentences` 로 거른다 — 한 글자는 `SINGLE_CHAR_NAMES`, 다른 뜻이 흔한
+      별칭(포크 · 돼지)은 뺀다. 19종 밖 식품(`allergy_book()` 의 별칭 표)과 글자 그대로 대조하는
+      이름은 문장용 guard 도 더한다("은행" 으로 등록해도 "은행놀이" 는 통과). 문장에서 다른 뜻이
       더 흔한 별칭(오리)은 content 에서만 빼고 materials 에서는 막는다 — "오리처럼 걷기" 는
       통과하고, 준비물에 "오리" 를 적은 활동은 막힌다.
     """
@@ -89,18 +116,46 @@ def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
         literal = tuple(Term(key=word, aliases=(word,)) for word in rest)
         foods = (*named.terms, *literal)
         if entry.kind == "allergy":
-            for term in literal:
-                add(registered, _for_activity(for_sentences(term)))
+            # 태그 이름은 조각이 나온 이름이다 — "고양이 털" 을 조각 "고양" 으로 태그하면 05 가
+            # 보호자가 적은 적 없는 "고양" 을 묻는다 (#891). 대조는 지금처럼 조각마다 따로 해서
+            # 태그가 붙는 놀이는 그대로다. 05 는 이 이름을 낱말까지 읽어 맞추므로 띄어쓰기를
+            # 살린다 — 나중에 "쑥" 을 등록하면 "쑥 가루" 태그가 막힌다. 이름의 다른 낱말이 등록된
+            # 알레르기와 겹쳐도 막혀서, 조각으로 달 때보다 더 막는 쪽이다
+            for name, words in read_label_pieces(entry.label, book):
+                for word in words:
+                    add(registered, for_sentences(Term(key=name, aliases=(word,))))
         if entry.status == "active":
-            for term in (*coded, *(_for_activity(for_sentences(t)) for t in foods)):
+            for term in (*coded, *(for_sentences(t) for t in foods)):
                 add(blocking, term)
-            for term in (*coded, *(_for_activity(for_sentences(t, items=True)) for t in foods)):
+            for term in (*coded, *(for_sentences(t, scope="items") for t in foods)):
                 add(blocking_items, term)
     return SafetyTerms(
         blocking=tuple(blocking),
         blocking_items=tuple(blocking_items),
         allergens=(*canonical.values(), *registered),
+        rows=tuple(entries),
+        food_allergy=_has_food_allergy(entries, book),
     )
+
+
+def _has_food_allergy(entries: Sequence[SafetyEntry], book: LabelBook) -> bool:
+    """활성 알레르기 중 음식일 수 있는 것이 있는가.
+
+    이름 조각마다 본다. 식품 사전이 찾으면 음식이다. 사전이 못 찾은 조각은 식품 아닌 알레르기 표
+    (`allergy_related_terms.yaml` — 꽃가루 · 라텍스 · 동물털)에 있을 때만 음식이 아니고, 표에도
+    없으면 음식으로 본다 — 사전이 모르는 과일일 수 있어서 막는 쪽이다.
+    """
+    non_food = tuple(entry.names for entry in allergy_related_table())
+    for entry in entries:
+        if entry.kind != "allergy" or entry.status != "active":
+            continue
+        for piece in split_label(entry.label):
+            found, rest = read_label(piece, book)
+            if found.codes or found.terms:
+                return True
+            if rest and not match_fields((piece,), non_food):
+                return True
+    return False
 
 
 def check_candidate(
@@ -118,7 +173,8 @@ def check_candidate(
     - 걸린 후보는 고치지 않는다. 차단이면 통째로 뺀다 — "물놀이터" 를 "얕은 물놀이터" 로 고쳐
       통과시키지 않는다.
     """
-    texts = (candidate.content, *candidate.materials)
+    foods = tuple(food for food in candidate.foods if food.strip())
+    texts = (candidate.content, *candidate.materials, *foods)
     dictionary = hazard_terms()
 
     hits: list[str] = []
@@ -136,18 +192,131 @@ def check_candidate(
         elif axis.warning_text and axis.warning_text not in warnings:
             warnings.append(axis.warning_text)
     if match_fields((candidate.content,), terms.blocking, cross_spaces=False) or match_fields(
-        candidate.materials, terms.blocking_items, cross_spaces=False
+        (*candidate.materials, *foods), terms.blocking_items, cross_spaces=False
     ):
         blocked = True
         hits.append(HEALTH_SAFETY)
+    for hit in _food_hits(candidate, foods, months=months, terms=terms):
+        blocked = True
+        if hit not in hits:
+            hits.append(hit)
 
-    allergens = tuple(dict.fromkeys(match_fields(texts, terms.allergens, cross_spaces=False)))
+    allergens = tuple(
+        dict.fromkeys(
+            (
+                *match_fields(texts, terms.allergens, cross_spaces=False),
+                *(ALLERGEN_NAMES[code] for code in sorted(menu_codes(foods) if foods else ())),
+            )
+        )
+    )
     return SafetyCheck(
         blocked=blocked,
         hits=tuple(hits),
         warnings=() if blocked else tuple(warnings),
         allergens=allergens,
     )
+
+
+def _food_hits(
+    candidate: ActivityCandidate, foods: tuple[str, ...], *, months: int, terms: SafetyTerms
+) -> tuple[str, ...]:
+    """음식 칸 · 음식 활동 문장을 Food 판정으로 본다 (#582). 걸린 축 이름들 — 없으면 빈 튜플.
+
+    - 음식 칸의 항목 하나는 그 음식이다(`ITEM`) — "쿠키" 가 밀인 걸 Food 사전이 안다. 놀이 문장의
+      알레르기 이름 대조로는 요리 이름(쿠키 · 소시지 · 떡)을 못 막았다.
+    - 사전이 모르는 음식(빈 판정)은 "괜찮다" 가 아니라 "확인 못 함" 이다 — 음식 알레르기가 있으면
+      뺀다. 없으면 둔다 (#582 합의 10-28).
+    - 음식 활동이면 문장 · 준비물도 Food 음식 어휘로 본다(`SENTENCE`). 음식 활동이 아니면 보지
+      않는다 — "종이로 쿠키 모양 오려 꾸미기" 는 쿠키를 만지지도 먹지도 않는다.
+    - 연령 규칙(꿀 · 떡 …)은 알레르기와 상관없이 본다.
+    """
+    if not foods and not candidate.involves_food:
+        return ()
+    stage = stage_of(months)
+    hits: list[str] = []
+
+    def judge(text: str, rules: WordRules) -> tuple[FoodVerdict, ...]:
+        return check_foods(text, terms.rows, stage=stage, months=months, rules=rules)
+
+    def add(verdicts: Sequence[FoodVerdict]) -> None:
+        for verdict in verdicts:
+            if verdict.conflicts and HEALTH_SAFETY not in hits:
+                hits.append(HEALTH_SAFETY)
+            if verdict.age_block is not None and FOOD_AGE not in hits:
+                hits.append(FOOD_AGE)
+
+    for item in foods:
+        verdicts = judge(item, ITEM)
+        if not verdicts and terms.food_allergy and FOOD_UNKNOWN not in hits:
+            hits.append(FOOD_UNKNOWN)
+        add(verdicts)
+    if candidate.involves_food:
+        for text in (candidate.content, *candidate.materials):
+            add(judge(text, SENTENCE))
+    return tuple(hits)
+
+
+def request_notices(
+    texts: Sequence[str], entries: Sequence[SafetyEntry], *, months: int
+) -> tuple[Readout, ...]:
+    """보호자가 요청에 쓴 음식이 이 아이에게 막혔으면 그런 놀이는 빼고 골랐다는 안내 (#582).
+
+    Food 식단 요청 안내(`food_check.request_notices`)와 같은 방식이다 — 보호자가 쓴 어절만 싣고
+    등록한 알레르기 이름은 싣지 않는다. 이 안내는 모델 입력에 가지 않는다. 빼 달라는 말("땅콩
+    빼고")에 나온 음식은 안내하지 않는다(`QUESTION` 규칙). 같은 어절은 한 번만 말하고, 연령 규칙은
+    어절마다 가장 오래 막는 것 하나로 말한다("꿀떡" 은 떡). 추천 개수와 상관없이 붙는다 — 0개여도
+    왜 없는지 이 줄이 말한다. 붙은 영어 음식 이름("peanut butter")은 한 음식으로 한 번만
+    말한다 (#864).
+    """
+    stage = stage_of(months)
+    notices: list[Readout] = []
+    said: set[str] = set()
+    for text in texts:
+        verdicts = check_foods(text, entries, stage=stage, months=months)
+        names = food_phrases(text, verdicts)
+        # 한 이름에 알레르기 겹침이 하나라도 있으면 알레르기로 말한다 ("peanut butter")
+        allergic: dict[str, bool] = {}
+        for verdict in verdicts:
+            if verdict.conflicts:
+                allergic[names[verdict.word]] = allergic.get(names[verdict.word], False) or any(
+                    conflict.entry.kind == "allergy" for conflict in verdict.conflicts
+                )
+        for phrase, allergy in allergic.items():
+            if phrase in said:
+                continue
+            said.add(phrase)
+            what = "알레르기" if allergy else "건강 정보"
+            notices.append(READOUTS.render(REQUEST_FOOD_CONFLICT, food=phrase, what=what))
+        strictest: dict[str, AgeRule] = {}
+        for verdict in verdicts:
+            if verdict.age_block is None:
+                continue
+            phrase = names[verdict.word]
+            held = strictest.get(phrase)
+            if held is None or _lasts(verdict.age_block) > _lasts(held):
+                strictest[phrase] = verdict.age_block
+        for phrase, rule in strictest.items():
+            if phrase in said:
+                continue
+            said.add(phrase)
+            notices.append(
+                READOUTS.render(
+                    REQUEST_FOOD_AGE_BLOCK,
+                    food=phrase,
+                    은는=topic_particle(phrase),
+                    # 월령 기준이 없는 규칙(날음식 · 카페인)은 모든 아이다(Food when_text)
+                    when=(
+                        f"{rule.below_month}개월 전에는"
+                        if rule.below_month is not None
+                        else "아이에게는"
+                    ),
+                )
+            )
+    return tuple(notices)
+
+
+def _lasts(rule: AgeRule) -> float:
+    return float("inf") if rule.below_month is None else rule.below_month
 
 
 def filter_activity_safety(
@@ -199,20 +368,7 @@ def _canonical_allergens() -> dict[str, Term]:
     result: dict[str, Term] = {}
     for term in allergen_terms():
         name = ALLERGEN_NAMES[int(term.key)]
-        usable = _for_activity(Term(key=name, aliases=term.aliases, guards=term.guards))
+        usable = for_sentences(Term(key=name, aliases=term.aliases, guards=term.guards))
         if usable is not None:
             result[term.key] = usable
     return result
-
-
-def _for_activity(term: Term) -> Term | None:
-    """놀이 문장 대조에 쓸 별칭만 남긴다. 남는 게 없으면 None — 그 이름으로는 대조하지 않는다."""
-    excluded = {normalize(alias) for alias in EXCLUDED_ALIASES}
-    aliases = tuple(
-        alias
-        for alias in term.aliases
-        if (key := normalize(alias)) not in excluded and (len(key) >= 2 or key in SINGLE_CHAR_NAMES)
-    )
-    if not aliases:
-        return None
-    return Term(key=term.key, aliases=aliases, guards=term.guards)

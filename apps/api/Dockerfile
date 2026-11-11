@@ -3,8 +3,8 @@
 #   make api-image        굽기
 #   make api-up / api-down / api-logs
 #
-# --workers 1 고정 — run 진행 상황이 프로세스 메모리에 있어서 (#134)
-# 둘 이상이면 POST 받은 프로세스와 GET 받은 프로세스가 갈려 조용히 404 가 난다.
+# --workers 1 고정 (#134). 되묻기 맥락 · 한도는 DB 로 옮겼지만(#877) run 은 받은 워커에서 돈다 — 워커 수는 아직 올리지 않았다 (docs/ops/stateless-v1.md)
+# 둘 이상이어도 다른 워커는 표를 읽어 SSE 를 낸다. 다만 워커가 죽으면 그 워커가 돌리던 run 을 잃는다 (docs/ops/workers-2-check-v1.md)
 
 FROM python:3.12-slim
 
@@ -30,4 +30,8 @@ USER apiuser
 EXPOSE 8000
 
 # --no-sync: 빌드 때 설치한 의존성을 그대로 쓴다. 없으면 기동마다 dev 그룹을 다시 받는다.
-CMD ["uv", "run", "--no-sync", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# --timeout-graceful-shutdown 70: SIGTERM 뒤 열린 요청 · SSE 를 기다리는 상한 (drain, #882).
+#   run 마감 60초(runner.RUN_DEADLINE_SECONDS)보다 길게 — SSE 가 run 끝과 함께 스스로 닫힌다.
+#   짧으면 상한에서 끊긴 SSE 마다 uvicorn 이 ERROR traceback 을 찍어 배포 때 Discord 가 울린다.
+#   🚨 이 값 + main.DRAIN_SECONDS + flush 5초 < compose 의 api stop_grace_period.
+CMD ["uv", "run", "--no-sync", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-graceful-shutdown", "70"]

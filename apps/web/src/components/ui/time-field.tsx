@@ -77,9 +77,9 @@ export function TimeField({
 
   const partial =
     hour !== "" && minute === ""
-      ? "몇 분인지도 골라주세요."
+      ? "몇 분인지도 골라 주세요."
       : hour === "" && minute !== ""
-        ? "몇 시인지도 골라주세요."
+        ? "몇 시인지도 골라 주세요."
         : null;
   const shown = partial ?? hint;
 
@@ -91,7 +91,7 @@ export function TimeField({
 
       <div className="flex items-start gap-2">
         <Select
-          label={`${label} — 시`}
+          label={`${label}, 시`}
           labelHidden
           shape="field"
           placeholder="몇 시"
@@ -100,7 +100,7 @@ export function TimeField({
           onChange={(next) => commit(next, minute)}
         />
         <Select
-          label={`${label} — 분`}
+          label={`${label}, 분`}
           labelHidden
           shape="field"
           placeholder="몇 분"

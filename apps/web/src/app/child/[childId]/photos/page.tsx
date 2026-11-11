@@ -8,6 +8,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
+import { PhotoPreview } from "@/components/photo-preview";
 import { PhotoReview } from "@/components/photo-review";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { Button } from "@/components/ui/button";
@@ -22,14 +23,7 @@ import { Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import { useRunStream } from "@/hooks/use-run-stream";
 import { usePhotoDraftStore, type PendingPhoto } from "@/stores/photo-draft";
-import {
-  commitPhotoRun,
-  isApiError,
-  photoFormData,
-  qk,
-  uploadPhoto,
-  type PhotoCommitRequest,
-} from "@/lib/api";
+import { commitPhotoRun, isApiError, qk, sendPhoto, type PhotoCommitRequest } from "@/lib/api";
 import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
 import { formatDay, parseISODate, toISODate } from "@/lib/format";
 
@@ -37,20 +31,20 @@ import { formatDay, parseISODate, toISODate } from "@/lib/format";
  * 08 사진으로 적기 (`/child/[childId]/photos?date=YYYY-MM-DD`).
  *
  * 🚨 **승인 전에는 아무것도 저장되지 않는다.** `POST /children/{cid}/photos` 는 읽기만 하고,
- *    저장은 `POST /photo-runs/{rid}/commit` 하나다. 그래서 화면을 그냥 나가면 남는 것이 없다 —
- *    "나가면 사라져요" 같은 확인 창을 만들지 않는다 (승인 게이트는 2곳뿐이다 · CLAUDE.md §2).
+ *    저장은 `POST /photo-runs/{rid}/commit` 하나다. 그래서 화면을 그냥 나가면 남는 것이 없다
+ *    (일정을 일부 넣은 뒤라면 그 일정은 이미 캘린더에 있다 — 잃을 것이 없다는 점은 같다) —
+ *    "나가면 사라져요" 같은 확인 창을 만들지 않는다 (승인 게이트는 3곳뿐이다 · CLAUDE.md §2).
  *
- * 🚨 **여기는 그 승인 게이트가 아니다.** `commit` 은 **캘린더에 쓰지 않고**, 일정은 보호자가
- *    항목의 시트에서 넣어야 들어간다 (#151). 그래서 이 화면의 저장 버튼에는 `btn-approve` ·
- *    `caution` 을 쓰지 않는다 — 그 둘은 시트의 제출 버튼이 가져간다.
+ * 🚨 **`commit` 은 승인 게이트가 아니다.** `commit` 은 **캘린더에 쓰지 않고**, 일정은 확인 화면이
+ *    보호자가 체크한 개수만큼 `POST /events` 로 따로 넣는다 (#151 · #824). 그래서 확인 화면의 맨 아래
+ *    버튼은 **넣을 일정이 있을 때만** `btn-approve` · `caution` 이다 — 그때 그 버튼이 게이트 ㉠ 이다
+ *    (`photo-review.tsx`). 넣을 일정이 없으면 그냥 저장이다.
  *    ⚠️ **커밋이 무엇을 만드는지는 확정 전이다** — 한동안 "관찰" 이라고 적어 뒀는데, AI 파트
  *    문서는 기관 문서를 별도 테이블(`notice` · `daycare_meal`)로 뒀다 (`lib/api/types.ts` 의
  *    `PhotoCommitResponse`). 게이트 판단은 그것과 무관하다 — 기준은 **캘린더에 쓰느냐**다.
  *
- *    ⚠️ **`commit` 이 게이트인지는 아직 안 정해졌다.** `event.status` 가 없어지면서(#118) 이
- *    커밋이 게이트 없이 캘린더에 쓰는 유일한 경로가 됐고, #121 에서 제기했지만 답이 오지 않았다.
- *    초안만 내는 쪽으로 짠 이유와 반대로 정해졌을 때 고칠 것은
- *    [`docs/web/event-draft-ui-v1.md`](../../../../../../docs/web/event-draft-ui-v1.md) §4 에 있다.
+ *    ⚠️ **`commit` 이 게이트인지는 닫혔다** — commit 이 일정을 아예 안 만들게 해서 게이트 없는 캘린더 쓰기
+ *    경로가 없다 ([`docs/web/event-draft-ui-v1.md`](../../../../../../docs/web/event-draft-ui-v1.md) §4).
  *
  * 🚨 **하단 네비(`ChildNav`)를 붙이지 않는다.** 흐름 중인 화면이라 고르는 도중에 새는 길을
  *    만들지 않는다 (apps/web/CLAUDE.md §3 — 04·05 와 같은 이유).
@@ -113,8 +107,8 @@ function PhotosScreen() {
 
   /**
    * 🚨 재시도할 때 키를 새로 만들지 않는다 — 같은 사진을 다시 올리는 것이 재시도다.
-   *    **다른 사진으로 바꿀 때만** 돌린다(`resetToPicker`). 같은 키에 다른 본문을 보내면
-   *    422 idempotency_key_reuse 다 (03 홈의 `closeRun` 과 같은 규칙).
+   *    **다른 사진으로 바꿀 때만** 돌린다(아래 시트의 `onPick`). 같은 키에 다른 사진을 보내면
+   *    서버가 앞 사진의 응답을 재생해 새 사진은 읽히지 않는다 (03 홈의 `closeRun` 과 같은 규칙).
    */
   const idempotencyKey = useIdempotencyKey();
 
@@ -138,12 +132,9 @@ function PhotosScreen() {
 
   const upload = useMutation({
     mutationFn: (picked: PendingPhoto) =>
-      uploadPhoto(
-        childId,
-        // 🚨 부모가 고른 lane 을 함께 싣는다 — 서버가 추측하게 두지 않는다 (operations.ts).
-        photoFormData(picked.file, { lane: picked.lane, date }),
-        idempotencyKey.current(),
-      ),
+      // 🚨 사진 본문은 서버가 S3 버킷을 쓰면 S3 로 바로 간다 — 서버는 열쇠만 받고, 읽자마자 지운다.
+      //    부모가 고른 lane 을 함께 싣는다 — 서버가 추측하게 두지 않는다 (operations.ts).
+      sendPhoto(childId, picked.file, { lane: picked.lane, date }, idempotencyKey.current()),
     onSuccess: (res) => {
       setRunId(res.run_id);
       run.start(res.run_id);
@@ -197,8 +188,8 @@ function PhotosScreen() {
   }, [photo, startUpload]);
 
   /**
-   * 저장하지 않고 03 홈으로. 🚨 **확인을 묻지 않는다** — 여기까지 저장된 것이 없어서
-   *    잃을 것이 없고, 승인 게이트는 딱 2곳이다 (CLAUDE.md §2).
+   * 저장하지 않고 03 홈으로. 🚨 **확인을 묻지 않는다** — 읽은 내용은 저장 전이고, 일정을 일부 넣은 뒤라면
+   *    그 일정은 이미 캘린더에 있어서 잃을 것이 없다. 승인 게이트는 딱 3곳이다 (CLAUDE.md §2).
    */
   function goHome() {
     router.push(`/child/${childId}/home`);
@@ -234,7 +225,7 @@ function PhotosScreen() {
           <ConsentRequiredCard
             childId={childId}
             error={consentBlocked}
-            what="사진을 읽어 드릴 수 없어요."
+            what="사진을 읽어 드릴 수 없어요. 저장된 것은 하나도 없어요."
           />
         ) : !photo ? (
           <Picker date={date} onPick={() => setSheetOpen(true)} />
@@ -272,19 +263,27 @@ function PhotosScreen() {
             onCommit={(body) => commit.mutate(body)}
             committing={commit.isPending}
             commitError={
-              commit.isError
-                ? commit.error instanceof Error
-                  ? commit.error.message
-                  : "저장하지 못했어요. 아직 아무것도 저장되지 않았어요."
-                : null
+              // 🚨 서버 문구를 그대로 싣지 않는다 — 에러 문구는 화면이 만든다 (#815).
+              //    무엇이 들어갔는지는 확인 화면이 안다 (넣은 일정 수 · #824). 여기서는 까닭만 가른다 —
+              //    읽은 결과가 서버에서 사라진 404 는 다시 눌러도 같다.
+              commit.isError ? (isApiError(commit.error, "not_found") ? "expired" : "failed") : null
             }
             onGoHome={goHome}
           />
+        ) : // `failed` · 20초 안전망(`partial`) · 스트림 오류가 여기로 온다. 셋 다 읽어낸 것이 없다.
+        // 🚨 공지가 아닌 사진은 같은 사진을 다시 읽어도 같다 — 다시 시도 대신 다른 사진을 고르게 한다.
+        run.state.failure?.reason === "not_document" ? (
+          <Failed
+            title="공지나 식단표를 찾지 못했어요"
+            note="알림장, 가정통신문, 식단표처럼 기관에서 받은 문서 사진을 올려 주세요. 아무것도 저장하지 않았어요."
+            retryLabel="다른 사진 고르기"
+            onRetry={() => setSheetOpen(true)}
+            onGoHome={goHome}
+          />
         ) : (
-          // `failed` · 20초 안전망(`partial`) · 스트림 오류가 여기로 온다. 셋 다 읽어낸 것이 없다.
           <Failed
             title="이 사진에서는 읽어낼 게 없었어요"
-            note="잘못 저장하지 않으려고 아무것도 저장하지 않았어요. 글자가 더 잘 보이는 사진이면 읽을 수 있어요."
+            note="잘못 저장하지 않으려고 아무것도 저장하지 않았어요. 더 또렷한 사진이면 읽을 수 있어요."
             onRetry={() => startUpload(photo)}
             onGoHome={goHome}
           />
@@ -297,6 +296,9 @@ function PhotosScreen() {
         onClose={() => setSheetOpen(false)}
         onPick={({ file, lane }) => {
           setSheetOpen(false);
+          // 🚨 다른 사진이다 — 키를 돌린다. "다른 사진 고르기"(not_document) 뒤에 앞 사진의 키로
+          //    보내면 서버가 앞 사진의 결과를 재생해 새 사진이 읽히지 않는다 (#727 리뷰).
+          idempotencyKey.rotate();
           // 🚨 이벤트 핸들러라 여기서 만들어도 된다. 만드는 것도 해제하는 것도 스토어가
           //    한 곳에서 맡는다 — 올리는 것은 위의 effect 다 (사진 한 장당 한 번).
           setPhoto(usePhotoDraftStore.getState().adoptPhoto(file, lane));
@@ -322,8 +324,8 @@ function Picker({ date, onPick }: { date: string; onPick: () => void }) {
       <div>
         <h2 className="text-title text-ink">사진 한 장이 한 줄을 대신해요</h2>
         <p className="text-body-sm text-ink-muted mt-2">
-          {formatDay(date)}에 남겨요. 알림장이나 식단표는 글자를 읽어 준비물과 일시로 정리하고, 아이
-          활동 사진은 활동 태그만 뽑아요.
+          {/* 아이 활동 사진은 시트에서 꺼 뒀다 (`lib/features.ts` · #884) — 켜면 이 문장도 같이 고친다. */}
+          {formatDay(date)}에 남겨요. 알림장이나 식단표는 글자를 읽어 준비물과 일시로 정리해요.
         </p>
       </div>
 
@@ -338,7 +340,7 @@ function Picker({ date, onPick }: { date: string; onPick: () => void }) {
 
       <ul className="text-body-sm text-ink-muted flex list-disc flex-col gap-1.5 pl-5">
         <li>얼굴이나 사람은 분석하지 않아요.</li>
-        <li>읽어낸 내용을 보여드리고, 승인하기 전에는 아무것도 저장하지 않아요.</li>
+        <li>읽어낸 내용을 보여 드리고, 승인하기 전에는 아무것도 저장하지 않아요.</li>
       </ul>
     </div>
   );
@@ -360,14 +362,13 @@ function Reading({
   return (
     <div className="flex flex-col gap-4">
       <PhotoCard>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={previewUrl} alt="읽고 있는 사진" className="h-full w-full object-cover" />
+        <PhotoPreview src={previewUrl} alt="읽고 있는 사진" />
       </PhotoCard>
       <Card>
         <ProgressSteps index={index} total={total} label={label} />
       </Card>
       <p className="text-body-sm text-ink-muted">
-        읽은 내용을 보여드린 다음에 저장해요. 지금은 아무것도 저장되지 않아요.
+        읽은 내용을 보여 드린 다음에 저장해요. 지금은 아무것도 저장되지 않아요.
       </p>
     </div>
   );
@@ -379,11 +380,13 @@ function Reading({
 function Failed({
   title,
   note,
+  retryLabel = "다시 시도",
   onRetry,
   onGoHome,
 }: {
   title: string;
   note: string;
+  retryLabel?: string;
   onRetry: () => void;
   onGoHome: () => void;
 }) {
@@ -394,9 +397,9 @@ function Failed({
         <p className="text-body-sm text-ink-muted mt-2">{note}</p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button onClick={onRetry}>다시 시도</Button>
+        <Button onClick={onRetry}>{retryLabel}</Button>
         <Button variant="secondary" onClick={onGoHome}>
-          메인으로 돌아가기
+          홈으로 돌아가기
         </Button>
       </div>
     </div>

@@ -8,7 +8,13 @@ import pytest
 
 from app.agents import entrypoint, pipeline
 from app.agents.activity.doc_seed import activity_doc_seed
+from app.agents.food import weaning_menu
 from app.agents.food.doc_seed import food_doc_seed
+from app.agents.food.weaning_menu import (
+    weaning_menu_id,
+    weaning_menu_rows,
+    weaning_menu_table,
+)
 from app.agents.suggestion_save import InMemorySuggestions
 
 CHILD, PARENT = uuid.uuid4(), uuid.uuid4()
@@ -66,13 +72,25 @@ async def test_처음_시각이_없으면_지금을_쓴다(monkeypatch):
 def test_추천_task_라벨():
     assert entrypoint.recommendation_task_type("food") == "meal_recommendation"
     assert entrypoint.recommendation_task_type("activity") is None
-    assert entrypoint.SUGGESTION_AGENTS == {"food", "activity"}
+    assert entrypoint.SUGGESTION_AGENTS == {"food", "activity", "growth"}
+    assert "health" not in entrypoint.SUGGESTION_AGENTS
+    # Growth 는 추천 라벨이 셋이라 05 처음 요청으로 돌 라벨을 못 고른다 (결정 C)
+    assert entrypoint.FIRST_REQUEST_AGENTS == {"food", "activity"}
 
 
 def test_사전검사는_active_를_막고_없는_것만_묻는다():
     rows = [entrypoint.SafetyLabel("allergy", "우유", "active")]
     check = entrypoint.check_allergens(["우유", "땅콩"], rows)
     assert check == entrypoint.AllergenCheck(blocked=("우유",), unknown=("땅콩",))
+
+
+def test_사전검사는_내린_기록만_있는_항목을_다시_묻는다():
+    rows = [
+        entrypoint.SafetyLabel("allergy", "땅콩", "retracted"),
+        entrypoint.SafetyLabel("allergy", "잣", "none"),
+    ]
+    check = entrypoint.check_allergens(["땅콩", "잣"], rows)
+    assert check == entrypoint.AllergenCheck(blocked=(), unknown=("땅콩",))
 
 
 def test_안내_문구는_코드_문구다():
@@ -124,6 +142,42 @@ def test_검수된_시드_행은_Agent_가_근거로_단_id_로_찾아진다(mon
     assert set(cards) == set(refs)
     assert cards[refs[0]].title == activity_entry.meta.title
     assert cards[refs[1]].source_org == food_entry.meta.source_org
+
+
+def test_이유식_식단_근거는_아이캐치_출처_카드로_나간다():
+    entrypoint._doc_index.cache_clear()
+    try:
+        row = weaning_menu_rows(8, synced_at=datetime(2026, 10, 14, tzinfo=UTC))[0]
+        ref = ("food_doc", weaning_menu_id(row.source_id))
+        [card] = entrypoint.describe_docs([ref]).values()
+    finally:
+        entrypoint._doc_index.cache_clear()
+
+    assert (card.title, card.source_org, card.source_title, card.source_url) == (
+        row.display_name,
+        "아이캐치 서비스 일반추천",
+        "월령별 이유식 추천 식단",
+        None,
+    )
+
+
+def test_검수_전_이유식_식단_행은_근거_카드로_나가지_않는다(monkeypatch):
+    table = weaning_menu_table()
+    draft, approved = table.entries[0], table.entries[1]
+    held = replace(draft, status="draft", reviewed_by=None, reviewed_at=None)
+    monkeypatch.setattr(
+        weaning_menu,
+        "weaning_menu_table",
+        lambda: replace(table, entries=(held, *table.entries[1:])),
+    )
+    entrypoint._doc_index.cache_clear()
+    try:
+        refs = [("food_doc", weaning_menu_id(e.key)) for e in (draft, approved)]
+        cards = entrypoint.describe_docs(refs)
+    finally:
+        entrypoint._doc_index.cache_clear()
+
+    assert set(cards) == {refs[1]}
 
 
 def test_검수_전_시드_행은_근거로_나가지_않는다():
@@ -189,3 +243,85 @@ def test_검수된_성장_문서_행도_05_카드로_찾는다(monkeypatch):
         entrypoint._doc_index.cache_clear()
 
     assert set(cards) == {ref}
+
+
+def _approved_food_rows(*rows_extra):
+    """검수를 마친 가짜 Food 행들. 출처 칸만 다르다."""
+    from datetime import date
+
+    from app.agents.food.doc_seed import parse_food_doc
+
+    base = {
+        "row_type": "feeding_tip",
+        "title": "(테스트) 행",
+        "body": "가짜 문장이다.",
+        "min_month": 24,
+        "max_month": 72,
+        "tags": ["test"],
+        "source_year": 2025,
+        "source_locator": "(테스트) 내부 추적용 위치 7쪽",
+        "status": "approved",
+        "authored_by": "writer-a",
+        "reviewed_by": "reviewer-b",
+        "reviewed_at": date(2026, 11, 3),
+        "version": 1,
+    }
+    return parse_food_doc({"rows": [{**base, **extra} for extra in rows_extra]})
+
+
+NHS_FOOD = {
+    "doc_key": "food.test.nhs",
+    "source_title": "(테스트) 가짜 NHS 문서 제목",
+    "source_org": "NHS (테스트)",
+    "source_url": "https://www.nhs.uk/test/fake-page/",
+    "license_basis": "ogl_3",
+}
+DFE_FOOD = {
+    "doc_key": "food.test.dfe",
+    "source_title": "(테스트) 가짜 DfE 문서 제목",
+    "source_org": "Department for Education (테스트)",
+    "source_url": "https://www.gov.uk/government/publications/fake",
+    "license_basis": "ogl_3",
+}
+NZ_FOOD = {
+    "doc_key": "food.test.nz",
+    "source_title": "(테스트) 가짜 뉴질랜드 지침",
+    "source_org": "Ministry of Health (New Zealand)",
+    "source_url": "https://www.health.govt.nz/fake.pdf",
+    "license_basis": "cc_by",
+}
+
+
+def test_05_카드는_공개용_출처로_나간다(monkeypatch):
+    """OGL 문장 · CC BY 변경 표시는 05 응답 칸(source_title)으로 충족한다 (#510)."""
+    from app.agents.common.reference_docs import (
+        CC_BY_URL,
+        NHS_PUBLIC_ORG,
+        OGL_STATEMENT,
+        OGL_URL,
+        doc_row_id,
+    )
+    from app.agents.food import doc_seed as food_seed
+
+    entries = _approved_food_rows(NHS_FOOD, DFE_FOOD, NZ_FOOD)
+    monkeypatch.setattr(food_seed, "food_doc_seed", lambda: entries)
+    entrypoint._doc_index.cache_clear()
+    try:
+        refs = {
+            e.meta.doc_key: ("food_doc", doc_row_id("food_doc", e.meta.doc_key)) for e in entries
+        }
+        cards = entrypoint.describe_docs(refs.values())
+    finally:
+        entrypoint._doc_index.cache_clear()
+
+    nhs, dfe, nz = (cards[refs[key]] for key in ("food.test.nhs", "food.test.dfe", "food.test.nz"))
+    assert (nhs.source_org, nhs.source_url) == (NHS_PUBLIC_ORG, OGL_URL)
+    assert nhs.source_title == f"{OGL_STATEMENT} ({OGL_URL})"
+    assert dfe.source_org == "Department for Education (테스트)"
+    assert dfe.source_title.startswith("(테스트) 가짜 DfE 문서 제목")
+    assert f"{OGL_STATEMENT} ({OGL_URL})" in dfe.source_title
+    assert dfe.source_url == "https://www.gov.uk/government/publications/fake"
+    assert nz.source_org == "Ministry of Health (New Zealand)"
+    assert nz.source_title.startswith("(테스트) 가짜 뉴질랜드 지침")
+    assert "번역·재구성함" in nz.source_title and CC_BY_URL in nz.source_title
+    assert nz.source_url == "https://www.health.govt.nz/fake.pdf"

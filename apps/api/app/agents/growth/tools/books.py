@@ -9,6 +9,8 @@
     propose_books  이번 run 의 `search_books` 결과에 없는 ISBN · 만료 전 `suggestion` 에 이미 낸
                    책 · 같은 호출 안의 같은 책 · 4권째를 거절한다. 같은 책은 "제목(저자)" 로 가른다
 
+모델 tool 핸들러는 `search_books_tool`(여기)과 `tools/propose.propose_books_tool` 이다.
+
 조회에 실패하면 `UpstreamUnavailable` 을 그대로 올린다. 빈 목록으로 바꾸면 "그 키워드의 책이 없다"
 로 읽히고, 캐시로 목록을 꾸미면 절판된 책이 나간다. 호출부(`run()`)가 이 예외를 받아
 `book_suggestion` 을 `closed.book_api` 로 닫는다.
@@ -25,8 +27,11 @@ from enum import StrEnum
 
 from app.agents.common.suggestion import MAX_SUGGESTIONS
 from app.agents.growth.context import GrowthContext
+from app.agents.growth.result import ErrorCode, ToolResult, fail, ok
+from app.agents.growth.schemas.books import MAX_RUN_KEYWORDS, SearchBooksArgs
 from app.agents.growth.store.ports import BookRow
-from app.rules.book_form import fits_age
+from app.rules.book_evidence import normalize_isbn
+from app.rules.book_form import FORMAT_WORDS, fits_age
 from app.rules.term_match import normalize
 
 # 모델이 한 번에 받는 책 수의 상한 (Tool_명세 §2 — `k≤10`)
@@ -37,11 +42,6 @@ SEARCH_LIMIT = 10
 SEARCH_POOL = 50
 # 한 번에 내는 책 수 (Tool_명세 §2 — `items[3]`)
 MAX_BOOKS = MAX_SUGGESTIONS
-
-
-def normalize_isbn(raw: str) -> str:
-    """하이픈 · 공백을 지우고 X 는 대문자로. 모델이 `978-89-…` 로 적어도 같은 책으로 본다."""
-    return "".join(ch for ch in raw if ch.isascii() and ch.isalnum()).upper()
 
 
 def book_label(row: BookRow) -> str:
@@ -59,12 +59,17 @@ async def search_books(
 ) -> tuple[BookRow, ...]:
     """키워드로 책을 찾고, 이 아이 월령에 맞는 형태만 `k` 권까지 돌려준다.
 
-    - 월령은 `Gate` 의 것이다. 8개월이면 `board` 만, 12개월 미만에게 `unknown` 은 나가지 않는다.
+    - 월령은 `Gate` 의 것이다. 8개월이면 `board` 만 나가고, `unknown` 은 어느 월령에도 나가지
+      않는다.
     - 돌려준 책만 `context.state.seen_books` 에 적는다 — `propose_books` 가 이 표와 대조한다.
       연령 필터에 걸러진 책은 모델이 ISBN 을 알아도 낼 수 없다. 검색을 여러 번 하면 쌓인다.
+    - 포트가 답하면(0권이어도) `book_searched` 를 세운다 — 빈 제출은 검색한 뒤에만 받는다.
     - 포트가 실패하면 `UpstreamUnavailable`. 빈 목록도 캐시 목록도 아니다.
     - 키워드는 코드가 다듬는다(공백 제거 · 중복 제거). 비면 `ValueError` — 포트까지 가지 않는다.
     - 같은 ISBN 은 한 번만 준다. 먼저 온 행을 쓴다.
+    - 보호자가 요청에서 말한 검색어(`said_texts` 에 있는 낱말)는 제목으로 찾고, 그 낱말이 제목에
+      없는 책은 돌려주지 않는다 — 관심 주제 책으로 채우지 않는다. 그런 낱말이 없으면 지금처럼
+      거르지 않는다.
     """
     if not 1 <= k <= SEARCH_LIMIT:
         raise ValueError(f"k 는 1~{SEARCH_LIMIT} 이다: {k}")
@@ -79,17 +84,41 @@ async def search_books(
         raise RuntimeError("도서 포트 없이 도서 검색이 불렸다 — registry 가 열지 않았어야 한다")
 
     months = gate.stage.months
-    rows = await books.search(keywords=cleaned, limit=SEARCH_POOL)
+    state = context.state
+    said = normalize(" ".join(state.said_texts))
+    asked = tuple(
+        word for word in cleaned if normalize(word) in said and normalize(word) not in FORMAT_WORDS
+    )
+    grown = state.asked_book_words | {normalize(word) for word in asked}
+    if grown != state.asked_book_words:
+        # 요청 낱말이 이제야 나왔다 — 앞서 다른 주제로 찾아 둔 책도 이 낱말로 다시 거른다.
+        # 안 그러면 제목에 낱말이 없는 책이 `seen_books` 에 남아 낼 수 있고 빈 제출도 막힌다
+        for key in [k for k, row in state.seen_books.items() if not _on_topic(row, grown)]:
+            del state.seen_books[key]
+    state.asked_book_words = grown
+    state.book_keywords += len(cleaned)
+    rows = await books.search(keywords=cleaned, limit=SEARCH_POOL, title_words=asked)
+    state.book_searched = True
     found: dict[str, BookRow] = {}
     for row in rows:
         key = normalize_isbn(row.isbn)
         if key in found or not fits_age(row.form, months):
+            continue
+        if not _on_topic(row, state.asked_book_words):
             continue
         found[key] = row
         if len(found) == k:
             break
     context.state.seen_books.update(found)
     return tuple(found.values())
+
+
+def _on_topic(row: BookRow, asked: frozenset[str]) -> bool:
+    """요청한 낱말이 있으면 제목에 그 낱말이 하나라도 든 책만이다. 없으면 거르지 않는다."""
+    if not asked:
+        return True
+    title = normalize(row.title)
+    return any(word in title for word in asked)
 
 
 class BookRejectReason(StrEnum):
@@ -118,6 +147,8 @@ class BookRejection:
 class BookReview:
     accepted: tuple[BookRow, ...]  # `search_books` 가 돌려줬던 행 그대로
     rejections: tuple[BookRejection, ...]
+    # 이번 run 에 검색한 책 중 아직 낼 수 있는 책 수, MAX_BOOKS 까지. 출력 tool 이 이만큼 내게 한다
+    available: int = 0
 
 
 async def propose_books(context: GrowthContext, isbns: Sequence[str]) -> BookReview:
@@ -134,6 +165,9 @@ async def propose_books(context: GrowthContext, isbns: Sequence[str]) -> BookRev
 
     만료 전 추천은 상태를 가리지 않는다 — 승인 · 거절한 책도 다시 나오지 않는다. 낸 책 포트는 run 이
     아니라 호출마다 읽는다(같은 run 의 draft 는 아직 저장 전이라 읽어도 같다).
+
+    재호출이면 처음 고른 책 · 빠진 책(`state.done_books`)도 이미 낸 책으로 본다. `available` 은
+    검색한 책 중 이미 낸 책을 뺀 수(3권까지)다 — 출력 tool 이 그만큼 내게 하는 상한이다.
     """
     issued_reader = context.ports.issued_books
     if issued_reader is None:
@@ -143,7 +177,7 @@ async def propose_books(context: GrowthContext, isbns: Sequence[str]) -> BookRev
     issued = {
         normalize(label)
         for label in await issued_reader.labels(child_id=context.child_id, now=context.now)
-    }
+    } | context.state.done_books
     seen = context.state.seen_books
 
     accepted: dict[str, BookRow] = {}
@@ -164,9 +198,62 @@ async def propose_books(context: GrowthContext, isbns: Sequence[str]) -> BookRev
             accepted[same_book] = row
             continue
         rejections.append(BookRejection(index=index, reason=reason))
-    return BookReview(accepted=tuple(accepted.values()), rejections=tuple(rejections))
+    open_labels = {normalize(book_label(row)) for row in seen.values()} - issued
+    return BookReview(
+        accepted=tuple(accepted.values()),
+        rejections=tuple(rejections),
+        available=min(MAX_BOOKS, len(open_labels)),
+    )
 
 
 def explain(rejections: Sequence[BookRejection]) -> str:
     """모델이 읽는 거절 설명. 후보 번호(1부터)와 고칠 방향만 싣는다."""
     return " / ".join(f"{r.index + 1}번 후보: {GUIDANCE[r.reason]}" for r in rejections)
+
+
+_SEARCH_LIMIT = (
+    "이번 요청에서는 책을 더 찾을 수 없다. 지금까지 찾은 책 중에서 골라 propose_books 로 "
+    "제출하고, 고를 책이 없으면 items 를 비워 제출한다."
+)
+_NO_BOOKS = (
+    "이 낱말로 이 나이에 맞는 책이 없다. 다른 주제 낱말로 한 번 더 찾거나, "
+    "그래도 없으면 propose_books 를 items 를 비워 부른다."
+)
+# 보호자가 말한 낱말이 있을 때 — 다른 주제로 넘어가지 않는다
+_NO_ASKED_BOOKS = (
+    "요청한 주제의 책을 이 나이에 맞게 찾지 못했다. 주제를 바꾸지 말고 "
+    "propose_books 를 items 를 비워 부른다."
+)
+
+
+async def search_books_tool(context: GrowthContext, args: SearchBooksArgs) -> ToolResult:
+    """모델 tool `search_books`. 이름 · 저자 · 출판사 · 형태만 돌려준다 — 표지 주소는 모델에게
+    쓸모가 없다. 0권이면 `NO_RECORDS` 로 다음 할 일만 알린다(검색어 · 책 이름은 싣지 않는다)."""
+    left = MAX_RUN_KEYWORDS - context.state.book_keywords
+    if left <= 0:
+        return fail("query", "search_books", ErrorCode.SEARCH_LIMIT, _SEARCH_LIMIT)
+    # 남은 자리만큼만 보낸다 — 앞의 낱말이 모델이 먼저 고른 것이다
+    found = await search_books(context, keywords=args.keywords[:left])
+    if not found:
+        message = _NO_ASKED_BOOKS if context.state.asked_book_words else _NO_BOOKS
+        return fail("query", "search_books", ErrorCode.NO_RECORDS, message)
+    # 제목 · 저자가 같은 다른 판은 한 권만 보인다. 둘을 다 보이면 모델이 같은 책을 두 번 골라
+    # `propose_books` 에 거절당하고 대화가 한 번 더 돈다. `seen_books` 에는 둘 다 남는다
+    first: dict[str, BookRow] = {}
+    for row in found:
+        first.setdefault(normalize(book_label(row)), row)
+    return ok(
+        "query",
+        "search_books",
+        books=[
+            {
+                "isbn": row.isbn,
+                "title": row.title,
+                "author": row.author,
+                "publisher": row.publisher,
+                "form": row.form,
+            }
+            for row in found
+            if first[normalize(book_label(row))] is row
+        ],
+    )

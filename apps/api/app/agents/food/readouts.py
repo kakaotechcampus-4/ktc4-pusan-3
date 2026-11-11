@@ -11,12 +11,16 @@ from app.agents.common.readout import ReadoutCatalog
 UNSUPPORTED_MILK_MEAL = "unsupported.milk_meal"  # 식단 추천 + 수유기(0–3개월)
 UNSUPPORTED_INFANT_NUTRIENT = "unsupported.infant_nutrient"  # 영양소 분석 + 0–11개월
 BLOCKED_SAFETY = "blocked.safety"  # 안전 조회 실패 — 식단 추천 · 영양소 분석
-CLOSED_NO_DAYCARE = "closed.no_daycare"  # daycare_meal 라벨인데 급식 행이 없음
+# 급식 라벨(daycare_meal · daycare_lookup)인데 급식 행이 없음
+CLOSED_NO_DAYCARE = "closed.no_daycare"
+# 급식 표를 읽지 못함(`DaycareLookupError`) — 급식이 없다는 뜻이 아니다(#956)
+CLOSED_DAYCARE_UNREAD = "closed.daycare_unread"
 
 # 식단 추천 후보 풀
 POOL_EMPTY = "pool.empty"
 GENERAL_REASON_TODDLER = "general.reason.toddler"
 GENERAL_REASON_WEANING = "general.reason.weaning"
+GENERAL_REASON_REQUESTED = "general.reason.requested"  # 보호자가 정한 조건이 기준인 일반 추천
 FOLLOWUP_PREFERENCE = "followup.preference"
 UNSUPPORTED_MILK_AMOUNT = "unsupported.milk_amount"
 UNSUPPORTED_WEANING_OVER12 = "unsupported.weaning_over12"
@@ -26,8 +30,15 @@ UNSUPPORTED_WEIGHT_DIET = "unsupported.weight_diet"
 NUTRIENT_INSUFFICIENT = "nutrient.insufficient"
 NUTRIENT_TODAY_EMPTY = "nutrient.today_empty"
 NUTRIENT_DAYCARE_AMOUNT_UNKNOWN = "nutrient.daycare_amount_unknown"
+# 급식 표를 못 읽어 집 식사 기록으로만 봤다(#956)
+NUTRIENT_DAYCARE_UNREAD = "nutrient.daycare_unread"
 # 1차 출력 — 기록된 날 중 식품군이 나온 날 수. 영양소 분석 문장은 이것뿐이다(N-17 · N-18)
 NUTRIENT_APPEARANCE = "nutrient.appearance"
+# 출현 줄 뒤에 붙는 줄 — 적게 나온 채소 · 과일 짚기 / 적은 기록 한계 / 이번 주 급식을 본 범위.
+# 급식 양을 모른다는 말은 위 `NUTRIENT_DAYCARE_AMOUNT_UNKNOWN`
+NUTRIENT_SPARSE = "nutrient.sparse"
+NUTRIENT_FEW_RECORDS = "nutrient.few_records"
+NUTRIENT_DAYCARE_UPCOMING = "nutrient.daycare_upcoming"
 # 구간 문장 틀 (#357 리뷰). 1차 출력에서는 화면에 내지 않는다 — 구간을 다시 낼 때 쓴다. 주어는 늘
 # 기록된 식사다
 NUTRIENT_BAND_LOW = "nutrient.band.low"
@@ -57,6 +68,14 @@ CHECK_ASK_FOOD = "check.ask_food"  # 음식 이름이 없을 때 되묻는 한 �
 # 식단 추천 요청 글에 알레르기 · 연령 금지 음식이 있을 때의 안내. 등록한 이름은 싣지 않는다
 MEAL_REQUEST_CONFLICT = "meal.request_conflict"
 MEAL_REQUEST_AGE_BLOCK = "meal.request_age_block"
+# 고른 메뉴가 왜 이렇게 모였는지(영양 반영) · 어디서 온 메뉴인지(레시피 출처). 코드가 만든 값만
+# 문구 자리에 채운다
+MEAL_NUTRIENT_BASIS = "meal.nutrient_basis"
+MEAL_DAYCARE_UNREAD = "meal.daycare_unread"  # 급식 표를 못 읽어 급식과의 겹침을 못 봤다(#956)
+MEAL_MENU_SOURCE = "meal.menu_source"
+MEAL_MENU_WEANING = "meal.menu_weaning"  # 고른 메뉴가 이유식 식단 표 메뉴(이유기, #399)
+MEAL_MENU_GENERATED = "meal.menu_generated"  # 고른 메뉴가 모두 레시피북에 없는 생성 메뉴
+MEAL_MENU_MIXED = "meal.menu_mixed"  # 레시피북 메뉴와 생성 메뉴가 섞임
 
 # 급식 조회 · 갱신 · 삭제
 DAYCARE_ASK_SUBSTITUTE = "daycare.ask_substitute"
@@ -68,9 +87,17 @@ DAYCARE_ABSENT = "daycare.absent"
 DAYCARE_AMBIGUOUS = "daycare.ambiguous"
 DAYCARE_SLOT_AMBIGUOUS = "daycare.slot_ambiguous"
 DAYCARE_ALLERGY_CONFLICT = "daycare.allergy_conflict"
+# 알레르기 조회 실패로 넣은 메뉴와 겹치는지 못 봤을 때 — "겹침 없음" 으로 넘기지 않는다
+DAYCARE_ALLERGY_UNCHECKED = "daycare.allergy_unchecked"
 DAYCARE_OUT_OF_RANGE = "daycare.out_of_range"
 DAYCARE_NOT_FOUND = "daycare.not_found"
+# 평일인데 급식 행이 없고 먹은 양만 말했을 때 — 무엇을 먹었는지 알려 달라고 안내한다 (#798)
+DAYCARE_AMOUNT_NO_MEAL = "daycare.amount_no_meal"
 DAYCARE_REPLACED_UNKNOWN = "daycare.replaced_unknown"
 DAYCARE_UNCHANGED = "daycare.unchanged"
+# 급식 날짜 조회(daycare_lookup) — 행마다 한 줄 · 기간에 급식이 없을 때 · 기간이 7일을 넘었을 때
+DAYCARE_LOOKUP_LINE = "daycare.lookup_line"
+DAYCARE_LOOKUP_EMPTY = "daycare.lookup_empty"
+DAYCARE_LOOKUP_TOO_LONG = "daycare.lookup_too_long"
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("food.readout.yaml"))

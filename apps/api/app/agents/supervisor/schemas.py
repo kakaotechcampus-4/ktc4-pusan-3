@@ -16,9 +16,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.agents.common.tool_schema import ToolDefinition, build_tool_spec
 from app.agents.food.schemas.common import FoodTaskType
+from app.agents.growth.schemas.task import GrowthTaskType
+from app.agents.health.schemas.task import HealthTaskType
 from app.agents.memory.schemas.task import WorkType
 
 logger = logging.getLogger(__name__)
+
+# 해석한 요청 한 문장의 상한. 넘으면 해석만 지우고 조각은 남긴다 (`_clean_resolved`)
+MAX_RESOLVED_CHARS = 200
 
 
 class SegmentKind(StrEnum):
@@ -36,6 +41,16 @@ class DomainAgentName(StrEnum):
     ACTIVITY = "activity"
     GROWTH = "growth"
     HEALTH = "health"
+
+
+class RequestMode(StrEnum):
+    """request 조각이 우리 아이 추천인가, 아이 일반 정보인가 (#574).
+
+    Agent 라벨이 아니라 공통 칸이다.
+    """
+
+    SUGGEST = "suggest"  # 우리 아이에게 무엇을 해 줄지 — 기본값
+    INFO = "info"  # 아이 일반("보통 3세는 …") — 추천 대신 문서 근거 답변
 
 
 class GuardReason(StrEnum):
@@ -63,7 +78,14 @@ _LABEL_ENUMS: dict[str, type] = {
     "agent": DomainAgentName,
     "guard": GuardReason,
     "food_task": FoodTaskType,
+    "growth_task": GrowthTaskType,
+    "health_task": HealthTaskType,
+    "request_mode": RequestMode,
 }
+
+
+# `request_mode=info` 를 받는 agent. Growth 는 문서 답, Health 는 routing 의 닫힘 안내 (#574)
+_INFO_MODE_AGENTS = frozenset({DomainAgentName.GROWTH.value, DomainAgentName.HEALTH.value})
 
 
 def _repair(data: dict[str, Any]) -> dict[str, Any]:
@@ -71,6 +93,13 @@ def _repair(data: dict[str, Any]) -> dict[str, Any]:
 
     - work는 record 전용. request인데 work만 있고 agent가 없으면 kind를 잘못 붙인 것
     - food에 유형이 빠졌으면 프롬프트가 정해 둔 기본값("애매하면 추천")사용
+    - growth에 유형이 빠졌으면 교육 추천(learning_suggestion)으로 채운다
+    - health 는 유형이 빠져도 채우지 않는다. 짐작한 라벨이 틀리면 복약 쓰기 경로가 열리기 때문에,
+      비워 두고 Health 가 unsupported 로 닫게 한다
+    - `request_mode=info` 는 growth · health 만 받는다. food · activity 에 붙으면 지우고 지금처럼
+      추천으로 읽는다 — 두 Agent 의 경계는 이 칸으로 바꾸지 않는다(#574)
+    - growth 의 `request_mode=info` 면 growth 라벨을 지우고 채우지도 않는다. 라벨은 추천의 Tool
+      묶음을 가르는 값이라 일반 정보 답변에는 쓰지 않는다
     """
     for name, enum in _LABEL_ENUMS.items():
         value = data.get(name)
@@ -99,6 +128,13 @@ def _repair(data: dict[str, Any]) -> dict[str, Any]:
         # 조각을 어디로 보낼지 모르겠을때의 처리
         data["kind"] = kind = SegmentKind.UNCLEAR.value
         logger.info("supervisor 조각을 unclear로 고침 — request인데 agent가 없다")
+    if data.get("request_mode") == RequestMode.INFO and data.get("agent") not in _INFO_MODE_AGENTS:
+        data.pop("request_mode")
+        logger.info("supervisor info 를 받지 않는 agent 라 request_mode 를 지움")
+    if kind == SegmentKind.REQUEST and data.get("request_mode") == RequestMode.INFO:
+        if data.pop("growth_task", None) is not None:
+            logger.info("supervisor info 조각에서 growth_task 를 지움")
+        return data
     if (
         kind == SegmentKind.REQUEST
         and data.get("agent") == DomainAgentName.FOOD
@@ -106,7 +142,36 @@ def _repair(data: dict[str, Any]) -> dict[str, Any]:
     ):
         data["food_task"] = FoodTaskType.MEAL_RECOMMENDATION.value
         logger.info("supervisor food 조각에 유형이 없어 기본값(meal_recommendation)을 넣음")
+    if (
+        kind == SegmentKind.REQUEST
+        and data.get("agent") == DomainAgentName.GROWTH
+        and not data.get("growth_task")
+    ):
+        data["growth_task"] = GrowthTaskType.LEARNING_SUGGESTION.value
+        logger.info("supervisor growth 조각에 유형이 없어 기본값(learning_suggestion)을 넣음")
     return data
+
+
+def _clean_resolved(data: dict[str, Any]) -> dict[str, Any]:
+    """resolved_request 는 request 조각의 요청 한 문장일 때만 둔다. 아니면 지우고 조각은 남긴다.
+
+    스키마 `max_length` 로 걸면 조각 전체가 버려진다 — 해석이 틀려도 원문 조각은 쓸 수 있다.
+    로그에는 이유만 남기고 문장은 싣지 않는다.
+    """
+    resolved = data.get("resolved_request")
+    if resolved is None:
+        return data
+    reason = None
+    if data.get("kind") != SegmentKind.REQUEST:
+        reason = "kind"
+    elif not isinstance(resolved, str) or not resolved.strip():
+        reason = "empty"
+    elif len(resolved.strip()) > MAX_RESOLVED_CHARS:
+        reason = "too_long"
+    if reason is not None:
+        logger.info("supervisor 조각에서 resolved_request 를 지움 reason=%s", reason)
+        return {key: value for key, value in data.items() if key != "resolved_request"}
+    return {**data, "resolved_request": resolved.strip()}
 
 
 _REQUIRED_FIELD: dict[SegmentKind, str] = {
@@ -156,7 +221,44 @@ class Segment(_Strict):
                 "agent=food 면 반드시 하나. meal_recommendation(뭘 먹일까·메뉴·간식) / "
                 "nutrient_analysis(영양 괜찮은지·영양소·과잉/부족) / "
                 "food_check(정해진 음식을 먹여도 되는지) / "
-                "daycare_meal(기관 급식이 실제로 바뀌었다는 말 — 대체식·결식)"
+                "daycare_meal(기관 급식이 실제로 바뀌었다는 말 — 대체식·결식) / "
+                "daycare_lookup(기관 급식 메뉴를 묻는 말)"
+            ),
+        ),
+    ]
+    growth_task: Annotated[
+        GrowthTaskType | None,
+        Field(
+            default=None,
+            description=(
+                "agent=growth 면 반드시 하나. learning_suggestion(배움 · 공부 · 교육 활동) / "
+                "routine_coaching(생활 습관 · 혼자 하기 · 예절 · 습관 고치기 · 잠 리듬) / "
+                "book_suggestion(책 · 그림책) / "
+                "growth_review(키 · 몸무게가 얼마나 컸는지 · 잘 크고 있는지)"
+            ),
+        ),
+    ]
+    health_task: Annotated[
+        HealthTaskType | None,
+        Field(
+            default=None,
+            description=(
+                "agent=health 면 하나. visit_summary(진료 준비 정리 · 열 언제부터) / "
+                "schedule_check(검진 · 접종 시기) / place_lookup(문 연 병원 찾기) / "
+                "medication(약 등록 · 바꾸기 · 끊기 · 먹였어 · 다음 약) / "
+                "care_handoff(투약의뢰서 · 응급 카드). 모르겠으면 비운다"
+            ),
+        ),
+    ]
+    request_mode: Annotated[
+        RequestMode | None,
+        Field(
+            default=None,
+            description=(
+                "kind=request 에만. suggest(우리 아이에게 해 줄 것 · 기본값) / "
+                "info(아이 일반을 묻는 말 — 보통 · 또래 · N세 아이들은 · 몇 살부터). "
+                "info 는 growth · health 에만 붙이고, growth 면 growth_task 를 비운다. "
+                "검진 · 접종 시기는 보통이 붙어도 info 가 아니라 health/schedule_check 다"
             ),
         ),
     ]
@@ -166,6 +268,16 @@ class Segment(_Strict):
             default=None,
             description=(
                 "kind=guarded 면 반드시 하나. safety_record / diagnosis / growth_record / hazard"
+            ),
+        ),
+    ]
+    resolved_request: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "앞 대화를 이어 묻는 request 조각에만. 앞 대화를 몰라도 뜻이 통하는 요청 한 문장"
+                f"({MAX_RESOLVED_CHARS}자 이내). 앞 대화가 없으면 비운다"
             ),
         ),
     ]
@@ -179,7 +291,7 @@ class Segment(_Strict):
         """
         if not isinstance(data, dict):
             return data
-        data = _repair(dict(data))
+        data = _clean_resolved(_repair(dict(data)))
         try:
             keep = _REQUIRED_FIELD.get(SegmentKind(data.get("kind")))
         except ValueError:
@@ -195,6 +307,20 @@ class Segment(_Strict):
         )
         if not is_food and data.get("food_task") is not None:
             dropped.append("food_task")
+        is_growth = data.get("kind") == SegmentKind.REQUEST and data.get("agent") == (
+            DomainAgentName.GROWTH
+        )
+        if not is_growth and data.get("growth_task") is not None:
+            dropped.append("growth_task")
+        is_health = data.get("kind") == SegmentKind.REQUEST and data.get("agent") == (
+            DomainAgentName.HEALTH
+        )
+        if not is_health and data.get("health_task") is not None:
+            dropped.append("health_task")
+        # request 가 아니면 의미가 없다
+        is_request = data.get("kind") == SegmentKind.REQUEST
+        if data.get("request_mode") is not None and not is_request:
+            dropped.append("request_mode")
         if not dropped:
             return data
 
@@ -213,9 +339,15 @@ class Segment(_Strict):
         required = _REQUIRED_FIELD.get(SegmentKind(self.kind))
         if required is not None and getattr(self, required) is None:
             raise ValueError(f"kind={self.kind}이면 {required}가 필요하다")
+        if self.request_mode == RequestMode.INFO:
+            return self  # 일반 정보 답변은 도메인 라벨을 쓰지 않는다
         if self.kind == SegmentKind.REQUEST and self.agent == DomainAgentName.FOOD:
             if self.food_task is None:
                 raise ValueError("agent=food이면 food_task가 필요하다")
+        if self.kind == SegmentKind.REQUEST and self.agent == DomainAgentName.GROWTH:
+            if self.growth_task is None:
+                raise ValueError("agent=growth이면 growth_task가 필요하다")
+        # health 는 라벨을 요구하지 않는다 — 엉뚱한 라벨을 받느니 비워 두고 Health 가 닫게 한다
         return self
 
 
@@ -234,7 +366,21 @@ ROUTE_TOOL = ToolDefinition(
     ),
     args=SupervisorOutput,
 )
-ROUTE_TOOL_SPEC = build_tool_spec(ROUTE_TOOL)
+_ROUTE_TOOL_SPEC_FULL = build_tool_spec(ROUTE_TOOL)
+
+
+def _without_resolved(spec: dict[str, Any]) -> dict[str, Any]:
+    copied = deepcopy(spec)
+    item = copied["function"]["parameters"]["properties"]["segments"]["items"]
+    item["properties"].pop("resolved_request")
+    return copied
+
+
+# 앞 대화가 없는 호출 — 앞 대화 기능이 생기기 전과 같은 여덟 칸이다. 단발 요청의 분류가 이 기능
+# 때문에 흔들리지 않게 모델이 보는 것을 늘리지 않는다
+ROUTE_TOOL_SPEC = _without_resolved(_ROUTE_TOOL_SPEC_FULL)
+# 앞 대화가 있는 호출 — `resolved_request` 칸이 더해진다
+ROUTE_TOOL_SPEC_CONTEXT = _ROUTE_TOOL_SPEC_FULL
 
 
 def _strict(spec: dict[str, Any]) -> dict[str, Any]:
@@ -252,6 +398,7 @@ def _strict(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 ROUTE_TOOL_SPEC_STRICT = _strict(ROUTE_TOOL_SPEC)
+ROUTE_TOOL_SPEC_CONTEXT_STRICT = _strict(ROUTE_TOOL_SPEC_CONTEXT)
 
 # 검증 실패 코드 — 모두 "Memory 단독으로 강등" 으로 이어진다 (재시도하지 않는다)
 NOT_SUBSTRING = "NOT_SUBSTRING"

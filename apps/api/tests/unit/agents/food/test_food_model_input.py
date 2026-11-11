@@ -127,6 +127,39 @@ async def test_재호출까지_간_모델_입력에도_알레르기_이름이_�
     assert_clean(model_input(llm))
 
 
+async def test_알레르기와_같은_이름의_선호_기록은_선조회_목록에_없고_인용도_거절된다() -> None:
+    # 등록 알레르기와 같은 음식의 선호 기록이 남아 있어도(알레르기를 나중에 등록한 아이) 선조회가 그
+    # 이름을 모델에게 내보내지 않는다 — 모델이 부르지 않아도 항상 나가는 경로라 코드가 거른다(#662)
+    egg_liked = affinity("달걀", polarity=1)
+    tofu_liked = affinity("두부", polarity=1)
+    memory = InMemoryFoodMemory({CHILD: [egg_liked, tofu_liked]}, {})
+    llm = ScriptedLLM(
+        propose(
+            "두부조림",
+            "시금치나물",
+            "미역국",
+            evidence=[{"kind": "profile_affinity", "id": str(egg_liked.id), "note": "x"}],
+        ),
+        propose(
+            "두부조림",
+            "시금치나물",
+            "미역국",
+            evidence=[{"kind": "profile_affinity", "id": str(tofu_liked.id), "note": "x"}],
+        ),
+    )
+
+    result = await run(
+        meal_task(), meal_context(TOFU, SPINACH, SOUP, safety=EGG, memory=memory), client=llm
+    )
+
+    first_user = next(m["content"] for m in llm.seen[0] if m["role"] == "user")
+    assert str(tofu_liked.id) in first_user
+    assert str(egg_liked.id) not in first_user
+    assert "EVIDENCE_REQUIRED" in "\n".join(str(m.get("content")) for m in llm.seen[1])
+    assert {draft.kind for draft in result.suggestions} == {"personalized"}
+    assert_clean(model_input(llm))
+
+
 async def test_급식_갱신의_모델_입력에도_알레르기_이름이_없다() -> None:
     # 급식 메뉴 계란국 이 알레르기에 걸려도 화면에는 경고가 나가지만 모델에게는 걸렸다는 사실만 간다
     context = daycare_context(safety=EGG)
@@ -205,3 +238,20 @@ async def test_요청에_알레르기_음식이_있어도_모델_입력에는_�
     )
 
     assert_clean(model_input(llm))  # "계란" 은 보호자가 쓴 말이라 남고, "달걀" · "난류" 는 없다
+
+
+async def test_재호출_제외_목록에_막힌_음식_이름이_든_메뉴는_싣지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 등록 이름(달걀)이 아니어도 "계란말이" 는 알레르기를 드러낸다. 막힌 메뉴는 새 목록에 없어서
+    # 다시 고를 수 없으니 제외 목록에서 빼도 된다 — 이미 고른 메뉴만 남는다
+    with_pool(monkeypatch, TOFU, EGGROLL, EGGSOUP, SPINACH, SOUP, BEEF)
+    llm = ScriptedLLM(
+        propose("두부조림", "계란말이", "계란국"), propose("시금치나물", "미역국", "소불고기")
+    )
+
+    await run(meal_task(), meal_context(safety=EGG), client=llm)
+
+    recall = str(llm.seen[1][-1].get("content") or "")
+    assert "- 두부조림" in recall
+    assert "계란" not in recall

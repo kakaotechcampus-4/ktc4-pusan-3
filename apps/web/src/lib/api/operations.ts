@@ -1,5 +1,5 @@
 /**
- * 되돌릴 수 없는 5개 엔드포인트 — **키가 필수 인자인 함수**로만 부른다.
+ * 되돌릴 수 없는 엔드포인트 — **키가 필수 인자인 함수**로만 부른다.
  *
  * 왜 `api.post(...)` 를 그대로 쓰지 않나 —
  * `api.post` 의 `idempotencyKey` 는 선택 인자다. 빠뜨려도 컴파일이 통과하고,
@@ -13,21 +13,33 @@
  */
 
 import { api } from "./client";
+import { NetworkError } from "./errors";
 import { idempotentPath, type IdempotencyKey } from "./idempotency";
 import type {
   ApproveSuggestionsRequest,
   ApproveSuggestionsResponse,
   CreateEventDraftsRequest,
   CreateEventDraftsResponse,
+  ConfirmDeleteProposalRequest,
   CreateInputResponse,
+  DeleteProposalResponse,
   HealthSafety,
+  ReviseMedicationBody,
+  SubmitMedicationBody,
+  SubmitMedicationResponse,
   OnboardingRequest,
   OnboardingResponse,
   PhotoCommitRequest,
   PhotoCommitResponse,
   PhotoLane,
+  PhotoUploadTicket,
   SubmitEventBody,
+  InputLocation,
+  ObservationKind,
   SubmitEventResponse,
+  SubmitRepeatEventBody,
+  UpdateSeriesBody,
+  UpdateSeriesResponse,
   UpdateHealthSafetyRequest,
   UpdateHealthSafetyResponse,
 } from "./types";
@@ -51,6 +63,11 @@ export interface InputRequest {
    * ⚠️ #175 머지 전 서버는 **모르는 필드라 무시한다** — 먼저 보내도 깨지지 않는다.
    */
   reply_to?: string;
+  /**
+   * 흐린 위치 (#593 · `CreateInputRequest.location`). 🚨 **보내기 직전에 붙인다** — 말풍선의 본문(`ChatTurn.body`)
+   * 에는 없다. 다시 시도가 같은 좌표로 나가도록 키마다 붙든다 (`stores/conversation.ts` 의 `sentLocations`).
+   */
+  location?: InputLocation;
 }
 
 /**
@@ -112,16 +129,105 @@ export function uploadPhoto(
  *    ⚠️ 이 필드도 계약서에 없다. 👉 `apps/api` Owner 협의 대상.
  */
 export function photoFormData(
-  file: File,
+  photo: File | { uploadKey: string },
   { lane, date }: { lane: PhotoLane; date?: string },
 ): FormData {
   const form = new FormData();
-  form.append("file", file);
+  // S3 에 이미 올렸으면 사진 대신 열쇠만 보낸다 (`sendPhoto`). 모양으로 가른다 —
+  // `instanceof File` 은 다른 실행 환경(iframe · 웹뷰 다리)에서 만든 File 을 못 알아본다
+  if ("uploadKey" in photo) form.append("upload_key", photo.uploadKey);
+  else form.append("file", photo);
   form.append("lane", lane);
   // 🚨 날짜를 프론트가 계산하지 않는다. 캘린더에서 고른 날이 있을 때만 그 값을 그대로 싣고,
   //    없으면 아예 보내지 않는다 — "오늘" 로 채우는 것은 서버가 할 일이다 (CLAUDE.md §3).
   if (date) form.append("date", date);
   return form;
+}
+
+/** 사진을 어디로 올릴지 받는다. 아무것도 저장하지 않고 하루 한도도 쓰지 않는다. */
+export function createPhotoUpload(childId: string): Promise<PhotoUploadTicket> {
+  return api.post(`/children/${childId}/photos/uploads`);
+}
+
+/**
+ * S3 업로드 주소에 사진을 올린다.
+ *
+ * 🚨 **`api` 클라이언트를 쓰지 않는다.** 우리 서버가 아니라서 인증 헤더 · 쿠키가 S3 로 새면 안 된다.
+ *    S3 는 주소에 든 서명으로 확인한다.
+ * 🚨 `file` 은 **맨 마지막**에 붙인다. S3 는 `file` 뒤의 폼 값을 무시한다.
+ * 🚨 시간 제한을 건다. 20초 안전망은 run 스트림만 보고 있어서, 여기서 멈추면 읽는 중에 갇힌다.
+ */
+export async function putPhotoToS3(
+  ticket: Pick<PhotoUploadTicket, "url" | "fields">,
+  file: File,
+): Promise<void> {
+  if (!ticket.url) throw new Error("사진을 올릴 곳을 받지 못했어요.");
+  const form = new FormData();
+  for (const [name, value] of Object.entries(ticket.fields ?? {})) form.append(name, value);
+  form.append("file", file);
+  const response = await fetch(ticket.url, {
+    method: "POST",
+    body: form,
+    credentials: "omit",
+    signal: AbortSignal.timeout(S3_UPLOAD_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error("사진을 보내지 못했어요.");
+}
+
+/** 15MB 사진을 느린 휴대폰 망으로 올려도 넉넉한 시간. */
+const S3_UPLOAD_TIMEOUT_MS = 60_000;
+
+/**
+ * 같은 사진의 재시도가 처음 올린 열쇠를 다시 쓰게 기억한다 (키 → S3 열쇠).
+ *
+ * 재시도마다 새로 올리면 ① 앞 요청이 서버에서 이미 성공했을 때 새 사본이 버킷에 남고
+ * ② 같은 Idempotency-Key 에 본문(upload_key)이 달라진다. 서버는 이미 지운 열쇠가 다시 와도
+ * 키 재생으로 앞 결과를 돌려준다.
+ * 🚨 기억하는 것은 **응답을 못 받은 실패**(`NetworkError`)까지다. 응답이 왔으면 오류여도 버린다 —
+ *    그 열쇠는 서버가 지웠을 수 있고(아래 `sendPhoto`), 그 뒤 재시도는 새로 올린 다른 열쇠를 같은
+ *    Idempotency-Key 로 보낸다. 서버와 목은 **성공한 요청만** 기억해서 이것이 422 가 되지 않는다
+ *    (`api/idempotency.py` · `mocks/handlers/idempotency.ts`).
+ */
+const uploadedFor = new Map<IdempotencyKey, string>();
+
+/**
+ * 사진을 서버가 읽을 수 있게 보낸다 — 사진 화면이 부르는 **한 자리**.
+ *
+ * 서버에 S3 버킷이 있으면 사진은 S3 로 가고 서버에는 열쇠만 간다. 서버는 내려받자마자 S3 에서
+ * 지운다(원본을 남기지 않는다). 버킷이 없는 로컬 개발이면 지금처럼 사진을 서버에 보낸다.
+ * 🚨 재시도는 같은 `idempotencyKey` 로 온다. 이미 S3 에 올렸으면 그 열쇠를 다시 보낸다.
+ * 🚨 S3 는 문서 사진만 쓴다. 서버가 아직 받지 않는 활동 사진(아이가 찍힌 사진)을 버킷에 올리지 않는다.
+ */
+export async function sendPhoto(
+  childId: string,
+  file: File,
+  options: { lane: PhotoLane; date?: string },
+  idempotencyKey: IdempotencyKey,
+): Promise<{ run_id: string }> {
+  let uploadKey = uploadedFor.get(idempotencyKey);
+  if (!uploadKey) {
+    const ticket = options.lane === "document" ? await createPhotoUpload(childId) : null;
+    if (!ticket || ticket.mode === "direct") {
+      return uploadPhoto(childId, photoFormData(file, options), idempotencyKey);
+    }
+    if (!ticket.key) throw new Error("사진을 올릴 곳을 받지 못했어요.");
+    await putPhotoToS3(ticket, file);
+    uploadKey = ticket.key;
+    uploadedFor.set(idempotencyKey, uploadKey);
+  }
+  try {
+    const res = await uploadPhoto(childId, photoFormData({ uploadKey }, options), idempotencyKey);
+    uploadedFor.delete(idempotencyKey);
+    return res;
+  } catch (error) {
+    // 🚨 응답이 왔으면(오류여도) 열쇠를 버린다. 서버는 핸들러 안에서 사진을 읽지 않고 돌려보낼 때
+    //    S3 원본을 지운다(503 스위치 · 429 한도 · 400 …). 그 열쇠로 다시 보내면 매번 "사진을 다시
+    //    골라 주세요" 다 (#727 리뷰). 핸들러 앞에서 끝난 오류(401 · 403 남의 아이 · 프록시 502)는 원본을
+    //    못 지우지만, 새로 올리면 되고 남은 원본은 버킷 수명 규칙이 지운다.
+    //    응답을 못 받았을 때(`NetworkError`)만 남긴다 — 서버가 받았는지 모른다.
+    if (!(error instanceof NetworkError)) uploadedFor.delete(idempotencyKey);
+    throw error;
+  }
 }
 
 /*
@@ -153,6 +259,8 @@ export interface HealthSafetyRequest {
   severity?: string | null;
   reactions?: string[];
   notes?: string | null;
+  /** 괜찮았던 식품으로 저장한다 (#825 · 뜻은 `types.ts` 의 `CreateHealthSafetyRequest.tolerated`). */
+  tolerated?: boolean;
 }
 
 /**
@@ -182,6 +290,36 @@ export function updateHealthSafety(
   idempotencyKey: IdempotencyKey,
 ): Promise<UpdateHealthSafetyResponse> {
   return api.patch(idempotentPath.updateHealthSafety(childId, safetyId), body, { idempotencyKey });
+}
+
+/* ── 🚨 승인 게이트 ㉡ — 복약 초안 제출 (#537) ─────────────────────────── */
+
+/**
+ * 복약 초안을 **등록한다.** 코스와 기간만큼의 회차가 생긴다 — 되돌릴 수 없는 지점이다.
+ *
+ * 🚨 **게이트 ㉡ 안의 메서드다** (건강 기록 확정). 새 게이트가 아니다 (`idempotentPath.submitMedication`).
+ * 🚨 본문은 보호자가 카드에서 확인한 최종 상태 전체다. 낙관적 업데이트 금지 · 재시도는 같은 키.
+ * 경로 · 본문 · 응답은 서버 계약(`SubmitMedicationRequest` · `SubmitMedicationResponse`)과 같다.
+ */
+export function submitMedicationDraft(
+  childId: string,
+  body: SubmitMedicationBody,
+  idempotencyKey: IdempotencyKey,
+): Promise<SubmitMedicationResponse> {
+  return api.post(idempotentPath.submitMedication(childId), body, { idempotencyKey });
+}
+
+/**
+ * 복약 수정 초안을 반영한다. 🚨 **이것도 게이트 ㉡ 이고 키를 받는다.** 지난 회차와 그 체크는 서버가 그대로 둔다 —
+ * 화면은 그 규칙을 흉내 내지 않고 본문만 보낸다. 🚨 `source` 는 수정에서 바뀌지 않아 싣지 않는다.
+ */
+export function updateMedicationDraft(
+  childId: string,
+  scheduleId: string,
+  body: ReviseMedicationBody,
+  idempotencyKey: IdempotencyKey,
+): Promise<SubmitMedicationResponse> {
+  return api.patch(idempotentPath.updateMedication(childId, scheduleId), body, { idempotencyKey });
 }
 
 /* ── 05 제안 → 일정 초안 ──────────────────────────────────────────────── */
@@ -226,7 +364,8 @@ export function createEventDrafts(
  */
 export function submitEventDraft(
   childId: string,
-  body: SubmitEventBody,
+  /** 🚨 반복 일정(#738)도 같은 경로다 — `repeat` 가 실리면 서버가 회차마다 펼친다. */
+  body: SubmitEventBody | SubmitRepeatEventBody,
   idempotencyKey: IdempotencyKey,
 ): Promise<SubmitEventResponse> {
   return api.post(idempotentPath.submitEvent(childId), body, { idempotencyKey });
@@ -244,12 +383,95 @@ export function submitEventDraft(
  *    `event_id` 하나로는 남의 아이 일정인지 가릴 수 없다.
  * 🚨 본문은 `submitEventDraft` 와 같은 **최종 목록**이다 (`items` 에서 빠진 `item_id` 는 삭제).
  *    `suggestion_ids` 는 싣지 않는다 — 제안 ↔ 일정 연결은 create 에서만 생긴다.
+ * 🚨 `reminder` 도 싣지 않는다 (#609). 계약은 받지만, 칸이 없어야 서버가 걸린 알림을 그대로 두고
+ *    시각 · 종일이 바뀔 때 알아서 옮긴다. 같은 값을 다시 보내면 시작을 옮긴 경우 그 값이 지나
+ *    `422 invalid_reminder` 로 수정까지 막힌다. 걸린 알림은 09 하루 패널이 `PUT …/reminder` 로 바꾼다.
  */
 export function updateEventDraft(
   childId: string,
   eventId: string,
-  body: Omit<SubmitEventBody, "suggestion_ids">,
+  body: Omit<SubmitEventBody, "suggestion_ids" | "reminder">,
   idempotencyKey: IdempotencyKey,
 ): Promise<SubmitEventResponse> {
   return api.patch(idempotentPath.updateEvent(childId, eventId), body, { idempotencyKey });
+}
+
+/**
+ * 반복 묶음 고치기 초안을 반영한다 (#738). 🚨 **캘린더 쓰기라 게이트 ㉠ 이고, 키를 받는다** — 같은 게이트의 다른 메서드다.
+ *
+ * 🚨 아직 시작하지 않은 회차에만 적용되고, 서버는 `before` 와 달라진 값만 바꾼다 (`UpdateSeriesBody`).
+ * 🚨 `reminder` 를 싣지 않는다 — 수정 초안(`updateEventDraft`)과 같다. 걸린 알림은 회차마다 서버가 옮긴다.
+ * 경로와 본문은 서버 `PATCH /children/{cid}/event-series/{sid}`(#761)와 같다 — 짝은 `contract/schema-map.ts`.
+ */
+export function updateEventSeries(
+  childId: string,
+  seriesId: string,
+  body: UpdateSeriesBody,
+  idempotencyKey: IdempotencyKey,
+): Promise<UpdateSeriesResponse> {
+  return api.patch(idempotentPath.updateEventSeries(childId, seriesId), body, { idempotencyKey });
+}
+
+/* ── 04 대화의 삭제 확정 (#535) ───────────────────────────────────────── */
+
+/**
+ * 🚨 **체크한 기록 · 일정을 지운다** — 되살릴 수 없다. 대화 카드에서 두 번 누른 뒤에만 부른다.
+ *
+ * 서버는 **제안 후보 안의 체크한 것만** 한 트랜잭션에서 지운다. 하나라도 후보 밖이면 422 `not_in_proposal`
+ * 이고 아무것도 지우지 않는다. 24시간이 지났으면 409 `proposal_expired`, 이미 끝난 제안이면 409 `proposal_closed`.
+ * 🚨 키는 **체크한 id 목록에 묶는다** (`current(payload)`) — 실패한 뒤 체크를 바꿔 다시 누르면 다른 본문이다.
+ */
+export function confirmDeleteProposal(
+  childId: string,
+  proposalId: string,
+  body: ConfirmDeleteProposalRequest,
+  idempotencyKey: IdempotencyKey,
+) {
+  return api.post<DeleteProposalResponse>(
+    idempotentPath.confirmDeleteProposal(childId, proposalId),
+    body,
+    { idempotencyKey },
+  );
+}
+
+/**
+ * 삭제 제안을 아무것도 지우지 않고 닫는다. 키가 없다 — 지우지 않아서 다시 보내도 같은 응답이 온다.
+ * 이미 지운 제안이면 409 `proposal_closed`, 24시간이 지났으면 409 `proposal_expired`.
+ */
+export function cancelDeleteProposal(childId: string, proposalId: string) {
+  return api.post<DeleteProposalResponse>(
+    `/children/${childId}/delete-proposals/${proposalId}/cancel`,
+  );
+}
+
+/* ── 07 기록 상세의 기록 지우기 (#736 · #779) ───────────────────────────── */
+
+/**
+ * 🚨 **기록 한 건을 지운다** — 되살릴 수 없다. 기록 상세 시트에서 확인 띠를 한 번 더 누른 뒤에만 부른다.
+ *    보호자가 직접 누르는 삭제라 승인 게이트가 아니라 확인 창이다 (최상위 §2 — 게이트 ㉢ 은 AI 가 고른 삭제다).
+ *
+ * 서버는 대화 삭제(#535)와 같은 함수로 지운다 — 상태는 `deleted`, 검색 벡터를 비우고 묶인 기억을 다시 계산한다.
+ * `deleted` 가 아닌 기록은 상태와 상관없이 지운다(고친 기록 `stand_alone` 도). 응답은 204(본문 없음).
+ * 이미 지웠거나 없는 기록이면 404 `not_found` 다 — 다른 보호자가 먼저 지웠을 수 있어 실패가 아니다.
+ * 🚨 키는 **기록에 묶는다** (`current(\`${kind}/${id}\`)`) — 본문이 없어서 다른 기록을 지울 때 새 키가 나가게 한다.
+ */
+export function deleteObservation(
+  childId: string,
+  kind: ObservationKind,
+  observationId: string,
+  idempotencyKey: IdempotencyKey,
+) {
+  return api.delete<void>(idempotentPath.deleteObservation(childId, kind, observationId), {
+    idempotencyKey,
+  });
+}
+
+/* ── 아이 삭제 (#751) ─────────────────────────────────────────────────── */
+
+/**
+ * 아이 삭제 (#751) — 아이와 기록을 통째로 지운다. 등록 보호자만 (함께 보는 보호자는 403 `owner_only`).
+ * 🚨 키는 `useIdempotencyKey()` 로 들고 있는다 — 응답을 잃고 다시 누를 때 같은 키여야 한다.
+ */
+export function deleteChild(childId: string, idempotencyKey: IdempotencyKey) {
+  return api.delete<void>(idempotentPath.deleteChild(childId), { idempotencyKey });
 }

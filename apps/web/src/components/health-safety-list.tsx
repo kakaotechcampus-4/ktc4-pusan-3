@@ -65,7 +65,7 @@ import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
  */
 const TYPE_OPTIONS = [
   { value: "allergy", label: "알레르기" },
-  { value: "chronic_disease", label: "지병 · 만성질환" },
+  { value: "chronic_disease", label: "지병·만성질환" },
 ] as const;
 
 type TypeValue = (typeof TYPE_OPTIONS)[number]["value"];
@@ -213,15 +213,15 @@ function HealthSafetyRow({
           <p className="text-body-sm text-ink-muted">
             {/* 🚨 라벨에 조사를 박지 않는다 — 받침으로 고르는 것은 `josa` 다
                 (apps/web/CLAUDE.md §3 · 옵션 키는 받침형이 앞이다). */}
-            {josa(item.label, "이/가")} 안전 정보에서 빠져요. 앞으로 식사 제안이 이 항목을 거르지
-            않아요.
+            {josa(item.label, "이/가")} 알레르기·건강 목록에서 빠져요. 앞으로 식사 추천이 이 항목을
+            거르지 않아요.
           </p>
           {/* 🚨 **실패를 빨강으로 칠하지 않는다** (디자인 시스템 §3 · §5). `danger` 는
               알레르기·건강 중단·파괴적 확정에만 쓰고, 실패는 `ink-muted` 다.
               🚨 **서버가 준 문구를 그대로 싣지 않는다** — 에러 문구는 프론트가 만든다. */}
           {retract.isError ? (
             <p role="status" className="text-body-sm text-ink-muted">
-              내리지 못했어요. 아직 안전 정보에 그대로 있으니 다시 눌러 주세요.
+              내리지 못했어요. 아직 목록에 그대로 있으니 다시 눌러 주세요.
             </p>
           ) : null}
           <div className="flex gap-2">
@@ -375,7 +375,7 @@ export function HealthSafetySheet({
     }
 
     const trimmed = label.trim();
-    setLabelError(trimmed ? null : "무엇인지 적어주세요");
+    setLabelError(trimmed ? null : "무엇인지 적어 주세요");
     if (!trimmed || reactionsTooLong) return;
 
     save.mutate({
@@ -398,7 +398,7 @@ export function HealthSafetySheet({
         reset();
         onClose();
       }}
-      title={editing ? "알레르기 · 건강 기록 고치기" : "알레르기 · 건강 기록 추가"}
+      title={editing ? "알레르기·건강 기록 고치기" : "알레르기·건강 기록 추가"}
       // 🚨 승인 시트는 스크림 탭·ESC 로 닫히지 않는다 (디자인 시스템 §7). 나가는 길은 아래 버튼이다.
       dismissible={false}
       footer={
@@ -422,12 +422,12 @@ export function HealthSafetySheet({
             </p>
           ) : consentRequired ? (
             <p role="status" className="text-body-sm text-ink-muted">
-              건강 정보 동의를 받기 전이라 저장된 것은 하나도 없어요. 동의 화면은 아직 없어요.
+              건강 정보 동의를 받기 전이라 저장된 것은 하나도 없어요.
             </p>
           ) : failed ? (
             <p role="status" className="text-body-sm text-ink-muted">
               {editing
-                ? "고친 것을 확인하지 못했어요. 다시 누르면 같은 요청으로 이어서 확인해요."
+                ? "고친 내용이 들어갔는지 확인하지 못했어요. 다시 누르면 이어서 확인해요."
                 : "등록하지 못했어요. 저장된 것은 하나도 없으니 다시 눌러 주세요."}
             </p>
           ) : null}
@@ -458,9 +458,9 @@ export function HealthSafetySheet({
     >
       <div className="flex flex-col gap-4">
         {/* 🚨 `caution` 은 승인 게이트 2곳 전용이다 (디자인 시스템 §3). 여기가 그중 하나다. */}
-        <Banner tone="caution" title="보호자가 확인한 것만 적어주세요">
-          여기 적은 것은 AI 가 고치거나 지우지 못해요. 식사 제안은 이 기록만 보고 거르기 때문에,
-          들은 이야기가 아니라 직접 확인한 것만 남기는 편이 안전해요.
+        <Banner tone="caution" title="보호자가 확인한 것만 적어 주세요">
+          여기 적은 것은 AI가 고치거나 지우지 못해요. 식사 추천은 이 기록만 보고 거르기 때문에, 들은
+          이야기가 아니라 직접 확인한 것만 남기는 편이 안전해요.
         </Banner>
 
         {/* 🚨 **고칠 때는 종류와 이름이 입력이 아니다.** 그 둘은 이 기록의 정체라서, 바꾸는 것은
@@ -520,7 +520,7 @@ export function HealthSafetySheet({
         />
 
         <TextInput
-          label="증상 · 선택"
+          label="증상 (선택)"
           hint="쉼표로 나눠 적어요. 두드러기, 기침"
           value={reactions}
           onChange={(e) => {
@@ -532,7 +532,7 @@ export function HealthSafetySheet({
         />
 
         <TextInput
-          label="메모 · 선택"
+          label="메모 (선택)"
           hint="언제 어디서 확인했는지 적어 두면 나중에 도움이 돼요."
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
@@ -551,7 +551,7 @@ export function HealthSafetySheet({
 export function HealthSafetyListSkeleton() {
   return (
     <SkeletonGroup
-      label="안전 정보를 불러오는 중"
+      label="알레르기·건강 기록을 불러오는 중"
       className="border-line rounded-card bg-surface overflow-hidden border"
     >
       <div className="flex items-start gap-3 px-4 py-3.5">

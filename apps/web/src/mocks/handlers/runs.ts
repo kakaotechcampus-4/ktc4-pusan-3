@@ -1,14 +1,24 @@
 import { http, HttpResponse } from "msw";
 
 import type { AgentReadout, AgentResultEvent } from "@/lib/api/sse";
-import type { Agent, CreateInputResponse, Observation } from "@/lib/api/types";
+import {
+  INPUT_TEXT_MAX_LENGTH,
+  type Agent,
+  type CreateInputResponse,
+  type InputLocation,
+  type Observation,
+} from "@/lib/api/types";
+// 서버는 서류 머리에 오늘을 `isoformat()` 으로 싣는다 (`YYYY-MM-DD`).
+import { toSeoulDateKey } from "@/lib/format";
 
 import {
+  CHILD_ID,
   educationObservation,
   generalSuggestions,
   healthObservation,
   observations,
   routineObservation,
+  repeatRunDrafts,
   runEventDrafts,
   suggestions,
 } from "../fixtures";
@@ -18,6 +28,8 @@ import { hideTurn, recordedDayOf, recordingTurn, revealTurns } from "./chat";
 import { pendingReplies } from "./pending-replies";
 import { forgetRun, withIdempotency } from "./idempotency";
 import { isPhotoRun, photoRunScript } from "./photos";
+import { medicationRunDrafts, stopSeededCourse } from "./medications";
+import { foundTabsFixture, proposeDelete } from "./delete-proposals";
 
 /**
  * 04 대화 — 입력 한 줄과 run 스트림.
@@ -36,6 +48,8 @@ interface SubmittedInput {
   childId: string;
   text: string;
   replyTo?: string;
+  /** 흐린 위치 (#593). 테스트가 "동의 없으면 안 싣는다 · 다시 시도는 같은 값" 을 확인하는 자리. 목은 쓰지 않는다. */
+  location?: InputLocation;
 }
 
 const inputByRun = new Map<string, SubmittedInput>();
@@ -52,6 +66,13 @@ const failedOnce = new Set<string>();
  * 늘 물으면 끝나지 않는다. 상한까지 묻는 대화는 `reply_ask_limit` 이 따로 만든다.
  */
 const askedAgain = new Set<string>();
+
+/**
+ * Health 복약이 되물은 run 과 무엇을 물었는지 (#537 · #713). 🚨 이 run 에 온 답은 Memory 가 아니라 **Health 가
+ * 이어받는다** — 서버도 되묻기 맥락에 어느 Agent 의 것인지 싣는다(`DomainPending.agent`). 이어받기 대본이 이 표로
+ * 갈린다. `which` 는 어느 약인지, `stop` 은 멈출지다 — 서버처럼 `which` 의 답이 `stop` 을 다시 묻는다.
+ */
+const medicationQuestions = new Map<string, "which" | "stop">();
 
 /** `send_failed` 에서 이미 한 번 끊어 본 Idempotency-Key. 🚨 키마다 한 번만 끊는다 — 다시 시도가 닿아야 한다. */
 const droppedSends = new Set<string>();
@@ -75,6 +96,7 @@ export function resetSubmittedInputs(): void {
   askedAgain.clear();
   droppedSends.clear();
   expiredRuns.clear();
+  medicationQuestions.clear();
 }
 
 /**
@@ -166,7 +188,7 @@ const MAX_QUESTIONS = 4;
 
 /**
  * 상한에 닿은 run 이 질문 대신 내는 말 (서버 `pipeline.py` 의 `ASK_LIMIT_NOTE` 와 같은 글자).
- * 🚨 **"확인" 이 들어가지 않는다** — 저장 없이 message 만 온 run 의 제목이 "적어주신 말을 확인했어요" 라서
+ * 🚨 **"확인" 이 들어가지 않는다** — 저장 없이 message 만 온 run 의 제목이 "적어 주신 말을 확인했어요" 라서
  *    "확인하지 못해" 가 그 바로 아래 서면 한 화면에서 말이 부딪힌다 (#251 리뷰).
  */
 const ASK_LIMIT_NOTE = "필요한 정보가 다 모이지 않아 이번 내용은 저장하지 않았어요.";
@@ -191,6 +213,52 @@ const EMPTY_NOTICE_READOUT: AgentReadout = {
   body: "조건에 맞는 추천이 없어요.",
   authored_by: "code",
   code: "empty",
+  source_refs: [],
+  sources: [],
+};
+
+/**
+ * 일반 정보 질문의 답 (#574). 서버 `common/doc_answer.readout.yaml` 의 기준 안내 + 모델 답 한 덩어리.
+ * 🚨 추천이 아니다 — `suggestion_ids` 가 비어 후보 카드 · 05 가 서지 않는다. 답 아래 참고 줄이 선다.
+ * 문서 행은 지어낸 값이다 (실제 시드 행의 제목을 옮기지 않는다).
+ */
+const INFO_RESULT: AgentResultEvent = {
+  agent: "growth",
+  task_type: "info",
+  status: "completed",
+  readouts: [
+    {
+      kind: "notice",
+      title: "",
+      body: "아이마다 속도가 달라서 나이별 기준은 알려드리지 않아요. 궁금한 점은 영유아 검진 때 상담해 보세요.",
+      authored_by: "code",
+      code: null,
+      source_refs: [],
+      sources: [],
+    },
+    {
+      kind: "doc_answer",
+      title: "만 3세 무렵 생활과 배움 · 일반 자료",
+      body: "계단을 오르며 하나씩 소리 내어 세어 볼 수 있어요. 놀이처럼 같이 해 보면 좋아요.",
+      authored_by: "model",
+      code: null,
+      source_refs: [],
+      sources: [
+        {
+          ref: { kind: "growth_doc", id: "00000000-0000-4000-8000-000000000574" },
+          title: "계단 오르며 수 세기",
+          source_org: "교육부",
+          source_title: "누리과정 해설서",
+          source_url: null,
+        },
+      ],
+    },
+  ],
+  question: null,
+  suggestion_ids: [],
+  kind: null,
+  reason: null,
+  record_count: null,
 };
 
 /** Agent 가 되묻는 한 줄 (`needs_observation`). Memory 의 `NOTE_QUESTION` 과 **다른 문장**이라 화면에서 갈린다. */
@@ -205,10 +273,19 @@ const AGENT_QUESTION = "요즘 주로 집 안에서 노는지 바깥에서 노�
  */
 async function* agentResultScript(
   runId: string,
-  scenario: "agent_readout" | "agent_question" | "agent_partial" | "agent_suggestions",
+  scenario:
+    "agent_readout" | "agent_question" | "agent_partial" | "agent_suggestions" | "agent_info",
 ): AsyncGenerator<Uint8Array> {
   yield frame("step", { index: 3, total: 3, label: "다음 행동을 준비하고 있어요" });
   await sleep(700);
+
+  if (scenario === "agent_info") {
+    // 일반 정보 답 (#574) — 추천 없이 readout 하나. 나머지 시나리오의 결과 표와 섞지 않는다
+    yield frame("agent_result", INFO_RESULT);
+    await sleep(400);
+    yield frame("done", { run_id: runId, model_calls: 1 });
+    return;
+  }
 
   const results: AgentResultEvent[] =
     scenario === "agent_suggestions"
@@ -239,6 +316,8 @@ async function* agentResultScript(
                 body: "조건에 맞는 추천을 1개 준비했어요.",
                 authored_by: "code",
                 code: "fewer",
+                source_refs: [],
+                sources: [],
               },
               {
                 // 서버 activity.readout.yaml 의 날씨 안내와 같은 글자 — code 가 없다
@@ -247,13 +326,15 @@ async function* agentResultScript(
                 body: "오늘은 바깥 활동이 어려운 날이라 실내 놀이만 골랐어요.",
                 authored_by: "code",
                 code: null,
+                source_refs: [],
+                sources: [],
               },
             ],
             question: null,
             suggestion_ids: [generalSuggestions[0].id],
             kind: "general",
             // 서버 activity/review.py 의 GENERAL_REASON 과 같은 글자
-            reason: "쌓인 놀이 기록이 아직 적어서, 이 나이 아이들에게 많이 권하는 놀이로 골랐어요.",
+            reason: "이 나이 아이들에게 많이 권하는 놀이로 골랐어요.",
             record_count: 1,
           },
         ]
@@ -270,6 +351,8 @@ async function* agentResultScript(
                   body: GROWTH_DELTA_BODY,
                   authored_by: "code",
                   code: null,
+                  source_refs: [],
+                  sources: [],
                 },
               ],
               question: null,
@@ -348,6 +431,207 @@ async function* agentResultScript(
   yield frame("done", { run_id: runId, model_calls: results.length });
 }
 
+/** Health 결과 한 건의 빈 칸. 대본마다 바뀌는 것만 덮어 쓴다. */
+function healthResult(fields: Partial<AgentResultEvent>): AgentResultEvent {
+  return {
+    agent: "health",
+    task_type: "medication",
+    status: "completed",
+    readouts: [],
+    question: null,
+    awaits_reply: false,
+    suggestion_ids: [],
+    kind: null,
+    reason: null,
+    record_count: null,
+    ...fields,
+  };
+}
+
+/**
+ * Health readout 한 줄 — 서버 `health.readout.yaml` 의 코드 문구 모양이다 (`authored_by: "code"`).
+ * `source_refs` 는 SSE 에서 늘 있는 키다 (#713). 서버는 복약 코스(`medication_schedule`)만 싣는다.
+ */
+function healthReadout(kind: string, body: string, courseIds: string[] = []): AgentReadout {
+  return {
+    kind,
+    title: "",
+    body,
+    authored_by: "code",
+    code: null,
+    source_refs: courseIds.map((id) => ({ kind: "medication_schedule" as const, id })),
+    sources: [],
+  };
+}
+
+/** 서버 `med.stop_confirm` 과 같은 글자. 🚨 Health 의 질문은 readout 이 아니라 `question` 으로 나간다 (#537). */
+const MED_STOP_QUESTION = "해열 시럽 복약 알림을 멈출까요? 먹인 기록은 그대로 남아요.";
+
+/** 서버 `med.which` 와 같은 모양. 목의 기본 코스는 해열 시럽 하나라서 기침 시럽은 고를 수 없는 이름이다. */
+const MED_WHICH_QUESTION = "어느 약 말씀이세요? 해열 시럽 · 기침 시럽";
+
+/** 서버 `pipeline.py` 의 `LEFTOVER_NOTE` · `LEFTOVER_NOTE_QUESTION` 과 같은 글자 (#713). */
+const LEFTOVER_NOTE = "답변과 함께 적은 다른 내용은 반영하지 않았어요. 따로 한 줄로 보내 주세요.";
+const LEFTOVER_NOTE_QUESTION =
+  "적어 주신 다른 내용은 반영하지 않았어요. 이 질문에 먼저 답한 뒤 따로 한 줄로 보내 주세요.";
+
+/** 목의 기본 복약 코스 (`handlers/medications.ts` 의 `ms_seed`). 회차 현황 · 체크 안내가 가리킨다. */
+const SEEDED_COURSE = "ms_seed";
+
+const MEDICATION_SCENARIOS = [
+  "med_draft",
+  "med_question",
+  "med_handoff",
+  "med_check",
+  "med_which",
+] as const;
+type MedicationScenario = (typeof MEDICATION_SCENARIOS)[number];
+
+/**
+ * Health 복약 run (#537). 서버 순서와 같다 — `agent_result` → (초안이 있으면) 복약 초안 프레임 → `done`.
+ *
+ * - `med_draft` — 새 복약 + 수정 초안. 🚨 **아무것도 저장되지 않았다** — 넣는 것은 카드의 게이트 ㉡ 다.
+ * - `med_question` — 중단을 **한 번 묻고** 이 run 에서는 아무것도 바꾸지 않는다. 답을 받는 질문이라 `awaits_reply`.
+ * - `med_handoff` — 회차 현황 · 투약의뢰서 · 응급 카드. 🚨 알레르기 조회가 실패한 줄을 "없음" 으로 쓰지 않는다.
+ * - `med_check` — "먹였어" 의 답. 아무것도 쓰지 않고 체크 안내만 낸다. 안내가 그 코스를 가리킨다 (#713).
+ * - `med_which` — 어느 약인지 먼저 묻는다. 답이 약 이름이면 이어받는 run 이 멈출지를 다시 묻는다 (#713 세 턴).
+ * 복약 초안 프레임 이름은 `medication_draft` 하나다 (`sse.ts` 의 `MEDICATION_DRAFT_EVENT` · #563 리뷰).
+ */
+async function* medicationScript(
+  runId: string,
+  scenario: MedicationScenario,
+  childId: string | undefined,
+): AsyncGenerator<Uint8Array> {
+  yield frame("step", { index: 3, total: 3, label: "다음 행동을 준비하고 있어요" });
+  await sleep(600);
+
+  if (scenario === "med_draft") {
+    yield frame(
+      "agent_result",
+      healthResult({
+        readouts: [
+          healthReadout("medication_notice", "기침 시럽, 08:30 · 12:30 · 19:30에 알려드릴까요?"),
+          healthReadout(
+            "medication_notice",
+            "해열 시럽 알림을 08:30 · 12:30 · 20:00로 바꿀까요? 확인 전까지는 기존 시각에 알려드려요.",
+          ),
+        ],
+      }),
+    );
+    await sleep(300);
+    yield frame("medication_draft", { drafts: medicationRunDrafts() });
+    await sleep(200);
+  } else if (scenario === "med_question" || scenario === "med_which") {
+    // 🚨 질문을 내보내기 **직전에** 맥락을 넣는다 — 서버도 `done` 앞에 넣는다 (`pending-replies.ts`).
+    if (childId) pendingReplies.set(runId, childId);
+    const asked = scenario === "med_which" ? "which" : "stop";
+    medicationQuestions.set(runId, asked);
+    yield frame(
+      "agent_result",
+      healthResult({
+        question: asked === "which" ? MED_WHICH_QUESTION : MED_STOP_QUESTION,
+        awaits_reply: true,
+      }),
+    );
+    await sleep(300);
+  } else if (scenario === "med_check") {
+    yield frame(
+      "agent_result",
+      healthResult({
+        readouts: [
+          healthReadout("notice", "복용 체크는 홈이나 복약 화면에서 해 주세요.", [SEEDED_COURSE]),
+        ],
+      }),
+    );
+    await sleep(300);
+  } else {
+    yield frame(
+      "agent_result",
+      healthResult({
+        task_type: "care_handoff",
+        readouts: [
+          healthReadout(
+            "dose_status",
+            "마지막 체크 12:30 회차 · 다음 예정 19:30 · 오늘 체크 2/3회",
+            [SEEDED_COURSE],
+          ),
+          healthReadout(
+            "med_notice_form",
+            [
+              `[투약 의뢰서]  ${toSeoulDateKey(new Date())}`,
+              "• 약 종류 : 해열 시럽 (5ml)",
+              "• 투약 시각 : 12:30",
+              "• 보관 : 실온",
+              "• 복용 이유 : 열",
+              "• 특이사항 : -",
+              "보호자 확인 후 서명해 주세요.",
+            ].join("\n"),
+          ),
+          healthReadout(
+            "emergency_card",
+            [
+              `[응급 카드]  ${toSeoulDateKey(new Date())}`,
+              "• 아이 : 하늘이 (2022-03-01생, 만 4세)",
+              "• 알레르기 · 만성질환 : 불러오지 못했어요. 직접 확인해 주세요.",
+              "• 복용 중인 약 : 해열 시럽 (5ml)",
+            ].join("\n"),
+          ),
+        ],
+      }),
+    );
+    await sleep(300);
+  }
+
+  yield frame("done", { run_id: runId, model_calls: scenario === "med_draft" ? 1 : 0 });
+}
+
+/**
+ * 복약 되묻기에 대한 답을 이어받는 run (#537 · #713). 🚨 **모델 없이** 이어 간다. 문구는 `health.readout.yaml` 과 같다.
+ *
+ * - 멈출지(`stop`): '네' 면 멈추고, '아니요' 면 그대로 둔다.
+ * - 어느 약(`which`): 이름이 해열 시럽이면 이 run 이 **멈출지를 다시 묻는다** — 서버도 이어받은 run 이 또 묻는다.
+ * - 못 가리면 아무것도 쓰지 않고 다시 묻지도 않는다 (서버 `med.which_unclear`).
+ * - ⚠️ 서버는 답에 섞인 다른 내용(증상 · 체온 · 복용 낱말이나 20자 넘는 글)을 코드로 가린다 (`answer_leftover`).
+ *   목은 **'그리고' 뒤**를 다른 내용으로 친다. 다시 묻는 run 이면 질문에 먼저 답하라는 안내다.
+ */
+async function* medicationContinuation(
+  runId: string,
+  input: SubmittedInput,
+  asked: "which" | "stop",
+): AsyncGenerator<Uint8Array> {
+  yield frame("step", { index: 1, total: 1, label: "이어서 적은 내용을 살펴보고 있어요" });
+  await sleep(500);
+  const [answer, ...rest] = input.text.split("그리고");
+  const leftover = rest.join("").trim() !== "";
+  const said = answer.trim();
+
+  if (asked === "which" && said.includes("해열")) {
+    // 🚨 다시 묻는 질문도 답을 받는다 — 맥락을 질문 직전에 다시 넣는다 (`med_question` 과 같은 자리).
+    pendingReplies.set(runId, input.childId);
+    medicationQuestions.set(runId, "stop");
+    if (leftover) yield frame("note", { text: LEFTOVER_NOTE_QUESTION, kind: "message" });
+    yield frame("agent_result", healthResult({ question: MED_STOP_QUESTION, awaits_reply: true }));
+    await sleep(300);
+    yield frame("done", { run_id: runId, model_calls: 0 });
+    return;
+  }
+
+  const body =
+    asked === "stop" && /^(네|응|멈춰)/.test(said)
+      ? "해열 시럽 복약 알림을 멈췄어요. 먹인 기록은 그대로 남아요."
+      : asked === "stop" && /^(아니|그대로)/.test(said)
+        ? "해열 시럽 복약 알림은 그대로 둘게요."
+        : "어느 약인지 알아듣지 못했어요. 약 이름을 넣어 다시 말씀해 주세요.";
+  if (body.includes("멈췄어요")) stopSeededCourse(input.childId);
+  yield frame(
+    "agent_result",
+    healthResult({ readouts: [healthReadout("medication_notice", body)] }),
+  );
+  if (leftover) yield frame("note", { text: LEFTOVER_NOTE, kind: "message" });
+  await sleep(300);
+  yield frame("done", { run_id: runId, model_calls: 0 });
+}
+
 /**
  * 되묻기에 대한 답을 이어받는 run (#175). 🚨 **Supervisor 를 다시 타지 않는다** — 서버는 Memory 만
  * 남겨 둔 조각에 답을 붙여 저장한다. 그래서 단계가 하나고 추천 제안(`offer`)도 없다
@@ -365,7 +649,11 @@ async function* continuationScript(
     // 🚨 `failed` 보다 **먼저** 되돌린다. 화면이 받자마자 다시 시도해도 맥락과 키가 이미 풀려 있다.
     pendingReplies.set(input.replyTo, input.childId);
     forgetRun(runId);
-    yield frame("failed", { reason: "internal_error", raw_text: input.text });
+    yield frame("failed", {
+      reason: "internal_error",
+      raw_text: input.text,
+      message: "처리하다 문제가 생겼어요. 다시 보내 주세요.",
+    });
     return;
   }
 
@@ -472,6 +760,14 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   const input = inputByRun.get(runId);
   const rawText = input?.text ?? "";
 
+  // 🚨 복약 되묻기의 답은 Health 가 이어받는다 (#537) — Memory 이어받기 대본으로 보내지 않는다.
+  const medicationAsked =
+    input?.replyTo !== undefined ? medicationQuestions.get(input.replyTo) : undefined;
+  if (input && medicationAsked) {
+    yield* medicationContinuation(runId, input, medicationAsked);
+    return;
+  }
+
   // 🚨 이어받기 run 은 Supervisor 를 타지 않는다 (#175) — 의도 분류도, 일정 초안도 없다.
   if (input?.replyTo !== undefined) {
     yield* continuationScript(runId, { ...input, replyTo: input.replyTo });
@@ -486,7 +782,12 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   if (scenario === "failed") {
     // 여기서 스트림이 끝난다. 저장된 게 없으니 다음 칸으로 전파하지 않는다.
     forgetRun(runId);
-    yield frame("failed", { reason: "unparsable", raw_text: rawText });
+    // 문구는 서버 카탈로그(`apps/api/app/agents/common/failure.readout.yaml`)의 글자 그대로다 (#768)
+    yield frame("failed", {
+      reason: "unparsable",
+      raw_text: rawText,
+      message: "말씀을 정리하지 못했어요. 조금 바꿔서 다시 적어 주세요.",
+    });
     return;
   }
 
@@ -508,9 +809,15 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
     scenario === "agent_readout" ||
     scenario === "agent_question" ||
     scenario === "agent_partial" ||
-    scenario === "agent_suggestions"
+    scenario === "agent_suggestions" ||
+    scenario === "agent_info"
   ) {
     yield* agentResultScript(runId, scenario);
+    return;
+  }
+
+  if ((MEDICATION_SCENARIOS as readonly string[]).includes(scenario)) {
+    yield* medicationScript(runId, scenario as MedicationScenario, input?.childId);
     return;
   }
 
@@ -523,6 +830,53 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   if (scenario === "guidance" || scenario === "guidance_growth") {
     yield frame("guidance", scenario === "guidance" ? SAFETY_GUIDANCE : GROWTH_GUIDANCE);
     await sleep(300);
+    yield frame("done", { run_id: runId, model_calls: 1 });
+    return;
+  }
+
+  /**
+   * 조회 · 삭제 카드 (#535). 🚨 **아무것도 저장하지 않은 run 이다** — 조회는 보기만, 삭제는 제안만 남긴다.
+   *    AI 의 말은 `kind=message` 다. 제안을 남긴 run 은 되묻기가 아니다 — 모델이 물어도 서버가 message 로 끝낸다.
+   *    실서버는 AI PR(삭제 tool 을 빼고 제안 tool 을 넣는 것)이 머지돼야 나온다.
+   */
+  if (scenario === "found_tabs") {
+    yield frame("step", { index: 2, total: 3, label: "기록을 찾고 있어요" });
+    await sleep(500);
+    yield frame("note", {
+      text: "이번 주에는 기록 6건과 일정 2건이 있어요. 미역국은 잘 먹었고, 브로콜리는 골라냈어요.",
+      kind: "message",
+    });
+    yield frame("found_tabs", foundTabsFixture());
+    await sleep(200);
+    yield frame("done", { run_id: runId, model_calls: 1 });
+    return;
+  }
+  if (
+    scenario === "delete_proposal" ||
+    scenario === "delete_proposal_expiring" ||
+    scenario === "delete_proposal_emptied" ||
+    scenario === "delete_proposal_unpicked"
+  ) {
+    const unpicked = scenario === "delete_proposal_unpicked";
+    yield frame("step", { index: 2, total: 3, label: "지울 기록을 찾고 있어요" });
+    await sleep(500);
+    yield frame("note", {
+      text: unpicked
+        ? "저번주 기록과 일정을 찾았어요. 어느 것을 지울지 몰라 체크하지 않았어요. 지울 것을 골라 주세요."
+        : "저번주 식사 기록과 놀이 기록을 찾았어요. 간식은 빼고 체크해 두었어요. 지울 것을 확인하고 골라 주세요.",
+      kind: "message",
+    });
+    // 🚨 `delete_proposal_expiring` 은 30초 뒤 닫힌다 — 띄워 둔 카드를 화면이 `expires_at` 으로 닫는지 본다.
+    const card = proposeDelete(input?.childId ?? CHILD_ID, {
+      expiresInMs: scenario === "delete_proposal_expiring" ? 30_000 : undefined,
+      unpicked,
+    });
+    // `delete_proposal_emptied` — 후보가 그사이 다 지워진 카드. 서버는 빈 탭을 빼고 카드는 그대로 보낸다 (#712 `translate.py`).
+    yield frame(
+      "delete_proposal",
+      scenario === "delete_proposal_emptied" ? { ...card, tabs: [] } : card,
+    );
+    await sleep(200);
     yield frame("done", { run_id: runId, model_calls: 1 });
     return;
   }
@@ -644,7 +998,11 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
    *    운동회는 5시로 옮겨줘"). 화면이 op 로 엔드포인트를 가르는지 여기서 확인된다.
    * ⚠️ 프레임 이름이 계약에 없다 — `sse.ts` 의 `DRAFT_EVENT_NAMES` 참고 (#151).
    */
-  if (intent !== "record") {
+  if (scenario === "event_repeat" || scenario === "repeat_invalid") {
+    // 🚨 반복 새 일정과 묶음 고치기가 한 프레임에 섞인다 (#738) — 카드가 `op` 로 갈리는지 본다.
+    yield frame("event_draft", { drafts: repeatRunDrafts() });
+    await sleep(300);
+  } else if (intent !== "record") {
     // 🚨 `event` 는 새 일정 한 장만, `both` 는 create·update 두 장이다 — 한 장일 때와
     //    여러 장일 때 화면이 다르다(넘기는 줄이 서는가). 둘 다 확인할 수 있어야 한다.
     yield frame("event_draft", {
@@ -700,7 +1058,19 @@ export const runHandlers = [
         // 앞 run 의 대화는 그새 다 쓰였다 (`chat.ts` 의 `hiddenRuns`).
         revealTurns();
         const childId = String(params.cid);
-        const body = (await request.json()) as { text: string; reply_to?: string };
+        const body = (await request.json()) as {
+          text: string;
+          reply_to?: string;
+          location?: InputLocation;
+        };
+
+        // 서버는 핸들러보다 먼저 스키마로 거절한다 — 앞뒤 공백을 떼고 상한(500자)을 넘으면 400 (#867).
+        // 화면은 보내기 전에 막아서 여기 닿지 않는다. 목이 서버처럼 거절하는지는 `contract.test.ts` 가 건다.
+        if ([...body.text.trim()].length > INPUT_TEXT_MAX_LENGTH) {
+          return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+            fields: ["text"],
+          });
+        }
 
         // 🚨 한도보다 **먼저 확인만** 한다 — 잘못된 `reply_to` 가 하루 횟수를 쓰면 안 된다.
         //    꺼내는(지우는) 것은 한도를 통과한 뒤다. 한도에 걸린 답이 맥락까지 잃으면 안 되기
@@ -732,7 +1102,12 @@ export const runHandlers = [
         const runId = `r_${Date.now()}`;
         // 🚨 `reply_to` 는 그대로 받아 둔다 — 이어받기 run 을 가르는 값이고 (#175),
         //    테스트가 "화면이 원문 대신 이 값을 보냈는가" 를 확인하는 자리다.
-        inputByRun.set(runId, { childId, text: body.text, replyTo: body.reply_to });
+        inputByRun.set(runId, {
+          childId,
+          text: body.text,
+          replyTo: body.reply_to,
+          location: body.location,
+        });
         // 즉시 202 로 run_id 를 준다. 결과는 전부 SSE 로 흐른다. 끝났다는 표시는 같은 키 재생에서만 선다.
         const accepted: CreateInputResponse = {
           run_id: runId,

@@ -147,6 +147,8 @@ class InMemoryGrowthDocs:
         trigger_tags: tuple[str, ...],
         query: str,
         limit: int,
+        areas: tuple[str, ...] = (),
+        tags: tuple[str, ...] = (),
     ) -> list[GrowthDocRow]:
         rows = [
             r
@@ -155,6 +157,24 @@ class InMemoryGrowthDocs:
             and r.min_month <= months < r.max_month
             and (routine_category is None or r.routine_category == routine_category)
             and (not trigger_tags or set(trigger_tags) & set(r.trigger_tags))
+            and (not areas or r.area in areas)
+            and (not tags or set(tags) & set(r.tags))
+        ]
+        return rows[:limit]
+
+    async def search_range(
+        self,
+        *,
+        min_month: int,
+        max_month: int,
+        row_types: tuple[GrowthDocType, ...],
+        query: str,
+        limit: int,
+    ) -> list[GrowthDocRow]:
+        rows = [
+            r
+            for r in self._rows
+            if r.row_type in row_types and r.min_month < max_month and r.max_month > min_month
         ]
         return rows[:limit]
 
@@ -170,7 +190,9 @@ class InMemoryBooks:
         self._rows = list(rows)
         self._fail = fail
 
-    async def search(self, *, keywords: tuple[str, ...], limit: int) -> list[BookRow]:
+    async def search(
+        self, *, keywords: tuple[str, ...], limit: int, title_words: tuple[str, ...] = ()
+    ) -> list[BookRow]:
         if self._fail:
             raise UpstreamUnavailable("도서 조회 실패 (테스트 주입)")
         return self._rows[:limit]

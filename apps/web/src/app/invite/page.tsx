@@ -144,7 +144,7 @@ function InviteScreen() {
           <p className="text-label text-ink-subtle">초대 확인</p>
           <PageTitle className="mt-2">이 아이가 맞나요</PageTitle>
           <p className="text-body text-ink-muted mt-3">
-            맞다면 연결할게요. 아니면 코드를 다시 확인해 주세요.
+            맞으면 아래에서 연결해 주세요. 아니면 코드를 다시 확인해 주세요.
           </p>
         </div>
 
@@ -164,7 +164,7 @@ function InviteScreen() {
           {/* 🚨 **관계는 받는 쪽이 고른다** (#89). 초대를 발행할 때 지정하지 않는다.
               🚨 여기는 5종 전부다 — 이 사람은 법정대리인 동의를 하지 않으므로 시터도
               자기 관계를 그대로 말할 수 있다 (`lib/relation.ts`). */}
-          <p className="text-label text-ink-muted">아이와의 관계 · 선택</p>
+          <p className="text-label text-ink-muted">아이와의 관계 (선택)</p>
           <ChipRow>
             {relationOptions(MEMBER_RELATIONS).map((item) => (
               <Chip
@@ -180,7 +180,7 @@ function InviteScreen() {
               부르는 이름과 관계가 서로 보인다 — 고르는 자리 바로 아래에 둬야 "이 값이 남에게
               보인다" 가 고르기 전에 읽힌다. 관계를 안 골라도 이름은 보이므로 늘 띄운다. */}
           <p className="text-caption text-ink-subtle mt-1">
-            이 아이의 다른 보호자에게 내 부르는 이름과 아이와의 관계가 보여요.
+            이 아이의 다른 보호자에게 내 이름과 아이와의 관계가 보여요.
           </p>
         </div>
 
@@ -188,11 +188,11 @@ function InviteScreen() {
           <p className="text-body-sm text-ink">연결하면 이런 것을 함께 보게 돼요</p>
           <ul className="text-body-sm text-ink-muted marker:text-ink-subtle mt-2 flex list-disc flex-col gap-1.5 pl-5">
             <li>아이의 기록과 쌓인 기억</li>
-            <li>보호자가 입력한 알레르기 · 건강 정보</li>
+            <li>보호자가 입력한 알레르기와 건강 정보</li>
             <li>등록된 일정과 준비물</li>
           </ul>
           <p className="text-caption text-ink-subtle mt-3">
-            아이를 등록한 보호자만 할 수 있는 일이 따로 있고, 연결은 설정에서 끊을 수 있어요.
+            어떤 일은 아이를 등록한 보호자만 할 수 있어요. 연결은 설정에서 끊을 수 있어요.
           </p>
         </Card>
 
@@ -287,7 +287,7 @@ function InviteScreen() {
         {/* 🚨 여기서 아직 아무것도 연결되지 않는다는 것을 적는다 — 버튼 이름만으로는
             "확인" 이 곧 연결로 읽힌다. */}
         <p className="text-caption text-ink-subtle text-center">
-          누구의 초대인지 먼저 보여드려요. 아직 연결되지 않아요.
+          누구의 초대인지 먼저 보여 드려요. 아직 연결되지 않아요.
         </p>
       </div>
     </Screen>

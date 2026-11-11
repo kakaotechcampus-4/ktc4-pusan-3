@@ -2,7 +2,7 @@
     Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
     uv run pytest tests/eval/agents/memory/test_memory.py -m live -s
 
-Memory 하나만 떼어 T01~T30 의 저장 결과를 세밀하게 본다. Supervisor → Memory → Food 를
+Memory 하나만 떼어 T01~T81 의 저장 결과를 세밀하게 본다. Supervisor → Memory → Food 를
 끝까지 돌리는 라이브 테스트는 tests/eval/agents/supervisor/test.py 다.
 
 기본 실행에서는 제외된다(pyproject 의 addopts = "-m 'not live'").
@@ -34,13 +34,15 @@ from app.agents.common.config import AgentSettings
 from app.agents.common.datetime_rules import DateRange
 from app.agents.common.llm_client import LLMClient
 from app.agents.memory.agent import MemoryAgentResult, run
+from app.agents.memory.bundles import MUTATING_PREFIXES
 from app.agents.memory.context import AgentContext
-from app.agents.memory.drafts import EventDraft
+from app.agents.memory.drafts import AnyEventDraft
 from app.agents.memory.schemas.task import MemoryTask
 from app.agents.memory.store import InMemoryStore
 from app.agents.memory.store.ports import EventItemRow, ObservationRow
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.routing import Routing, route
+from tests.eval.agents import tally
 from tests.eval.agents.routing_cases import CASES_BY_ID, answer_output
 
 pytestmark = pytest.mark.live
@@ -84,7 +86,7 @@ CHILD = UUID("00000000-0000-7000-8000-000000000001")
 WRITER = UUID("00000000-0000-7000-8000-0000000000ff")
 
 DOMAINS = ("food", "health", "education", "activity", "routine")
-MUTATING = "쓰기"  # forbidden_tools 에 넣으면 create/update/delete 전부를 금지한다
+MUTATING = "쓰기"  # forbidden_tools 에 넣으면 create/update/delete · 삭제 제안 전부를 금지한다
 
 # solo — task 없이 전체 tool 로. task — Supervisor 정답 출력으로 만든 MemoryTask 로.
 # task 모드는 "Supervisor 가 완벽하다고 가정한 Memory 만의 성적" 이다 (supervisor_plan Step 7)
@@ -99,6 +101,7 @@ if MEMORY_MODE not in ("solo", "task"):
 
 # 모드마다 파일을 따로 둔다 — 나중 run 이 앞 run 의 결과를 지우면 두 모드를 나란히 못 본다
 _RESULT_FILE = "eval_results.jsonl" if MEMORY_MODE == "solo" else "eval_task_results.jsonl"
+TALLY_SUITE = "memory"  # 회차를 `tests/eval/agents/tally.py` 로 센다 (#816)
 RESULT_PATH = Path(os.getenv("EVAL_RESULT_PATH", str(Path(__file__).with_name(_RESULT_FILE))))
 # 입력은 agent 별 폴더 위, tests/eval/agents 에 있다
 _INPUT_DEFAULT = Path(__file__).resolve().parents[1] / "test_input.txt"
@@ -133,7 +136,7 @@ class Snapshot:
 
     result: MemoryAgentResult
     observations: dict[str, list[ObservationRow]]
-    drafts: tuple[EventDraft, ...]  # 일정은 저장되지 않으니 제출 전 초안을 본다
+    drafts: tuple[AnyEventDraft, ...]  # 일정은 저장되지 않으니 제출 전 초안을 본다
     stored_items: list[EventItemRow]  # 승인 없이 바로 쓰는 것(is_prepared)을 볼 곳
 
     def count(self, tool: str) -> int:
@@ -150,11 +153,18 @@ class Snapshot:
 
     def starts_at(self) -> str:
         first = self.drafts[0] if self.drafts else None
-        return first.starts_at.astimezone(KST).isoformat() if first else ""
+        # 묶음 초안(SeriesDraft)은 날짜가 없다 — 하루의 시각만 들고 있다
+        starts = getattr(first, "starts_at", None)
+        return starts.astimezone(KST).isoformat() if starts else ""
 
     @property
     def item_names(self) -> list[str]:
-        return [item.item_name for draft in self.drafts for item in draft.items]
+        # 묶음 초안의 준비물은 이름(str)이고, 일정 초안의 준비물은 DraftItem 이다
+        return [
+            item if isinstance(item, str) else item.item_name
+            for draft in self.drafts
+            for item in draft.items
+        ]
 
     @property
     def wrote_anything(self) -> bool:
@@ -179,6 +189,10 @@ class EvalCase:
     expect_clarification: bool = False
     expect_out_of_scope: bool = False
     checks: tuple[Check, ...] = ()
+    # 이 케이스의 저장 · 금지 호출 실패는 C1 이다 (MEMORY_EVAL §2) — 보호자 말이 아이 fact 가 되거나
+    # 알레르기 · 건강 정보가 관찰로 저장되거나 지우라는데 덮어쓰는 입력
+    c1: bool = False
+    ci: bool = False  # PR 에서 도는 CI 묶음 (`-m tool_ci`, #816)
 
 
 # ── seed — 조회·수정·삭제 케이스가 기댈 기존 기록 ───────────────
@@ -198,9 +212,9 @@ async def _seed_block_play(context: AgentContext) -> None:
 
 
 async def _seed_today_two_domains(context: AgentContext) -> None:
-    """T15 — "오늘 기록 다 지워줘" 가 모호하려면 오늘 기록이 여럿 있어야 한다.
+    """T15 — "오늘 기록 다 지워줘" 로 여러 종류를 조회해 제안하는지 보려면 오늘 기록이 여럿이다.
 
-    어제 것만 있으면 "오늘 지울 기록이 없다" 가 맞는 답이라 되묻기를 잴 수 없다 (실측).
+    어제 것만 있으면 "오늘 지울 기록이 없다" 가 맞는 답이라 제안을 잴 수 없다 (실측).
     """
     await context.store.create_observation(
         domain="food",
@@ -253,6 +267,44 @@ async def _seed_sports_day_items(context: AgentContext) -> None:
     await context.store.create_event_item(event_id=events[0].id, item_name="체육복")
 
 
+async def _seed_picnic(context: AgentContext) -> None:
+    """T72 — 그저께 다녀온 소풍. "소풍 전날" 은 이 날짜에서 센다."""
+    await context.store.create_event(
+        child_id=CHILD,
+        title="소풍",
+        starts_at=_at(-2),
+        ends_at=None,
+        all_day=False,
+        fields={"created_by": "caregiver", "category": "institution"},
+    )
+
+
+async def _seed_coming_picnic(context: AgentContext) -> None:
+    """T74 — 모레 가는 소풍. "소풍 사흘 뒤" 는 이 날짜에서 센다."""
+    await context.store.create_event(
+        child_id=CHILD,
+        title="소풍",
+        starts_at=_at(2),
+        ends_at=None,
+        all_day=False,
+        fields={"created_by": "caregiver", "category": "institution"},
+    )
+
+
+async def _seed_curry_last_week(context: AgentContext) -> None:
+    """T75 — 지난주 수요일 카레."""
+    day = TODAY - timedelta(days=TODAY.weekday() + 5)
+    await context.store.create_observation(
+        domain="food",
+        child_id=CHILD,
+        source_writer=WRITER,
+        raw_text="카레 먹었어",
+        observed_on=day,
+        observed_range=DateRange(start=day, end=day + timedelta(days=1)),
+        fields={"subject": "카레", "action": "먹었다"},
+    )
+
+
 def _no_guess(domain: str, key: str) -> Check:
     return (
         f"{domain}.{key} 를 지어내지 않았다",
@@ -283,6 +335,9 @@ _ONE_SAVED: Check = ("한 건만 저장됐다", lambda s: _total(s) == 1)
 def _asked(snapshot: Snapshot) -> bool:
     reply = snapshot.result.reply
     return reply is not None and reply.kind == "question"
+
+
+_NOT_ASKED: Check = ("되묻지 않았다", lambda s: not _asked(s))
 
 
 # 일정이 등록되면 알림을 받기로 한 보호자에게 자동으로 간다고 안내한다
@@ -383,7 +438,8 @@ CASES: list[EvalCase] = [
     ),
     EvalCase(
         "T06",
-        "오늘 저녁으로 닭갈비를 먹였어. 오늘 유치원에서는 하루 종일 쌓기놀이를 했대. "
+        ci=True,
+        text="오늘 저녁으로 닭갈비를 먹였어. 오늘 유치원에서는 하루 종일 쌓기놀이를 했대. "
         "모레 오후 3시에 운동회가 있고 체육복을 가져가야 해. "
         "운동회 알림은 내일 오전 8시에 만들어줘. 그리고 내일 일정도 알려줘.",
         required_tools={
@@ -439,15 +495,16 @@ CASES: list[EvalCase] = [
     EvalCase(
         "T10",
         "어제 사과 먹었다고 저장한 기록 지워줘.",
+        c1=True,  # 지우라는데 기록을 덮어쓰면 아이에 대한 틀린 기록이 남는다
+        ci=True,
         seed=_seed_apple,
-        # 조회 결과가 한 건이어도 바로 지우지 않는다. 지운 기록은 보호자가 되살릴 수 없어서
-        # 무엇을 지울지 짚어 한 번 확인한다. 확인에 답한 뒤 지우는 테스트는 test_delete_confirm
-        required_tools={"query_observation_food": 1},
+        # 모델은 지우지 않고 제안만 남긴다 — 보호자가 카드의 버튼으로 확정한다 (#535).
+        # 무엇을 골랐는지 자세히 보는 것은 test_delete_confirm
+        required_tools={"query_observation_food": 1, "propose_delete": 1},
         forbidden_tools={"create_observation_food", "update_observation_food"},
-        expect_clarification=True,
         checks=(
-            ("아직 지우지 않았다", lambda s: len(s.rows("food")) == 1),
-            ("지울 기록을 짚어 물었다", lambda s: s.said(("사과",))),
+            ("지우지 않았다", lambda s: len(s.rows("food")) == 1),
+            ("되묻지 않고 끝냈다", lambda s: s.result.pending is None),
         ),
     ),
     EvalCase(
@@ -455,7 +512,8 @@ CASES: list[EvalCase] = [
         "모레 운동회 시간을 오전 10시로 바꿔줘.",
         seed=_seed_sports_day,
         required_tools={"query_event": 1, "update_event": 1},
-        forbidden_tools={"create_event", "delete_event"},
+        # 일정을 지우는 tool 은 없다 — 삭제는 propose_delete 로 제안한다 (#535)
+        forbidden_tools={"create_event", "propose_delete"},
         checks=(
             ("초안이 모레 10:00 이다", lambda s: s.starts_at().startswith(f"{_date(2)}T10:00")),
             ("바뀐 필드가 starts_at 이다", lambda s: "starts_at" in s.drafts[0].changed),
@@ -508,13 +566,18 @@ CASES: list[EvalCase] = [
         "T15",
         "오늘 기록 다 지워줘.",
         seed=_seed_today_two_domains,
-        forbidden_tools={MUTATING},
-        expect_clarification=True,
+        # 기간이 있으니 묻지 않고 오늘 기록을 조회해 제안한다. 지우는 것은 보호자의 버튼이다 (#535)
+        required_tools={"propose_delete": 1},
+        # MUTATING 은 제안까지 막는다 — 저장 · 수정만 막는다
+        forbidden_tools={
+            f"{op}_observation_{domain}" for op in ("create", "update") for domain in DOMAINS
+        },
         checks=(
             (
                 "아무것도 지우지 않았다",
                 lambda s: (len(s.rows("food")), len(s.rows("activity"))) == (1, 1),
             ),
+            ("되묻지 않고 끝냈다", lambda s: s.result.pending is None),
         ),
     ),
     EvalCase(
@@ -536,6 +599,8 @@ CASES: list[EvalCase] = [
     EvalCase(
         "T19",
         "우리 애 우유 알레르기 있어. 등록해줘.",
+        c1=True,  # 알레르기를 관찰로 저장하면 안 된다 (루트 §2 — 보호자 직접 입력만)
+        ci=True,
         forbidden_tools={MUTATING},
         expect_out_of_scope=True,
         checks=(("아무것도 저장하지 않았다", lambda s: not s.wrote_anything),),
@@ -830,10 +895,10 @@ CASES: list[EvalCase] = [
     ),
     EvalCase("T51", "오늘 어린이집에서 일본어 숫자를 배웠대.", checks=(_ONE_SAVED,)),
     # ── D13 (#484) 회귀 ──
-    EvalCase("T52", "딸기 맛있다.", checks=(_NOTHING_SAVED,)),
-    EvalCase("T53", "나 딸기 좋아해.", checks=(_NOTHING_SAVED,)),
-    EvalCase("T54", "날씨 좋다.", checks=(_NOTHING_SAVED,)),
-    EvalCase("T55", "나 오늘 너무 피곤해.", checks=(_NOTHING_SAVED,)),
+    EvalCase("T52", "딸기 맛있다.", checks=(_NOTHING_SAVED,), c1=True),
+    EvalCase("T53", "나 딸기 좋아해.", checks=(_NOTHING_SAVED,), c1=True),
+    EvalCase("T54", "날씨 좋다.", checks=(_NOTHING_SAVED,), c1=True),
+    EvalCase("T55", "나 오늘 너무 피곤해.", checks=(_NOTHING_SAVED,), c1=True),
     EvalCase(
         "T56",
         "우리 애 딸기 좋아해.",
@@ -882,6 +947,106 @@ CASES: list[EvalCase] = [
         "T65",
         "요즘 말이 늘은 것 같아.",
         checks=(("저장하거나 되물었다", lambda s: _total(s) >= 1 or _asked(s)),),
+    ),
+    # ── 날짜의 기준점 (#497) ──
+    EvalCase(
+        "T70",
+        "이틀 전에 카레 먹었어.",
+        required_tools={"create_observation_food": 1},
+        checks=(("오늘에서 이틀 전으로 저장됐다", lambda s: s.observed_on("food") == [_date(-2)]),),
+    ),
+    EvalCase(
+        "T71",
+        "일주일 전에 놀이터에서 그네 탔어.",
+        required_tools={"create_observation_activity": 1},
+        checks=(
+            ("오늘에서 일주일 전으로 저장됐다", lambda s: s.observed_on("activity") == [_date(-7)]),
+        ),
+    ),
+    EvalCase(
+        "T72",
+        "소풍 전날 김밥 먹었어.",
+        seed=_seed_picnic,
+        required_tools={"create_observation_food": 1},
+        checks=(
+            ("소풍 날짜에서 하루 전으로 저장됐다", lambda s: s.observed_on("food") == [_date(-3)]),
+        ),
+    ),
+    EvalCase(
+        "T73",
+        "지난주에 카레 먹었어.",
+        expect_clarification=True,
+        checks=(_NOTHING_SAVED,),
+    ),
+    EvalCase(
+        "T74",
+        "소풍 사흘 뒤 오후 2시에 정리하기 일정 잡아줘.",
+        seed=_seed_coming_picnic,
+        required_tools={"create_event": 1},
+        checks=(
+            ("소풍(모레) 사흘 뒤 오후 2시 초안", lambda s: s.starts_at() == _at(5, 14).isoformat()),
+        ),
+    ),
+    EvalCase(
+        "T75",
+        "지난주에 먹은 거 보여줘.",
+        seed=_seed_curry_last_week,
+        required_tools={"query_observation_food": 1},
+        forbidden_tools={MUTATING},
+        # 검색어 칸에 "먹은 거" 를 넣어 0건이 되는 일은 날짜와 별개라 결과 건수는 보지 않는다
+        checks=(
+            ("되묻지 않았다", lambda s: not _asked(s)),
+            (
+                "지난주로 막히지 않고 조회됐다",
+                lambda s: any(
+                    call.name == "query_observation_food" and call.success
+                    for call in s.result.calls
+                ),
+            ),
+        ),
+    ),
+    # ── "안 먹었다" — 식사 태도 · 경향과 오늘 한 번 (#929) ──
+    # food 를 금지 tool 로 두지 않는다. 끼니 이름으로 불렀다가 거절을 받고 고쳐 부르는 것은
+    # 재시도 예산 안의 설계된 경로다. 저장 결과로 본다
+    EvalCase("T76", "오늘 좀 안 먹었어.", expect_clarification=True, checks=(_NOTHING_SAVED,)),
+    EvalCase(
+        "T77", "오늘 점심 조금밖에 안 먹었어.", expect_clarification=True, checks=(_NOTHING_SAVED,)
+    ),
+    EvalCase(
+        "T78",
+        "요새 밥을 통 안 먹어.",
+        required_tools={"create_observation_routine": 1},
+        checks=(
+            _routine("mealtime"),
+            _NOT_ASKED,
+            ("식사 기록이 아니다", lambda s: not s.rows("food")),
+        ),
+    ),
+    EvalCase(
+        "T79",
+        "오늘 저녁 먹기 싫다고 투정부렸어.",
+        required_tools={"create_observation_routine": 1},
+        checks=(
+            _routine("mealtime"),
+            _NOT_ASKED,
+            ("식사 기록이 아니다", lambda s: not s.rows("food")),
+        ),
+    ),
+    EvalCase(
+        "T80",
+        "식사 도중에 혼냈더니 방에 들어가서 안 먹겠다고 했어.",
+        required_tools={"create_observation_routine": 1},
+        checks=(
+            _routine("mealtime"),
+            _NOT_ASKED,
+            ("식사 기록이 아니다", lambda s: not s.rows("food")),
+        ),
+    ),
+    EvalCase(
+        "T81",
+        "오늘 저녁에 브로콜리 안 먹었어.",
+        required_tools={"create_observation_food": 1},
+        checks=(_ONE_SAVED, _NOT_ASKED),
     ),
 ]
 
@@ -955,7 +1120,8 @@ def _task_for(case: EvalCase) -> MemoryTask:
     # 파이프라인은 순수 요청형에서 Memory 를 건너뛴다(SKIP_MEMORY_FOR_PURE_REQUEST).
     # 여기서는 그래도 Memory 를 돌린다 — 불렸을 때 무엇을 하는지가 이 eval 이 재는 것이고,
     # T19("알레르기 등록해줘")처럼 저장하면 안 되는 케이스가 회귀 감시 대상이다.
-    # 힌트는 어차피 비어 있어서 건너뛰기 전과 같은 입력이 된다
+    # 힌트는 어차피 비어 있어서 건너뛰기 전과 같은 입력이 된다. 단 unclear 가 요청 · 안내와 섞여
+    # 건너뛰는 입력(#642)은 unclear 정보가 빠진다 — 이 eval 에 그런 케이스는 없다
     return routing.memory_task or MemoryTask(raw_text=case.text)
 
 
@@ -974,7 +1140,7 @@ def _judge(case: EvalCase, snapshot: Snapshot) -> list[str]:
             used = [
                 call.name
                 for call in snapshot.result.calls
-                if call.name.startswith(("create_", "update_", "delete_"))
+                if call.name.startswith(MUTATING_PREFIXES)
             ]
         else:
             used = [call.name for call in snapshot.result.calls if call.name == tool]
@@ -1012,6 +1178,26 @@ def _judge(case: EvalCase, snapshot: Snapshot) -> list[str]:
     return failures
 
 
+# c1 케이스에서도 일반 실패인 것 — 실행 · 문장 문제이거나 필수 tool 누락이다. 잘못 쓰거나 지운 것이
+# 아니다. C1 은 금지된 호출과 저장 결과 검사(`checks`) 실패뿐이다
+_NOT_C1 = ("MAX_STEPS", "재시도 예산", "내부 추론", "범위 밖이라고 안내하지 않음", "되묻지 않")
+
+
+def _not_c1(failure: str) -> bool:
+    return failure.startswith(_NOT_C1) or ("최소" in failure and "회 필요" in failure)
+
+
+def split_c1(case: EvalCase, failures: list[str]) -> tuple[list[str], list[str]]:
+    """실패를 (C1, 일반) 으로 나눈다. `c1` 케이스의 금지된 호출 · 저장 결과 실패가 C1 이다."""
+    c1 = [item for item in failures if case.c1 and not _not_c1(item)]
+    return c1, [item for item in failures if item not in c1]
+
+
+def input_id(case_id: str, model: str | None) -> str:
+    """회차 집계의 입력 id. 모델이 여럿이면 모델마다 따로 센다 (`EVAL_MODELS`)."""
+    return f"{case_id}@{model}" if model else case_id
+
+
 def _retried(snapshot: Snapshot) -> list[str]:
     return [
         f"{call.name}:{call.result.get('error', {}).get('code')}"
@@ -1037,7 +1223,7 @@ def _expected_text(case: EvalCase) -> str:
         )
     if case.forbidden_tools:
         names = sorted(
-            "쓰기 전부(create·update·delete)" if tool == MUTATING else tool
+            "쓰기 전부(create·update·delete·propose)" if tool == MUTATING else tool
             for tool in case.forbidden_tools
         )
         parts.append(f"금지 {' · '.join(names)}")
@@ -1057,8 +1243,13 @@ def _expected_text(case: EvalCase) -> str:
     return " / ".join(parts)
 
 
+def _param(case: EvalCase) -> Any:
+    marks = (pytest.mark.tool_ci,) if case.ci else ()
+    return pytest.param(case, id=case.case_id, marks=marks)
+
+
 @pytest.mark.parametrize("model", EVAL_MODELS or [None], ids=lambda m: m or "env")
-@pytest.mark.parametrize("case", CASES, ids=[case.case_id for case in CASES])
+@pytest.mark.parametrize("case", [_param(case) for case in CASES])
 def test_memory_agent_eval(case: EvalCase, model: str | None, expect: Callable[..., None]) -> None:
     expect(_expected_text(case))
     client = _client(model)
@@ -1066,6 +1257,14 @@ def test_memory_agent_eval(case: EvalCase, model: str | None, expect: Callable[.
     snapshot = asyncio.run(_snapshot(case, client))
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     failures = _judge(case, snapshot)
+    c1_failures, general_failures = split_c1(case, failures)
+    tally.mark(
+        TALLY_SUITE,
+        input_id(case.case_id, model),
+        c1=c1_failures,
+        general=general_failures,
+        tools=snapshot.result.tool_names,
+    )
     retried = _retried(snapshot)
 
     record = {

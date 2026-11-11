@@ -1,11 +1,17 @@
+import { requireOptionalNativeModule } from "expo";
 import Constants from "expo-constants";
+import type { ExpoSpeechRecognitionModule } from "expo-speech-recognition";
+// 🚨 타입만 가져온다 — 본체는 아래에서 모듈이 있을 때만 불러온다 (`Notifications`).
+import type { NotificationResponse } from "expo-notifications";
 import { StatusBar } from "expo-status-bar";
 import * as WebBrowser from "expo-web-browser";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   AppState,
   BackHandler,
+  Image,
   Keyboard,
   Linking,
   Platform,
@@ -16,7 +22,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { WebView, type WebViewNavigation } from "react-native-webview";
+import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react-native-webview";
 
 import { CookieFlush } from "./modules/cookie-flush";
 import { WEB_URL, isInternalUrl, isRootUrl } from "./src/config";
@@ -29,20 +35,123 @@ import {
 import { EXIT_HINT, decideBack } from "./src/native/back-press";
 import { flushOnBackground } from "./src/native/cookie-flush";
 import { isWebUrl } from "./src/native/in-app-browser";
+import {
+  type LocationAction,
+  type LocationEvent,
+  coarsePosition,
+  locationBridgeScript,
+  locationEventScript,
+  permissionStatus,
+} from "./src/native/location";
+import {
+  PUSH_CHANNEL_ID,
+  PUSH_CHANNEL_NAME,
+  type PushEvent,
+  pushBridgeScript,
+  pushEventScript,
+  pushOpenPath,
+  responseData,
+  shouldAskPermission,
+} from "./src/native/push";
 import { SAFE_AREA_SCRIPT, safeAreaScript, shellInsets } from "./src/native/safe-area";
+import { SPLASH_AFTER_LOAD_MS, SPLASH_MAX_MS, splashBridgeScript } from "./src/native/splash";
+import {
+  SPEECH_LANG,
+  type SpeechEvent,
+  canListenOnDevice,
+  parseWebRequest,
+  permissionReason,
+  speechBridgeScript,
+  speechErrorReason,
+  speechEventScript,
+  volumeLevel,
+} from "./src/native/speech";
 
 /**
  * 🚨 **디자인 값의 원본은 `apps/web/src/app/globals.css` 다** (최상위 CLAUDE.md §6).
  *    여기 있는 것은 페이지가 뜨기 전·연결이 실패했을 때만 보이는 **사본**이다 —
  *    두 값이 어긋나면 로딩 순간에 색이 한 번 튄다. 바뀌면 같은 PR 에서 같이 고친다.
  */
-const CANVAS = "#fbf9f5"; // --color-canvas
-const BRAND = "#2f6f4e"; // --color-brand
-const INK = "#1a1a17"; // --color-ink
-const INK_MUTED = "#6b6b63"; // --color-ink-muted
+const CANVAS = "#fbf9f5"; // --color-canvas · 🚨 `app.json` 스플래시 `backgroundColor` 와도 같다
+const BRAND = "#3a6b52"; // --color-brand
+const INK = "#221f1b"; // --color-ink
+const INK_MUTED = "#605a52"; // --color-ink-muted
+
+/** 스플래시 그림 — `app.json` 의 `expo-splash-screen` 과 같은 파일이다 (`scripts/build-splash.py`). */
+const SPLASH_IMAGE = require("./assets/splash-icon.png") as number;
+/** 🚨 `app.json` 의 `expo-splash-screen` `imageWidth` 와 같아야 한다 (`splash.test.ts` 가 묶는다). */
+const SPLASH_IMAGE_DP = 192;
 
 /** 웹 쪽에서 네이티브임을 알아볼 수 있게 붙인다 (예: 웹뷰에서만 다른 UI). */
 const USER_AGENT_SUFFIX = `IcatchApp/${Constants.expoConfig?.version ?? "0.0.0"}`;
+
+/**
+ * 기기 안 음성인식 (`expo-speech-recognition` · #595). Expo Go 에는 없어서 `null` 이다.
+ * 🚨 패키지 본체를 import 하지 않는다 — 본체는 `requireNativeModule` 이라 모듈이 없으면 셸이 뜨지 않는다.
+ */
+const SpeechRecognizer = requireOptionalNativeModule<typeof ExpoSpeechRecognitionModule>(
+  "ExpoSpeechRecognition",
+);
+
+/**
+ * 일정 알림 (`expo-notifications` · #609). 🚨 패키지를 이 모듈이 있을 때만 불러온다 — 본체의 하위 모듈이
+ * 전부 `requireNativeModule` 이라, 이 패키지를 넣기 전에 만든 개발 빌드에서 import 하면 셸이 뜨지 않는다.
+ * iOS 는 하지 않는다 (#594).
+ */
+const Notifications =
+  Platform.OS === "android" &&
+  requireOptionalNativeModule("ExpoPushTokenManager") &&
+  requireOptionalNativeModule("ExpoNotificationsEmitter")
+    ? (require("expo-notifications") as typeof import("expo-notifications"))
+    : null;
+
+/**
+ * 이 빌드에서 알림을 받을 수 있는가 — 모듈이 있고 FCM 설정(`google-services.json`)이 들어간 빌드다.
+ * 🚨 설정 없이 `available` 을 켜면 웹이 권한 창을 띄우고, 허용한 뒤에야 토큰 받기가 실패한다 (`app.config.ts`).
+ */
+const PUSH_AVAILABLE =
+  Notifications !== null && Boolean(Constants.expoConfig?.android?.googleServicesFile);
+
+/**
+ * 앱을 보고 있을 때 온 알림도 띄운다 — 웹과 같다 (`docs/web/web-push-v1.md` "탭을 보고 있을 때").
+ * 화면 안에서 따로 알리지 않는다.
+ */
+Notifications?.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+/**
+ * 흐린 위치 (`expo-location` · #593). 🚨 알림과 같은 이유로 모듈이 있을 때만 불러온다 — 이 패키지를 넣기 전에
+ * 만든 개발 빌드에서 import 하면 셸이 뜨지 않는다. 없으면 창구를 꺼서 내고, 웹은 위치 없이 보낸다.
+ */
+const Location = requireOptionalNativeModule("ExpoLocation")
+  ? (require("expo-location") as typeof import("expo-location"))
+  : null;
+
+/**
+ * 마지막으로 알려진 위치를 이만큼 지난 것까지 쓴다. 새로 읽으면 몇 초가 걸려 입력 보내기가 그만큼 늦는다.
+ * 어차피 약 1km 로 흐리는 값이라 10분 사이에 달라질 일이 드물다.
+ */
+const LAST_KNOWN_MAX_AGE_MS = 10 * 60 * 1000;
+
+/** 이 휴대폰에서 말로 적기를 켤 수 있는가 — 기기 안 인식이 보장될 때만 (`src/native/speech.ts` 머리말). */
+const SPEECH_AVAILABLE = (() => {
+  if (!SpeechRecognizer) return false;
+  try {
+    return canListenOnDevice({
+      os: Platform.OS,
+      apiLevel: typeof Platform.Version === "number" ? Platform.Version : 0,
+      onDevice: SpeechRecognizer.supportsOnDeviceRecognition(),
+    });
+  } catch {
+    return false;
+  }
+})();
 
 function Shell() {
   const webViewRef = useRef<WebView>(null);
@@ -52,6 +161,12 @@ function Shell() {
   const exitHintAtRef = useRef<number | null>(null);
 
   const [loading, setLoading] = useState(true);
+  /**
+   * 스플래시 덮개를 아직 덮고 있는가 (#690 · `SplashCover`). 웹의 첫 화면(`done`), 실패, 시간 초과에서 내린다.
+   * 🚨 웹의 `done` 말고도 실패로 가는 모든 길에서 내린다 — 빼면 연결 실패 화면이 덮개 뒤에 숨는다.
+   */
+  const [covered, setCovered] = useState(true);
+  const uncover = useCallback(() => setCovered(false), []);
   const [failed, setFailed] = useState(false);
 
   /**
@@ -155,6 +270,23 @@ function Shell() {
     webViewRef.current?.reload();
   }, []);
 
+  /**
+   * 덮개를 내리는 시간 초과 둘 (`src/native/splash.ts`). 보통은 웹의 `done` 이 먼저 온다.
+   * 문서가 뜬 뒤의 기다림은 **첫 문서에서 한 번만** 건다 — Android 는 웹 안의 화면 이동에도 `onLoadEnd` 를 부른다.
+   */
+  const afterLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const waitWebFirstScreen = useCallback(() => {
+    if (afterLoadTimerRef.current !== null) return;
+    afterLoadTimerRef.current = setTimeout(uncover, SPLASH_AFTER_LOAD_MS);
+  }, [uncover]);
+  useEffect(() => {
+    const timer = setTimeout(uncover, SPLASH_MAX_MS);
+    return () => {
+      clearTimeout(timer);
+      if (afterLoadTimerRef.current !== null) clearTimeout(afterLoadTimerRef.current);
+    };
+  }, [uncover]);
+
   useEffect(() => {
     if (Platform.OS !== "android") return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", handleHardwareBack);
@@ -182,6 +314,319 @@ function Shell() {
     const subscription = AppState.addEventListener("change", (state) =>
       flushOnBackground(state, flush),
     );
+    return () => subscription.remove();
+  }, []);
+
+  /**
+   * 인식기가 지금 듣고 있는가 — `start()` 를 부른 뒤 `end` 가 올 때까지.
+   * 🚨 이게 참일 때만 `abort()` 한다. 라이브러리의 `abort()` 는 상태를 보지 않고 늘 웹에 `end` 를 보내서, 첫 탭의
+   *    권한 창(Android 는 이것도 `background` 다)에서 부르면 웹은 꺼진 줄 아는데 허용 뒤 셸은 듣기 시작한다.
+   */
+  const listeningRef = useRef(false);
+  /**
+   * 권한을 확인하는 동안 웹이 "그만" 을 보냈는가. 그때 인식기는 아직 없어서 `stop()` 이 아무 일도 안 하고
+   * `end` 도 오지 않는다 — 확인이 끝난 뒤 시작하면 웹은 꺼진 줄 아는데 셸은 듣는다.
+   * 이 값이 참이면 인식기 오류도 웹에 알리지 않는다 (`speechErrorReason` 의 `stopping`). 🚨 `startListening` 에서만
+   * 거짓으로 되돌린다 — `start()` 뒤에 되돌리면 완료를 누를 때마다 "시작하지 못했어요" 가 다시 뜬다.
+   */
+  const stopRequestedRef = useRef(false);
+
+  /**
+   * 말로 적기의 진행을 웹에 알린다 (`src/native/speech.ts`).
+   * 🚨 지금 떠 있는 문서가 우리 주소일 때만 보낸다 — 들은 글자를 남의 문서에 넣지 않는다.
+   */
+  const sendSpeech = useCallback((event: SpeechEvent) => {
+    if (!isInternalUrl(urlRef.current)) return;
+    webViewRef.current?.injectJavaScript(speechEventScript(event));
+  }, []);
+
+  /**
+   * 듣기를 끊는다 — 문서가 새로 열리거나, 연결 실패 화면으로 가거나, 웹뷰가 죽을 때.
+   * 🚨 웹의 정리(언마운트)는 React 가 컴포넌트를 내릴 때만 돈다. 새로고침 · 하드 이동처럼 문서가 통째로 바뀌면
+   *    웹은 `stop` 을 못 보낼 수 있어서 셸이 끊는다. 권한을 확인하는 중이면 확인 뒤에 시작하지 않게 한다.
+   */
+  const abortListening = useCallback(() => {
+    stopRequestedRef.current = true;
+    if (listeningRef.current) SpeechRecognizer?.abort();
+  }, []);
+
+  /**
+   * 듣기 시작 — 권한은 **처음 누를 때** 묻는다. 앱을 켤 때 묻지 않는다: 왜 필요한지 모르는 채로 뜬 창은
+   * 거절당하고, Android 는 두 번 거절하면 다시 묻지 못한다.
+   *
+   * 🚨 `requiresOnDeviceRecognition` 을 빼지 않는다. 빼면 음성이 인식 서버로 간다 (#595).
+   */
+  const startListening = useCallback(async () => {
+    const recognizer = SpeechRecognizer;
+    if (!recognizer || !SPEECH_AVAILABLE) {
+      sendSpeech({ type: "error", reason: "unsupported" });
+      return;
+    }
+    stopRequestedRef.current = false;
+    try {
+      // 시스템 창이 뜰 때만 웹이 이유를 먼저 말한다 — Android 권한 창에는 우리 문장이 나오지 않는다.
+      const current = await recognizer.getPermissionsAsync();
+      if (!current.granted && current.canAskAgain) sendSpeech({ type: "asking" });
+      const permission = await recognizer.requestPermissionsAsync();
+      const refused = permissionReason(permission);
+      if (refused) {
+        sendSpeech({ type: "error", reason: refused });
+        return;
+      }
+      if (stopRequestedRef.current) {
+        sendSpeech({ type: "end" });
+        return;
+      }
+      listeningRef.current = true;
+      recognizer.start({
+        lang: SPEECH_LANG,
+        interimResults: true,
+        continuous: true,
+        requiresOnDeviceRecognition: true,
+        // 웹의 음량 막대. 막대 다섯 개에 0.1초보다 촘촘할 이유가 없다.
+        volumeChangeEventOptions: { enabled: true, intervalMillis: 100 },
+      });
+    } catch {
+      listeningRef.current = false;
+      sendSpeech({ type: "error", reason: "failed" });
+    }
+  }, [sendSpeech]);
+
+  /* ── 일정 알림 (`src/native/push.ts`) ── */
+
+  /**
+   * 웹이 `ready` 를 보냈는가 — 알림을 누른 화면 주소를 받을 준비가 됐다.
+   * 🚨 앱이 꺼져 있다가 알림으로 열리면, 누른 주소는 웹이 뜨기 전에 온다. 그때는 들고 있다가 `ready` 에 넘긴다.
+   * 🚨 **`onLoadStart` 에서 내리지 않는다.** Android 는 웹 안의 화면 이동(`pushState`)에도 `onLoadStart` 를 부르는데
+   *    (`onNavigationStateChange` 주석), 웹은 `ready` 를 문서마다 한 번만 보낸다 — 거기서 내리면 탭을 하나 옮긴
+   *    뒤로는 알림을 눌러도 화면이 안 옮겨진다(#609 리뷰). 웹뷰가 죽거나 연결 실패 화면으로 갈 때만 내린다
+   *    (`onDocumentGone`). ⚠️ 웹이 스스로 문서를 통째로 바꾸는 순간(로그인 복귀의 `location.replace`)에 알림을
+   *    누르면 그 한 번은 놓칠 수 있다.
+   */
+  const pushReadyRef = useRef(false);
+  const pendingOpenRef = useRef<string | null>(null);
+  /** 같은 누름을 두 번 옮기지 않는다 — 앱을 연 알림은 응답 리스너와 `getLastNotificationResponse` 둘로 온다. */
+  const lastOpenedRef = useRef<string | null>(null);
+
+  /** 🚨 지금 떠 있는 문서가 우리 주소일 때만 보낸다 — 토큰을 남의 문서에 넣지 않는다. */
+  const sendPush = useCallback((event: PushEvent) => {
+    if (!isInternalUrl(urlRef.current)) return;
+    webViewRef.current?.injectJavaScript(pushEventScript(event));
+  }, []);
+
+  const openFromNotification = useCallback(
+    (response: NotificationResponse) => {
+      const id = response.notification.request.identifier;
+      if (lastOpenedRef.current === id) return;
+      lastOpenedRef.current = id;
+      // 🚨 처리한 누름은 지운다. 뒤로가기 종료는 액티비티만 끝내서(`handleHardwareBack`) 마지막 응답이 남고,
+      //    다시 켜면 셸이 새로 붙어 같은 누름을 또 옮긴다 — 지난 알림의 날짜로 열린다.
+      Notifications?.clearLastNotificationResponse();
+      const path = pushOpenPath(responseData(response));
+      if (!path) return;
+      if (pushReadyRef.current) sendPush({ type: "open", path });
+      else pendingOpenRef.current = path;
+    },
+    [sendPush],
+  );
+
+  /**
+   * 이 휴대폰의 FCM 토큰을 웹에 넘긴다. `ask` 면 허용 전이고 OS 가 다시 물을 수 있을 때 권한 창을 띄운다 (`shouldAskPermission`).
+   * 🚨 실패해도 아무 말 하지 않는다 — 알림은 덤이다. 토큰을 로그에 남기지 않는다.
+   */
+  const handOverPushToken = useCallback(
+    async (ask: boolean) => {
+      if (!Notifications || !PUSH_AVAILABLE) return;
+      try {
+        const current = await Notifications.getPermissionsAsync();
+        let { status } = current;
+        if (ask && shouldAskPermission(current)) {
+          ({ status } = await Notifications.requestPermissionsAsync());
+        }
+        if (status !== "granted") return;
+        const token = await Notifications.getDevicePushTokenAsync();
+        if (typeof token.data === "string" && token.data !== "") {
+          sendPush({ type: "token", token: token.data });
+        }
+      } catch {
+        // 토큰 받기 실패(네트워크 · Play 서비스 없음). 다음에 앱을 켤 때 웹이 다시 부탁한다.
+      }
+    },
+    [sendPush],
+  );
+
+  // 알림 채널 · 누름 · 토큰 교체. 채널은 FCM 이 앱 밖에서 띄우는 알림도 쓴다 (`app.json` 의 `defaultChannel`).
+  useEffect(() => {
+    if (!Notifications) return;
+    void Notifications.setNotificationChannelAsync(PUSH_CHANNEL_ID, {
+      name: PUSH_CHANNEL_NAME,
+      importance: Notifications.AndroidImportance.HIGH,
+    }).catch(() => {});
+    // 앱이 꺼져 있다가 알림으로 열렸다.
+    const launched = Notifications.getLastNotificationResponse();
+    if (launched) openFromNotification(launched);
+    const subscriptions = [
+      Notifications.addNotificationResponseReceivedListener(openFromNotification),
+      // 토큰이 바뀌면 웹이 새 토큰으로 다시 등록한다 (#605 — 기기는 토큰으로 덮어쓴다).
+      Notifications.addPushTokenListener((token) => {
+        if (typeof token.data === "string" && token.data !== "") {
+          sendPush({ type: "token", token: token.data });
+        }
+      }),
+    ];
+    return () => subscriptions.forEach((subscription) => subscription.remove());
+  }, [openFromNotification, sendPush]);
+
+  /* ── 흐린 위치 (`src/native/location.ts`) ── */
+
+  /** 🚨 지금 떠 있는 문서가 우리 주소일 때만 보낸다 — 좌표를 남의 문서에 넣지 않는다. */
+  const sendLocation = useCallback((event: LocationEvent) => {
+    if (!isInternalUrl(urlRef.current)) return;
+    webViewRef.current?.injectJavaScript(locationEventScript(event));
+  }, []);
+
+  /**
+   * 위치 부탁 하나에 답한다 (`LocationAction`). `ask` 만 권한 창을 띄우고, 좌표는 `read` 만 읽는다.
+   *
+   * 🚨 Android 는 `ACCESS_COARSE_LOCATION` 만 선언한다 (`app.json` 이 정밀 · 백그라운드를 막는다). 라이브러리는
+   *    정밀과 대략을 같이 요청하지만, 선언하지 않은 정밀은 OS 가 묻지 않고 거절해서 권한 창에는 "대략적인 위치" 만 뜬다.
+   * 🚨 `mayShowUserSettingsDialog: false` — 위치 서비스가 꺼져 있어도 "정확도 높이기" 창을 띄우지 않는다. 못 읽으면 위치 없이 간다.
+   * 🚨 좌표를 로그에 남기지 않는다. 실패도 이유만 넘긴다.
+   */
+  const answerLocation = useCallback(
+    async (action: LocationAction) => {
+      if (action === "settings") {
+        void Linking.openSettings().catch(() => {});
+        return;
+      }
+      if (!Location) {
+        sendLocation(
+          action === "read"
+            ? { type: "unavailable", reason: "not-granted" }
+            : { type: "permission", action, status: "unsupported" },
+        );
+        return;
+      }
+      try {
+        let permission = await Location.getForegroundPermissionsAsync();
+        let asked = false;
+        if (action === "ask" && !permission.granted && permission.canAskAgain) {
+          permission = await Location.requestForegroundPermissionsAsync();
+          asked = true;
+        }
+        if (action !== "read") {
+          sendLocation({ type: "permission", action, status: permissionStatus(permission, asked) });
+          return;
+        }
+        if (!permission.granted) {
+          sendLocation({ type: "unavailable", reason: "not-granted" });
+          return;
+        }
+        const position =
+          (await Location.getLastKnownPositionAsync({ maxAge: LAST_KNOWN_MAX_AGE_MS })) ??
+          (await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Low,
+            mayShowUserSettingsDialog: false,
+          }));
+        const coarse = coarsePosition(position.coords);
+        sendLocation(
+          coarse ? { type: "position", ...coarse } : { type: "unavailable", reason: "failed" },
+        );
+      } catch {
+        sendLocation(
+          action === "read"
+            ? { type: "unavailable", reason: "failed" }
+            : { type: "permission", action, status: "unsupported" },
+        );
+      }
+    },
+    [sendLocation],
+  );
+
+  /** 웹 문서가 없어졌다(연결 실패 · 렌더 프로세스 종료). 듣기를 끊고, 알림 주소는 다시 뜬 문서의 `ready` 를 기다린다. */
+  const onDocumentGone = useCallback(() => {
+    abortListening();
+    pushReadyRef.current = false;
+  }, [abortListening]);
+
+  const onMessage = useCallback(
+    (event: WebViewMessageEvent) => {
+      const request = parseWebRequest(event.nativeEvent.data, event.nativeEvent.url, isInternalUrl);
+      if (!request) return;
+      // 🚨 종류부터 가른다 — 말로 적기의 "그만" 을 다른 부탁의 기본값으로 두면 알림 부탁이 마이크를 끈다.
+      if (request.kind === "push") {
+        if (request.action === "ready") {
+          pushReadyRef.current = true;
+          const path = pendingOpenRef.current;
+          pendingOpenRef.current = null;
+          if (path) sendPush({ type: "open", path });
+          return;
+        }
+        void handOverPushToken(request.action === "ask");
+        return;
+      }
+      if (request.kind === "location") {
+        void answerLocation(request.action);
+        return;
+      }
+      if (request.kind === "splash") {
+        uncover();
+        return;
+      }
+      if (request.action === "start") {
+        void startListening();
+        return;
+      }
+      stopRequestedRef.current = true;
+      SpeechRecognizer?.stop();
+    },
+    [answerLocation, handOverPushToken, sendPush, startListening, uncover],
+  );
+
+  /**
+   * 인식기 이벤트 → 웹. 결과는 첫 후보의 글자만 넘긴다 — 웹이 신뢰도나 다른 후보를 쓸 데가 없다.
+   *
+   * 한국어 모델이 없으면(`language-not-supported`) 받기를 걸고 "준비하는 중" 이라고 알린다. 받는 것은
+   * 인식 모델이고 음성이 아니다. 받기를 못 걸면 이 휴대폰에서는 못 쓰는 것이다.
+   */
+  useEffect(() => {
+    const recognizer = SpeechRecognizer;
+    if (!recognizer || !SPEECH_AVAILABLE) return;
+    const subscriptions = [
+      recognizer.addListener("start", () => sendSpeech({ type: "start" })),
+      recognizer.addListener("volumechange", (event) =>
+        sendSpeech({ type: "volume", level: volumeLevel(event.value) }),
+      ),
+      recognizer.addListener("result", (event) => {
+        const text = event.results[0]?.transcript ?? "";
+        sendSpeech({ type: "result", text, final: event.isFinal });
+      }),
+      recognizer.addListener("error", (event) => {
+        if (event.error === "language-not-supported") {
+          recognizer
+            .androidTriggerOfflineModelDownload({ locale: SPEECH_LANG })
+            .then(() => sendSpeech({ type: "error", reason: "preparing" }))
+            .catch(() => sendSpeech({ type: "error", reason: "unsupported" }));
+          return;
+        }
+        const reason = speechErrorReason(event.error, stopRequestedRef.current);
+        if (reason) sendSpeech({ type: "error", reason });
+      }),
+      recognizer.addListener("end", () => {
+        listeningRef.current = false;
+        sendSpeech({ type: "end" });
+      }),
+    ];
+    return () => subscriptions.forEach((subscription) => subscription.remove());
+  }, [sendSpeech]);
+
+  // 🚨 화면을 떠나면 마이크를 끈다. 보호자가 안 보는 동안 듣고 있으면 안 된다.
+  useEffect(() => {
+    const recognizer = SpeechRecognizer;
+    if (!recognizer || !SPEECH_AVAILABLE) return;
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "background" && listeningRef.current) recognizer.abort();
+    });
     return () => subscription.remove();
   }, []);
 
@@ -214,13 +659,34 @@ function Shell() {
             source={{ uri: WEB_URL }}
             applicationNameForUserAgent={USER_AGENT_SUFFIX}
             onNavigationStateChange={onNavigationStateChange}
-            onLoadEnd={() => setLoading(false)}
+            // 문서가 새로 열리면 듣기를 끊는다 (`abortListening`).
+            // ⚠️ Android 는 웹의 주소 이동(`pushState`)에도 이것을 부른다(`onNavigationStateChange` 주석) — 그래서 알림의
+            //    `ready` 는 여기서 내리지 않는다 (`pushReadyRef`).
+            onLoadStart={abortListening}
+            // 첫 문서가 떴다. 스플래시는 아직 내리지 않고 웹의 첫 화면(`done`)을 기다린다 (`waitWebFirstScreen`).
+            onLoadEnd={() => {
+              setLoading(false);
+              waitWebFirstScreen();
+            }}
             onError={() => {
+              uncover();
+              onDocumentGone();
               setLoading(false);
               setFailed(true);
             }}
             onHttpError={({ nativeEvent }) => {
-              if (nativeEvent.statusCode >= 500) setFailed(true);
+              if (nativeEvent.statusCode < 500) return;
+              uncover();
+              onDocumentGone();
+              setFailed(true);
+            }}
+            // 🚨 웹뷰 렌더 프로세스가 죽으면 마이크를 끊고 연결 실패 화면으로 간다. 이 처리가 없으면 앱이 같이 죽고,
+            //    죽은 웹뷰는 다시 쓸 수 없어서 "다시 시도" 가 새 웹뷰를 띄운다 (`failed` 가 웹뷰를 내린다).
+            onRenderProcessGone={() => {
+              uncover();
+              onDocumentGone();
+              setLoading(false);
+              setFailed(true);
             }}
             // 🚨 `target="_blank"` 를 **이 웹뷰의 이동으로 만든다.** 안드로이드 기본값(true)이면
             //    새 창을 띄울 곳이 없어 링크가 **아무 일도 하지 않는다** — 동의 화면의 "전문 보기"
@@ -229,7 +695,7 @@ function Shell() {
             setSupportMultipleWindows={false}
             // 앱 밖 링크(약관 등)는 웹뷰에 가두지 않고 in-app 브라우저로 앱 위에 얹는다 (#212).
             // 🚨 로그인 시작은 따로 — 복귀(`icatch://auth`)를 받아야 해서 인증 세션으로 연다 (#210).
-            // 🚨 출처가 같아도 `/api/…` 는 웹뷰 밖이다 (#273) — 안 그러면 nginx 로 API 를 웹 주소 아래에
+            // 🚨 출처가 같아도 `/api/…` 는 웹뷰 밖이다 (#273) — 안 그러면 Caddy 로 API 를 웹 주소 아래에
             //    둔 날 로그인 시작이 아래 두 번째 분기까지 오지 못한다 (`src/native/internal-url.ts`).
             onShouldStartLoadWithRequest={(request) => {
               if (isInternalUrl(request.url)) return true;
@@ -240,10 +706,21 @@ function Shell() {
               void openExternal(request.url);
               return false;
             }}
-            // 페이지가 뜨기 전에 상태바·제스처바가 먹는 자리를 꽂는다 (`src/native/safe-area.ts`).
-            // 🚨 웹에서 오는 메시지(`onMessage`)는 받지 않는다. 웹이 셸에 부탁할 것이 없다 —
-            //    최근 사진 창구는 사진 권한과 함께 뺐다 (#408 · CLAUDE.md §3).
-            injectedJavaScriptBeforeContentLoaded={SAFE_AREA_SCRIPT + safeAreaScript(webInsets)}
+            // 페이지가 뜨기 전에 상태바·제스처바가 먹는 자리와 말로 적기 · 알림 · 위치 · 스플래시 창구를 꽂는다
+            // (`src/native/safe-area.ts` · `speech.ts` · `push.ts` · `location.ts` · `splash.ts`).
+            injectedJavaScriptBeforeContentLoaded={
+              SAFE_AREA_SCRIPT +
+              safeAreaScript(webInsets) +
+              speechBridgeScript(SPEECH_AVAILABLE) +
+              pushBridgeScript(PUSH_AVAILABLE) +
+              locationBridgeScript(Location !== null) +
+              splashBridgeScript()
+            }
+            // 🚨 웹의 부탁은 말로 적기(시작 · 멈춤)와 알림(준비 · 토큰 · 권한), 위치(읽기 · 묻기), 스플래시(첫 화면) 뿐이다. 보낸 쪽 주소와 모양을
+            //    검사한 것만 받는다 (`parseWebRequest` · CLAUDE.md §4).
+            onMessage={onMessage}
+            // 🚨 `geolocationEnabled` 를 켜지 않는다 (#593). 웹의 `navigator.geolocation` 을 정밀 위치 권한으로만
+            //    요청하는 길이라, 원좌표가 웹까지 올라온다. 위치는 위의 `location` 창구로만 흐린 값을 넘긴다.
             // 08 사진 분석 — <input type="file"> 이 동작하려면 필요하다.
             allowFileAccess
             allowsInlineMediaPlayback
@@ -262,7 +739,52 @@ function Shell() {
           ) : null}
         </SafeAreaView>
       )}
+
+      <SplashCover covered={covered} />
     </View>
+  );
+}
+
+/** 덮개가 흐려지는 시간. `expo-splash-screen` 이 네이티브 스플래시를 내릴 때와 같은 값이다. */
+const SPLASH_FADE_MS = 400;
+
+/**
+ * 스플래시 덮개 — 네이티브 스플래시와 **같은 그림을 같은 자리에** 둔다 (#690). 셸의 첫 그림이 이것이라, 네이티브
+ * 스플래시가 내려가도 보호자 눈에는 스플래시가 그대로다. 웹의 첫 화면이 서면 흐려지며 걷힌다.
+ *
+ * 🚨 **네이티브 스플래시를 웹까지 들고 있지 않는 이유** — 들고 있는 동안 Android 는 앱 화면을 그리지 않는다
+ *    (`expo-splash-screen` 이 그리기를 막는다). 그러면 웹뷰도 프레임을 내지 못해서, 프레임을 기다리는 웹의 화면
+ *    전환(로그인한 보호자가 홈으로 옮겨 가는 View Transition)이 멈추고 웹은 첫 화면을 세우지 못한다. 셸은 웹을,
+ *    웹은 프레임을 기다리다 시간 초과로만 내려갔다 (에뮬레이터 Android 17 확인). 덮개 아래에서는 웹뷰가 그려진다.
+ * 🚨 **덮고 있는 동안은 누름을 막는다** — 안 보이는 페이지의 버튼이 눌리면 안 된다. 걷히는 동안부터 통과시킨다.
+ * 🚨 그림 크기는 `app.json` 의 `imageWidth`(192dp)와 같다. 네이티브는 그 크기로 화면 가운데에 그린다 — 다르면 내려갈 때 그림이 튄다.
+ * 이것은 화면이 아니라 로딩 표시다 (셸의 연결 대기 스피너와 같은 자리 · CLAUDE.md §1).
+ */
+function SplashCover({ covered }: { covered: boolean }) {
+  const opacity = useRef(new Animated.Value(1)).current;
+  const [gone, setGone] = useState(false);
+
+  useEffect(() => {
+    if (covered) return;
+    const fade = Animated.timing(opacity, {
+      toValue: 0,
+      duration: SPLASH_FADE_MS,
+      useNativeDriver: true,
+    });
+    fade.start(() => setGone(true));
+    return () => fade.stop();
+  }, [covered, opacity]);
+
+  if (gone) return null;
+  return (
+    <Animated.View
+      style={[styles.cover, { opacity }]}
+      pointerEvents={covered ? "auto" : "none"}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      <Image source={SPLASH_IMAGE} style={styles.coverImage} resizeMode="contain" />
+    </Animated.View>
   );
 }
 
@@ -284,6 +806,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: CANVAS,
   },
+  cover: {
+    ...StyleSheet.absoluteFill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: CANVAS,
+  },
+  coverImage: { width: SPLASH_IMAGE_DP, height: SPLASH_IMAGE_DP },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
   errorTitle: { fontSize: 18, fontWeight: "700", color: INK },
   errorBody: { fontSize: 14, lineHeight: 21, color: INK_MUTED, textAlign: "center" },

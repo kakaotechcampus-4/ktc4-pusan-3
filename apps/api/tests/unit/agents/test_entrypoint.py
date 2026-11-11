@@ -18,7 +18,7 @@ from app.agents.activity.context import build_gate as build_activity_gate
 from app.agents.activity.registry import closed_readout_key as activity_closed_key
 from app.agents.activity.schemas.memory import SearchActivityMemoryArgs
 from app.agents.activity.schemas.task import ActivityTaskType
-from app.agents.activity.store.inmemory import InMemoryWeather
+from app.agents.activity.store.inmemory import InMemoryEvents, InMemoryPlaces, InMemoryWeather
 from app.agents.activity.tools.memory import search_activity_memory
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import build_observed_range
@@ -37,7 +37,7 @@ from app.agents.food.store import FoodPorts, MenuCatalogRow
 from app.agents.food.tools.records import search_food_memory
 from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
-from app.agents.memory_bridge import StoreActivityMemory
+from app.agents.memory_bridge import StoreActivityMemory, same_store
 from app.agents.suggestion_save import InMemorySuggestions
 from app.agents.supervisor import routing
 from tests.unit.agents.food.support import ScriptedLLM, food_task
@@ -93,8 +93,9 @@ async def test_컨텍스트를_만들어_pipeline_에_넘긴다(monkeypatch: pyt
     assert memory.now == food.now  # 기준일이 두 Agent 사이에서 갈리지 않게
     assert memory.timezone is food.timezone is entrypoint.KST
     assert memory.now.tzinfo is entrypoint.KST
-    # 구현된 Agent 마다 context 가 있어야 pipeline 이 찾는다
-    assert set(seen["contexts"]) == routing.IMPLEMENTED_AGENTS
+    # 구현된 Agent 마다 context 가 있어야 pipeline 이 찾는다. Health 는 배선만 되어 있고 라우팅이
+    # 아직 부르지 않아서 구현 목록 밖이다
+    assert set(seen["contexts"]) == routing.IMPLEMENTED_AGENTS | {"health"}
 
 
 def test_이벤트_타입이_전부_밖으로_나간다() -> None:
@@ -637,7 +638,8 @@ async def test_Activity_는_Food_와_같은_생일_기준일_store_를_쓴다(
     assert await activity.ports.profile.birth_date(child_id=CHILD) == birth_date
     assert activity.now == food.now and activity.timezone is food.timezone
     assert isinstance(activity.ports.memory, StoreActivityMemory)
-    assert activity.ports.places is None  # 장소 어댑터 전이라 장소 조회가 닫힌다
+    assert activity.ports.places is None  # 장소 어댑터를 넘기지 않으면 장소 조회가 닫힌다
+    assert activity.ports.events is None  # 행사도 같다
 
 
 async def test_좌표와_날씨_어댑터를_넘기면_Activity_가_받는다(
@@ -653,6 +655,29 @@ async def test_좌표와_날씨_어댑터를_넘기면_Activity_가_받는다(
 
     assert activity.ports.weather is weather
     assert (activity.location.lat, activity.location.lon) == (35.18, 129.08)  # 한 번 더 자른다
+
+
+async def test_장소_어댑터를_넘기면_Activity_가_받는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    places = InMemoryPlaces()
+    seen = await _activity_of(
+        monkeypatch,
+        location=entrypoint.CoarseLocation(lat=35.18, lon=129.08),
+        activity_places=places,
+    )
+    activity = seen["contexts"]["activity"]
+
+    assert activity.ports.places is places
+    gate = await build_activity_gate(activity, outdoor_ok=True)
+    assert gate.data.places is True and gate.has_location is True
+
+
+async def test_행사_어댑터를_넘기면_Activity_가_받는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    events = InMemoryEvents()
+    activity = (await _activity_of(monkeypatch, activity_events=events))["contexts"]["activity"]
+
+    assert activity.ports.events is events
+    gate = await build_activity_gate(activity, outdoor_ok=True)
+    assert gate.data.events is True
 
 
 async def test_좌표를_안_넘기면_Activity_는_실내_전용이다(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -695,6 +720,12 @@ class _Reader:
 
     async def activity_safety(self, *, child_id: UUID) -> list:
         self.calls.append("activity")
+        if self.fail:
+            raise SafetyLookupError("못 읽음")
+        return []
+
+    async def growth_safety(self, *, child_id: UUID) -> list:
+        self.calls.append("growth")
         if self.fail:
             raise SafetyLookupError("못 읽음")
         return []
@@ -767,7 +798,7 @@ async def test_안전_어댑터를_handle_input_과_suggest_가_둘_다_받는�
     original = entrypoint._domain_contexts
 
     def spy(**kwargs: Any) -> Any:
-        seen.append((kwargs["food_safety"], kwargs["activity_safety"]))
+        seen.append((kwargs["food_safety"], kwargs["activity_safety"], kwargs["growth_safety"]))
         return original(**kwargs)
 
     async def fake_run(*args: Any, **kwargs: Any) -> Any:
@@ -780,7 +811,7 @@ async def test_안전_어댑터를_handle_input_과_suggest_가_둘_다_받는�
     monkeypatch.setattr(pipeline, "run_suggestions", fake_run)
     monkeypatch.setattr(entrypoint, "_handle_input", fake_handle)
     reader = _Reader()
-    readers = {"food_safety": reader, "activity_safety": reader}
+    readers = {"food_safety": reader, "activity_safety": reader, "growth_safety": reader}
 
     await entrypoint.handle_input(
         child_id=CHILD,
@@ -801,7 +832,7 @@ async def test_안전_어댑터를_handle_input_과_suggest_가_둘_다_받는�
         **readers,
     )
 
-    assert seen == [(reader, reader)] * 2
+    assert seen == [(reader, reader, reader)] * 2
 
 
 # ── 관심 어댑터 (#572) ─────────────────────────────────────────────
@@ -870,6 +901,32 @@ async def test_관심_어댑터를_넘기면_Food_기억은_food_관심만_돌�
     assert [(r["kind"], r["label"], r["tier"]) for r in result.data["records"]] == [
         ("profile_affinity", "딸기", 1)
     ]
+
+
+async def test_Growth_기억은_교육_놀이_관심을_읽는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    reader = _Affinities(
+        ("education", _liked(11, "숫자", days_ago=3)),
+        ("activity", _liked(9, "공룡", days_ago=3)),
+        ("food", _liked(10, "딸기", days_ago=3)),
+    )
+    growth = (await _activity_of(monkeypatch, affinity_reader=reader))["contexts"]["growth"]
+
+    rows = await growth.ports.memory.affinities(child_id=CHILD, domains=("education", "activity"))
+
+    assert sorted(r.merge_key for r in rows) == ["공룡", "숫자"]
+
+
+async def test_Growth_기억도_21일_넘게_관찰이_없는_관심은_archived_로_읽는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader = _Affinities(("education", _liked(11, "숫자", days_ago=22)))
+    store = same_store(InMemoryStore(now=datetime.now(entrypoint.KST)))  # opener 갈래
+    seen = await _activity_of(monkeypatch, domain_store=store, affinity_reader=reader)
+    growth = seen["contexts"]["growth"]
+
+    rows = await growth.ports.memory.affinities(child_id=CHILD, domains=("education",))
+
+    assert [r.state for r in rows] == ["archived"]
 
 
 async def test_05_다시_만들기는_입력_run_의_날을_기준일로_읽는다(
@@ -974,8 +1031,17 @@ def test_넘긴_Food_카탈로그_어댑터를_그대로_쓴다() -> None:
     assert (ports.catalog, ports.recipes, ports.suggestions) == (catalog, recipes, suggestions)
 
 
+def test_넘긴_급식_어댑터가_Food_포트로_간다() -> None:
+    daycare = object()
+
+    ports = _food_ports(food_daycare=daycare)
+
+    assert ports.daycare._inner is daycare  # record_food_writes 가 쓰기 기록으로 감싼다
+
+
 def test_안_넘기면_빈_InMemory_다() -> None:
     ports = _food_ports()
+    assert type(ports.daycare._inner).__name__ == "InMemoryDaycareMeals"
 
     assert type(ports.catalog).__name__ == "InMemoryMenuCatalog"
     assert type(ports.recipes).__name__ == "InMemoryRecipeCatalog"
@@ -1051,3 +1117,143 @@ async def test_넘긴_Food_어댑터를_handle_input_과_suggest_가_둘_다_받
     )
 
     assert seen == [(catalog, recipes, suggestions)] * 2
+
+
+async def test_Growth_는_같은_생일_기준일_store_를_쓰고_안전을_안_넘기면_미연결이다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.agents.growth.store.ports import UnwiredSafety
+    from app.agents.memory_bridge import StoreGrowthMemory
+
+    birth_date = _months_ago(30)
+    seen = await _activity_of(monkeypatch, birth_date=birth_date, child_health_granted=True)
+    growth, food = seen["contexts"]["growth"], seen["contexts"]["food"]
+
+    assert await growth.ports.profile.birth_date(child_id=CHILD) == birth_date
+    assert await growth.ports.consent.child_health_granted(child_id=CHILD) is True
+    assert growth.now == food.now and growth.timezone is food.timezone
+    assert isinstance(growth.ports.memory, StoreGrowthMemory)
+    assert isinstance(growth.ports.safety, UnwiredSafety)
+    assert growth.ports.books is None and growth.ports.notice is None
+
+
+async def test_넘긴_안전_어댑터를_Growth_가_교육에서_읽는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.agents.growth.context import build_gate as build_growth_gate
+    from app.agents.growth.registry import closed_readout_key as growth_closed_key
+    from app.agents.growth.schemas.task import GrowthTaskType
+
+    reader = _Reader()
+    seen = await _activity_of(
+        monkeypatch, birth_date=_months_ago(30), child_health_granted=True, growth_safety=reader
+    )
+    growth = seen["contexts"]["growth"]
+
+    gate = await build_growth_gate(growth, GrowthTaskType.LEARNING_SUGGESTION)
+
+    assert growth.ports.safety is reader
+    assert growth_closed_key(GrowthTaskType.LEARNING_SUGGESTION, gate) is None
+    assert reader.calls == ["growth"]
+
+
+async def test_동의_값을_못_받은_Growth_는_동의_없음으로_읽는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """테스트 · eval 호출 — 키 · 몸무게를 동의 없이 읽지 않게."""
+    seen = await _activity_of(monkeypatch, birth_date=_months_ago(30))
+    growth = seen["contexts"]["growth"]
+
+    assert await growth.ports.consent.child_health_granted(child_id=CHILD) is False
+
+
+async def test_넘긴_성장_기록_포트를_Growth_가_받는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agents.growth.store.inmemory import InMemoryGrowthLog
+
+    log = InMemoryGrowthLog()
+    seen = await _activity_of(monkeypatch, growth_log=log)
+
+    assert seen["contexts"]["growth"].ports.growth_log is log
+
+
+async def test_도서는_정보나루와_이미_낸_책을_둘_다_받아야_열린다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.agents.growth.library import LibraryBooks
+    from app.agents.growth.store.inmemory import InMemoryIssuedBooks
+
+    issued = InMemoryIssuedBooks()
+    seen = await _activity_of(monkeypatch, growth_books=object(), growth_issued_books=issued)
+    ports = seen["contexts"]["growth"].ports
+
+    assert isinstance(ports.books, LibraryBooks)
+    assert ports.issued_books is issued
+
+
+@pytest.mark.parametrize("given", [{"growth_books": object()}, {"growth_issued_books": object()}])
+async def test_도서_어댑터가_하나라도_없으면_닫힌다(
+    monkeypatch: pytest.MonkeyPatch, given: dict[str, Any]
+) -> None:
+    """낸 책을 모르면 "다른 책도" 에 같은 책이 다시 나온다 — 그 전에 closed.book_api 로 닫는다."""
+    seen = await _activity_of(monkeypatch, **given)
+    ports = seen["contexts"]["growth"].ports
+
+    assert ports.books is None and ports.issued_books is None
+
+
+async def test_05_도_도서_어댑터를_Growth_에_넘긴다(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agents.growth.library import LibraryBooks
+
+    seen: dict[str, Any] = {}
+
+    async def fake_run(tasks: Any, contexts: Any, **kwargs: Any) -> Any:
+        seen["contexts"] = contexts
+        return entrypoint.SuggestRun(outcomes=(), failed=())
+
+    monkeypatch.setattr(pipeline, "run_suggestions", fake_run)
+    await entrypoint.suggest(
+        child_id=CHILD,
+        tasks=[],
+        request_id="q",
+        save_run_id=None,
+        sent_at=None,
+        save_suggestions=InMemorySuggestions(),
+        growth_books=object(),
+        growth_issued_books=object(),
+    )
+
+    assert isinstance(seen["contexts"]["growth"].ports.books, LibraryBooks)
+
+
+async def test_suggest_는_보호자_원문과_앞_턴의_말을_task_에_싣는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[Any] = []
+
+    async def fake_run(tasks: Any, *args: Any, **kwargs: Any) -> Any:
+        seen.extend(tasks)
+        return pipeline.SuggestRun(outcomes=(), failed=())
+
+    monkeypatch.setattr(pipeline, "run_suggestions", fake_run)
+
+    await entrypoint.suggest(
+        child_id=CHILD,
+        tasks=[
+            entrypoint.SuggestTask(
+                "activity",
+                None,
+                ("블록 쌓기보다 쉬운 놀이 추천",),
+                original_texts=("더 쉬운 건 없어?",),
+                prior_texts=("블록 놀이 추천해줘",),
+            )
+        ],
+        request_id="q",
+        save_run_id=None,
+        sent_at=None,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    (task,) = seen
+    assert task.request_texts == ("블록 쌓기보다 쉬운 놀이 추천",)
+    assert task.original_texts == ("더 쉬운 건 없어?",)
+    assert task.prior_texts == ("블록 놀이 추천해줘",)

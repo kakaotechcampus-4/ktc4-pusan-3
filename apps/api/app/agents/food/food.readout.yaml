@@ -20,7 +20,10 @@ general.reason.toddler:
   template: "또래 아이들이 많이 먹는 메뉴예요."
 general.reason.weaning:
   kind: general
-  template: "이 시기 아기들이 많이 먹는 재료예요."
+  template: "이 시기 이유식 단계에 맞춘 메뉴예요."
+general.reason.requested:
+  kind: general
+  template: "요청하신 조건을 바탕으로 골랐어요."
 followup.preference:
   kind: followup
   template: "{menu}은(는) 좋아하는 편인가요?"
@@ -41,10 +44,22 @@ nutrient.today_empty:
   template: "오늘 먹은 기록이 아직 없어서 최근 며칠을 기준으로 골랐어요."
 nutrient.daycare_amount_unknown:
   kind: nutrient
-  template: "급식은 메뉴만 알고 얼마나 먹었는지는 몰라서 참고만 했어요."
+  template: "급식은 메뉴만 알고 먹은 양은 몰라서 참고만 했어요."
+nutrient.daycare_unread:
+  kind: nutrient
+  template: "어린이집 급식표는 지금 불러오지 못해서 급식표를 빼고 봤어요."
 nutrient.appearance:
   kind: nutrient_analysis
   template: "기록된 {days}일 중 {group} 나온 날은 {count}일이에요."
+nutrient.sparse:
+  kind: nutrient_analysis
+  template: "기록된 식사에서 {group} 나온 날이 적은 편이라, 식단 추천은 {group} 든 메뉴를 더 넣어 골라요."
+nutrient.few_records:
+  kind: nutrient_analysis
+  template: "기록된 식사 {recorded}건으로 본 거라, 기록이 쌓이면 달라질 수 있어요."
+nutrient.daycare_upcoming:
+  kind: nutrient
+  template: "기록에 오늘부터 이번 주 급식 식단 {days}일도 넣어서 봤어요."
 nutrient.band.low:
   kind: nutrient_analysis
   template: "기록된 식사 {recorded}건을 보면 {nutrient} 식품이 적은 편이에요."
@@ -90,21 +105,39 @@ daycare.slot_ambiguous:
 daycare.allergy_conflict:
   kind: daycare
   template: "기록해 뒀어요. 그런데 등록된 {label} 알레르기와 겹쳐요."
+daycare.allergy_unchecked:
+  kind: daycare
+  template: "기록해 뒀어요. 다만 알레르기 정보를 확인하지 못해서, 넣은 메뉴와 겹치는지는 보지 못했어요."
 daycare.out_of_range:
   kind: daycare
   template: "너무 지난 날이라 급식 기록이 남아 있지 않아요."
 closed.no_daycare:
   kind: closed
   template: "등록된 기관 급식 정보가 없어요."
+closed.daycare_unread:
+  kind: closed
+  template: "급식 정보를 지금 불러오지 못했어요. 잠시 뒤 다시 물어봐 주세요."
 daycare.not_found:
   kind: daycare
   template: "급식 정보를 못 찾았어요."
+daycare.amount_no_meal:
+  kind: daycare
+  template: "{date} {slot} 급식을 확인하지 못했어요. {date} 먹은 {slot}을 알려주세요."
 daycare.replaced_unknown:
   kind: daycare
   template: "어떤 메뉴 대신 받았나요?"
 daycare.unchanged:
   kind: daycare
   template: "급식 기록은 그대로 두었어요."
+daycare.lookup_line:
+  kind: daycare
+  template: "{date} {slot}: {menus}"
+daycare.lookup_empty:
+  kind: daycare
+  template: "{when}에는 등록된 급식이 없어요."
+daycare.lookup_too_long:
+  kind: daycare
+  template: "급식은 한 번에 일주일까지 보여 드려요. 날짜를 좁혀서 물어봐 주세요."
 check.blocked_safety:
   kind: blocked
   template: "알레르기 정보를 확인할 수 없어서 지금은 답을 드릴 수 없어요."
@@ -147,3 +180,21 @@ meal.request_conflict:
 meal.request_age_block:
   kind: notice
   template: "요청하신 {food}{은는} {when} 먹이지 않아서 빼고 골랐어요."
+meal.daycare_unread:
+  kind: notice
+  template: "오늘 어린이집 급식은 확인하지 못해서, 급식과 겹치는 메뉴가 있을 수 있어요."
+meal.nutrient_basis:
+  kind: notice
+  template: "기록된 {days}일 중 {group} 나온 날은 {count}일이라, {group} 든 메뉴를 더 넣었어요."
+meal.menu_source:
+  kind: notice
+  template: "추천 메뉴는 {org} 공개 레시피 중 재료가 검수된 메뉴예요."
+meal.menu_weaning:
+  kind: notice
+  template: "추천 메뉴는 아이캐치 서비스가 월령별 이유식 단계에 맞춰 정리한 식단에서 골랐어요."
+meal.menu_generated:
+  kind: notice
+  template: "추천 메뉴는 공개 레시피에 없어 일반적인 메뉴로 골랐어요."
+meal.menu_mixed:
+  kind: notice
+  template: "{menus}{은는} 공개 레시피에 없어 일반적인 메뉴로 골랐어요. 나머지는 {org} 공개 레시피 중 재료가 검수된 메뉴예요."

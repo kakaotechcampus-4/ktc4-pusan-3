@@ -28,8 +28,8 @@ ME = "/api/v1/me"
 TODAY = date(2026, 10, 5)
 """나이 문구가 날짜에 따라 바뀌어서 "오늘" 을 고정한다."""
 
-CHILD_POLICY = "draft-2"
-"""아이 동의 둘(child_basic · child_health)의 지금 버전 — 약관 draft-2 (#221).
+CHILD_POLICY = "2026-11-10"
+"""아이 동의 둘(child_basic · child_health)의 지금 버전 — 약관 2026-11-10 판 (#221).
 
 아이 동의를 새로 등록하면 같이 바꾼다."""
 

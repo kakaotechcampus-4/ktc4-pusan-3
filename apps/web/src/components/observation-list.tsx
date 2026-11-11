@@ -14,7 +14,7 @@ import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { isHealthObservation, type Observation } from "@/lib/api/types";
-import { cn } from "@/lib/cn";
+import { healthTitle } from "@/lib/health-observation";
 
 /**
  * 07 관찰 목록 — **줄**이다. 카드가 아니다.
@@ -25,22 +25,23 @@ import { cn } from "@/lib/cn";
  *    관찰을 성향으로 확정하지 않는다 · CLAUDE.md §2)이 화면에서 사라지는 지점이다.
  *
  * ⚠️ **줄은 한 덩어리가 아니라 하나씩 떨어져 선다** (#269 · 제품 결정). 처음에는 가는 선으로만
- *    나뉜 한 덩어리였는데, 기록마다 상태(`active` · `stand_alone` · `inactive`)가 갈리면서 줄마다
- *    면을 달리 줘야 했고, 붙어 있으면 어디서 한 건이 끝나는지 읽히지 않았다. 대신 카드와 갈리는
+ *    나뉜 한 덩어리였는데, 기록마다 상태(`active` · `stand_alone`)가 갈리면서 아래 자리에 다른 것이
+ *    서게 됐고, 붙어 있으면 어디서 한 건이 끝나는지 읽히지 않았다. 대신 카드와 갈리는
  *    지점을 셋 남긴다 — **작은 모서리(`field` 10)** · **좁은 간격(8)** · **본문 크기 글자**.
  *    기억 카드는 `card` 14 · 간격 12 · 이름이 `title` 20 이다.
  *
- * 🚨 **상태는 면 + 글자로 갈린다** (색만으로 가르지 않는다 · 문서 §3).
+ * 🚨 **상태는 아래 자리의 글자로 갈린다** (색만으로 가르지 않는다 · 문서 §3).
  *    - `active`: 기본 줄. 아래 자리에 묶인 기억 **칩**
  *    - `stand_alone`(이번만 그랬어요): 같은 면. 아래 자리에 **고친 표시**("이번만 그랬어요로
  *      고친 기록"). 실제로 있었던 일이라 물러서지 않는다
- *    - `inactive`(잘못된 기록): 고친 표시 + 낡은 기억 카드와 같은 말로 **물러선다**
- *      (`surface-muted` 면 · `ink-muted` 글자 · 뉴트럴 타일) — 근거에서도 빠진 기록이다
+ *    ⚠️ 물러서는 줄(`inactive` · 잘못된 기록)은 없어졌다 (#736) — 기록 지우기로 바꿨고 서버가 남은 행을
+ *      `deleted` 로 옮겼다.
  * 🚨 **고친 표시는 칩이 아니다.** 아이콘 + 문장이고 면이 없다. 같은 자리에 서는 기억 칩과 같은
  *    알약 모양이면 "이번만 그랬어요" 가 기억 이름처럼 읽혔다 — 모양이 달라야 다른 것으로 읽힌다.
  *    라벨만 두지 않고 "…로 고친 기록" 까지 쓰는 것도 같은 이유다.
  *
- * 🚨 **줄을 끌고 가는 것은 그 기록이 무엇에 관한 것인지(`subject` · health 는 `symptom`)다**
+ * 🚨 줄을 끌고 가는 것은 그 기록이 무엇에 관한 것인지(`subject` · health 는 `symptom`, 먹인 약 행은
+ *    약 이름 · #551)다
  *    (#524). 부모가 적은 말(`raw_text`)은 그 아래 한 단계 약하게 선다. 한 발화는 관찰 여러 건으로
  *    나뉘어 저장되는데(최상위 CLAUDE.md §4 ②), 원문이 제목이던 때는 같은 문장이 줄마다 같은
  *    무게로 반복돼서 "같은 말이 세 번 저장됐다" 로 읽혔다.
@@ -89,8 +90,9 @@ export function ObservationList({
 }) {
   return (
     <ul className="flex flex-col gap-2">
-      {observations.map((observation) => (
-        <li key={`${observation.kind}:${observation.id}`}>
+      {observations.map((observation, i) => (
+        // 화면 투어는 첫 줄을 비춘다 (07 · 09 · `lib/tour/screens/`).
+        <li key={`${observation.kind}:${observation.id}`} data-tour={i === 0 ? "row" : undefined}>
           <ObservationRow observation={observation} onOpen={() => onOpen(observation)} />
         </li>
       ))}
@@ -100,47 +102,29 @@ export function ObservationList({
 
 function ObservationRow({ observation, onOpen }: { observation: Observation; onOpen: () => void }) {
   const agent = observationAgent(observation.kind);
-  const wrong = observation.status === "inactive";
   const title = observationTitle(observation);
 
   return (
     <button
       type="button"
       onClick={onOpen}
-      className={cn(
-        "min-h-touch rounded-field ease-standard flex w-full items-start gap-3 border px-4 py-3.5 text-left transition-colors duration-120",
-        wrong
-          ? "bg-surface-muted active:bg-line border-transparent"
-          : "bg-surface border-line active:bg-surface-muted",
-      )}
+      className="min-h-touch rounded-field ease-standard bg-surface border-line active:bg-surface-muted flex w-full items-start gap-3 border px-4 py-3.5 text-left transition-colors duration-120"
     >
       {/* 모양과 이름은 기록 종류, 색은 그 기록을 읽는 Agent 다 — 교육 · 생활습관이 같은 성장 색이다 (#501). */}
       <IconTile
         icon={OBSERVATION_ICON[observation.kind]}
-        tone={wrong ? "neutral" : "plain"}
-        className={wrong ? undefined : domainField(agent)}
+        tone="plain"
+        className={domainField(agent)}
       />
 
       <span className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <span
-          className={cn(
-            "text-body ease-standard font-semibold transition-colors duration-120",
-            wrong ? "text-ink-muted" : "text-ink",
-          )}
-        >
-          {title ?? observation.raw_text}
-        </span>
+        <span className="text-body text-ink font-semibold">{title ?? observation.raw_text}</span>
 
         {/* 원문은 근거라 한 단계 약하게 선다. 자르지 않는다 (문서 §10). 제목이 원문이면 다시 쓰지 않는다. */}
         {title ? <span className="text-body-sm text-ink-muted">{observation.raw_text}</span> : null}
 
         {/* 기록 종류와 날짜는 가운뎃점 없이 간격으로 가른다 (#524). 칩은 아래 줄. */}
-        <span
-          className={cn(
-            "text-caption ease-standard flex flex-wrap gap-x-2 transition-colors duration-120",
-            wrong ? "text-ink-muted" : "text-ink-subtle",
-          )}
-        >
+        <span className="text-caption text-ink-subtle flex flex-wrap gap-x-2">
           <span>{observationLabel(observation.kind)}</span>
           {observation.observed_label ? <span>{observation.observed_label}</span> : null}
         </span>
@@ -152,10 +136,7 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
         aria-hidden
         size={ICON_SIZE.md}
         strokeWidth={ICON_STROKE}
-        className={cn(
-          "ease-standard mt-2 shrink-0 transition-colors duration-120",
-          wrong ? "text-ink-muted" : "text-ink-subtle",
-        )}
+        className="text-ink-subtle mt-2 shrink-0"
       />
     </button>
   );
@@ -164,13 +145,12 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
 /**
  * 줄의 제목 — 이 기록이 무엇에 관한 것인가. 04 대화 결과의 기록 줄(`run-result.tsx`)과 같은 필드를
  * 쓴다 (04 는 health 에 `observed_time` 까지 붙이고, 07 은 시각을 상세에만 둔다).
- * health 는 `subject` 키가 없어 증상이 그 자리를 받는다. 증상이 없으면 `null` 이고, 줄은 원문을 제목으로 쓴다.
+ * health 는 `subject` 키가 없어 증상이 그 자리를 받는다. 먹인 약 행은 약 이름이 받는다 — 증상과 같은 말에서
+ * 저장된 약 행은 원문이 같아서, 원문을 제목으로 쓰면 같은 줄이 두 번 보인다 (#551). 둘 다 없으면 `null` 이고,
+ * 줄은 원문을 제목으로 쓴다.
  */
 function observationTitle(observation: Observation): string | null {
-  if (isHealthObservation(observation)) {
-    const symptoms = observation.domain_fields.symptom;
-    return symptoms && symptoms.length > 0 ? symptoms.join(", ") : null;
-  }
+  if (isHealthObservation(observation)) return healthTitle(observation.domain_fields);
   return observation.subject || null;
 }
 
@@ -199,7 +179,8 @@ export function CorrectedMark({ label }: { label: string }) {
   return (
     <span className="text-caption text-ink-muted inline-flex items-center gap-1">
       <PencilLine aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} className="shrink-0" />
-      {josa(label, "으로/로")} 고친 기록
+      {/* 문장형 라벨은 따옴표로 감싸 조사를 붙인다 — "이번만 그랬어요로" 가 한 낱말처럼 읽혔다 (#815). */}
+      ‘{label}’{josa.pick(label, "으로/로")} 고친 기록
     </span>
   );
 }

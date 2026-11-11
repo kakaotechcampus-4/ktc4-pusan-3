@@ -24,6 +24,8 @@ import { useChildId } from "@/hooks/use-child-id";
 import { useSheetTarget } from "@/hooks/use-sheet-target";
 import { api, qk, type GrowthLog, type GrowthLogsResponse } from "@/lib/api";
 import { BACK } from "@/lib/view-transition";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
+import { growthTour } from "@/lib/tour/screens/growth";
 
 /**
  * 11-1 키 · 몸무게 상세 — 이 아이 안에서 어떻게 움직였고, 언제 무엇을 쟀는지.
@@ -100,25 +102,28 @@ function GrowthDetailScreen() {
         <div>
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-baseline gap-2">
-              <PageTitle>키 · 몸무게</PageTitle>
+              <PageTitle>키·몸무게</PageTitle>
               {/* 🚨 0 건이면 넘기지 않는다 — 아래 `EmptyState` 가 같은 숫자를 훨씬 크게 말한다. */}
               {logs.length > 0 ? <CountChip>{logs.length}건</CountChip> : null}
             </div>
             {/* 🚨 승인 게이트가 아니다 — 잘못 적으면 그 줄을 지우면 된다 (최상위 §2).
                 프로필 구역 머리줄과 **같은 아이콘 버튼**이다. */}
-            <IconButton
-              label="키·몸무게 새로 적기"
-              onClick={() => setAdding(true)}
-              className="-my-1"
-            >
-              <Plus aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-            </IconButton>
+            <div className="-my-1 flex items-center">
+              <TourHelpButton tour={growthTour} />
+              <IconButton
+                label="키·몸무게 새로 적기"
+                onClick={() => setAdding(true)}
+                data-tour="add"
+              >
+                <Plus aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+              </IconButton>
+            </div>
           </div>
-          {/* 🚨 **또래·백분위를 안 본다는 것을 화면이 직접 말한다.** 그래프가 있는 화면에서
-              이 문장이 빠지면, 부모는 이 선이 어딘가의 기준과 견준 결과라고 읽는다. */}
-          <p className="text-body-sm text-ink-muted mt-2">
-            잰 날 그대로 쌓아 둬요. 또래와 견주거나 백분위를 매기지 않아요.
-          </p>
+          {/* 🚨 **이 선이 잰 값 그대로라는 것을 화면이 직접 말한다.** 그래프가 있는 화면에서 이 문장이 빠지면,
+              부모는 이 선이 어딘가의 기준과 견준 결과라고 읽는다.
+              ⚠️ "또래와 견주거나 백분위를 매기지 않아요" 는 본문에서 뺐다 (#868) — 안 한다는 말인데 그 단어가 화면에
+              서면 "그런 기능이 있나?" 로 읽혔다. 그 말은 화면 투어가 한 번 한다 (`lib/tour/screens/growth.ts`). */}
+          <p className="text-body-sm text-ink-muted mt-2">잰 날과 잰 값을 그대로 쌓아 둬요.</p>
         </div>
       </header>
 
@@ -161,12 +166,12 @@ function GrowthDetailScreen() {
           />
         ) : (
           <>
-            <section className="flex flex-col gap-3">
+            <section data-tour="chart" className="flex flex-col gap-3">
               <h2 className="text-label text-brand">변화</h2>
               <GrowthChart logs={logs} />
             </section>
 
-            <section className="flex flex-col gap-3">
+            <section data-tour="list" className="flex flex-col gap-3">
               <h2 className="text-label text-brand">기록</h2>
               {/* 🚨 **목록이 화면을 밀지 않게 목록 안에서 스크롤한다.** 잰 기록은 해가 갈수록
                 쌓이기만 하는데, 다 펼치면 그래프가 화면 위로 사라지고 "새로 적기" 는 스크롤
@@ -190,6 +195,8 @@ function GrowthDetailScreen() {
       </Swap>
 
       <GrowthSheet open={adding} onClose={() => setAdding(false)} childId={childId} />
+
+      <ScreenTour tour={growthTour} ready={growth.isSuccess} />
 
       {/* 🚨 열 때마다 시트를 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서
           같은 인스턴스를 재사용하면 앞 줄의 값이 남는다 (11 프로필의 다른 시트들과 같다).

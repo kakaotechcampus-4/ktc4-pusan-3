@@ -8,6 +8,7 @@ from typing import Any
 from openai import (
     APIConnectionError,
     APIError,
+    APITimeoutError,
     AsyncOpenAI,
     AuthenticationError,
     BadRequestError,
@@ -21,8 +22,10 @@ from app.agents.common.llm_client import (
     LLMConfigError,
     LLMError,
     LLMRateLimitError,
+    LLMTimeoutError,
     LLMUnavailableError,
 )
+from app.core import llm_usage
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,16 @@ EMBEDDING_DIM = 1536
 
 # 요청 한 번에 보내는 최대 개수. OpenAI 임베딩 API 의 입력 개수 상한이 2048 이다
 MAX_BATCH = 2048
+
+_REQUIRED = ("EMBEDDING_API_KEY", "EMBEDDING_BASE_URL", "EMBEDDING_MODEL")
+
+
+def missing_settings(settings: AgentSettings) -> list[str]:
+    """비어 있는 EMBEDDING_* 이름. 하나라도 있으면 Embedder 를 못 만든다.
+
+    생성자와 부팅 보고(`entrypoint.llm_gaps`)가 같이 쓴다 — 켜지는 조건을 한 곳에만 둔다.
+    """
+    return [name for name in _REQUIRED if not getattr(settings, name).strip()]
 
 
 class Embedder:
@@ -45,19 +58,12 @@ class Embedder:
         api_key = s.EMBEDDING_API_KEY.strip()
         base_url = s.EMBEDDING_BASE_URL.strip()
         model = s.EMBEDDING_MODEL.strip()
-        missing = [
-            name
-            for name, value in (
-                ("EMBEDDING_API_KEY", api_key),
-                ("EMBEDDING_BASE_URL", base_url),
-                ("EMBEDDING_MODEL", model),
-            )
-            if not value
-        ]
+        missing = missing_settings(s)
         if missing:
             raise LLMConfigError(f"{' / '.join(missing)} 가 비어 있다. apps/api/.env 를 확인한다.")
 
         self._model = model
+        self._provider = llm_usage.provider_of(base_url)
         # 테스트는 embeddings.create 만 있는 가짜를 넣는다
         self._client = client or AsyncOpenAI(
             base_url=base_url,
@@ -91,10 +97,26 @@ class Embedder:
             raise LLMBadRequestError(f"임베딩 요청 거절: {exc}") from exc
         except RateLimitError as exc:
             raise LLMRateLimitError("임베딩 rate limit 초과.") from exc
+        except APITimeoutError as exc:
+            # APIConnectionError 의 하위라 먼저 잡는다 — chat 경로(LLMClient)와 같은 분류 (#768)
+            raise LLMTimeoutError("임베딩 응답 시간 초과.") from exc
         except APIConnectionError as exc:
-            raise LLMUnavailableError("임베딩 연결 실패 또는 타임아웃.") from exc
+            raise LLMUnavailableError("임베딩 연결 실패.") from exc
         except APIError as exc:
             raise LLMError(f"임베딩 호출 실패: {exc}") from exc
+
+        tokens = getattr(response.usage, "total_tokens", None)
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        # 🚨 개수 · 차원 검사보다 앞에서 기록한다 — 검사에 걸려 버려도 토큰은 이미 과금됐다
+        if isinstance(tokens, int):  # 셀 값이 없는 응답은 0 토큰 행을 만들지 않는다
+            served = getattr(response, "model", None)
+            llm_usage.record(
+                role="embedding",
+                provider=self._provider,
+                model=served if isinstance(served, str) and served else self._model,
+                prompt_tokens=tokens,
+                latency_ms=latency_ms,
+            )
 
         # 응답 순서가 입력 순서라는 보장은 index 로만 한다
         data = sorted(response.data, key=lambda item: item.index)
@@ -113,7 +135,7 @@ class Embedder:
             "embedding call model=%s inputs=%d tokens=%s latency_ms=%d",
             self._model,
             len(texts),
-            getattr(response.usage, "total_tokens", None),
-            int((time.perf_counter() - started) * 1000),
+            tokens,
+            latency_ms,
         )
         return vectors

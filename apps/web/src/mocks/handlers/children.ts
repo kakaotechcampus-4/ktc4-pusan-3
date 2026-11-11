@@ -37,33 +37,49 @@ const ONBOARDING_FIELDS = new Set(["relation", "gender", "height_cm", "weight_kg
 interface SafetyRow {
   safety: HealthSafety;
   retracted: boolean;
+  /**
+   * 괜찮았던 식품 (#825 · 서버 PR 3 · DB 의 `none` 상태). 🚨 **목록(`items`)에 섞지 않는다** —
+   *    조회 응답의 `tolerated` 로 따로 나간다.
+   */
+  tolerated: boolean;
 }
 
-let safetyState: SafetyRow[] = healthSafety.map((safety) => ({ safety, retracted: false }));
+let safetyState: SafetyRow[] = healthSafety.map((safety) => ({
+  safety,
+  retracted: false,
+  tolerated: false,
+}));
 
 function activeSafety(): HealthSafety[] {
-  return safetyState.filter((row) => !row.retracted).map((row) => row.safety);
+  return safetyState.filter((row) => !row.retracted && !row.tolerated).map((row) => row.safety);
+}
+
+function toleratedSafety(): HealthSafety[] {
+  return safetyState.filter((row) => !row.retracted && row.tolerated).map((row) => row.safety);
 }
 
 /**
  * 알레르기 항목 하나의 지금 상태 — 제안 목록의 사전검사(`handlers/suggestions.ts`)가 읽는다.
- * `null` 은 행이 없다는 뜻이다 (서버의 `unknown` · 저장하지 않는 상태).
- * ⚠️ 서버의 `none` 은 아직 목 모양(`HealthSafety`)에 없다 — 옛 모양이라 #87 때 같이 맞춘다.
+ * - `active`: 알레르기로 등록돼 있다 — 그 제안은 목록에서 빠지고 채택도 막힌다
+ * - `tolerated`: 괜찮았던 식품이다 (서버의 `none`) — 묻지 않는다
+ * - `null`: 걸리는 행이 없다 — 채택 전에 묻는다
+ * 🚨 **내린 기록(`retracted`)은 `null` 이다** (#825 · 서버 #837 · 11-08 시하님 확정). 한동안 "확인됨" 으로 보고
+ *    다시 묻지 않았는데, 그러면 잘못 등록했다 내린 식품이나 "견과류" 처럼 묶음으로 적었다 내린 이름이 영영 안 물어졌다.
  * ⚠️ **label 이 항목 이름과 글자로 같을 때만 짝짓는다** — 픽스처가 정식 이름만 쓰는 전제다.
  *    실제 label 은 보호자의 자유 입력("우유 알레르기" · "Milk" · "우유, 땅콩")이라 서버는
  *    문자열 비교가 아니라 알레르기 사전으로 짝짓는다 (#264). 이 함수를 서버 구현의 본으로 삼지 말 것.
  */
-export function allergyStatus(label: string): "active" | "retracted" | null {
+export function allergyStatus(label: string): "active" | "tolerated" | null {
   const rows = safetyState.filter(
-    (row) => row.safety.type === "allergy" && row.safety.label === label,
+    (row) => row.safety.type === "allergy" && row.safety.label === label && !row.retracted,
   );
-  if (rows.some((row) => !row.retracted)) return "active";
-  return rows.length > 0 ? "retracted" : null;
+  if (rows.some((row) => !row.tolerated)) return "active";
+  return rows.length > 0 ? "tolerated" : null;
 }
 
 /** 테스트용. 목 서버는 프로세스 수명만큼 살아 있다. */
 export function resetSafetyState(): void {
-  safetyState = healthSafety.map((safety) => ({ safety, retracted: false }));
+  safetyState = healthSafety.map((safety) => ({ safety, retracted: false, tolerated: false }));
 }
 
 /** 01·02 첫 진입 · 온보딩, 03 홈. */
@@ -186,7 +202,8 @@ export const childrenHandlers = [
           if (value === null) return true;
           return (
             (name === "height_cm" || name === "weight_kg") &&
-            (typeof value !== "number" || !isMeasurementInRange(value))
+            (typeof value !== "number" ||
+              !isMeasurementInRange(name === "height_cm" ? "height" : "weight", value))
           );
         })
         .map(([name]) => name);
@@ -238,7 +255,13 @@ export const childrenHandlers = [
         severity?: string | null;
         reactions?: string[];
         notes?: string | null;
+        tolerated?: boolean;
       };
+      // 저장 실패 흉내 (#823). 🚨 **대두만 실패한다** — 여러 식품 중 하나만 실패했을 때 저장된 것은 잠기고
+      //    실패한 것만 같은 키로 다시 나가는지 본다. 에러는 재생하지 않으니(`isReplayable`) 다시 눌러도 같은 실패다.
+      if (currentScenario() === "safety_save_fail" && body.label.trim() === "대두") {
+        return apiError(500, "internal_error", "잠시 후 다시 시도해 주세요");
+      }
       // 🚨 DB CHECK `health_safety_severity_by_kind` 를 목이 대신 막는다 — 알레르기에 가볍게~심하게
       //    를 보내면 실서버에서는 등록이 통째로 실패한다. 목이 받아 주면 화면이 그걸 모르고 지나간다.
       if (body.severity != null && !isSeverityFor(body.type, body.severity)) {
@@ -249,16 +272,40 @@ export const childrenHandlers = [
       // 🚨 서버는 이름의 앞뒤 공백을 떼고 저장하고, 같은 항목인지도 뗀 이름으로 본다 (#369).
       //    목이 원문으로 비교하면 " 땅콩" 이 목에서는 새 항목, 실서버에서는 409 가 된다.
       const label = body.label.trim();
-      const exists = safetyState.some(
+      const tolerated = body.tolerated === true;
+      // 🚨 괜찮았던 식품은 알레르기에만, 심각도 · 증상 없이 (#825 · 서버 PR 3).
+      if (
+        tolerated &&
+        (body.type !== "allergy" || body.severity != null || (body.reactions ?? []).length > 0)
+      ) {
+        return apiError(400, "validation_failed", "괜찮았던 식품은 알레르기에만 저장할 수 있어요", {
+          fields: ["tolerated"],
+        });
+      }
+      const same = safetyState.filter(
         (row) => !row.retracted && row.safety.type === body.type && row.safety.label === label,
       );
-      if (exists) {
+      // 🚨 알레르기가 이긴다 — 같은 이름이 알레르기면 괜찮았던 식품으로 저장하지 않는다.
+      if (tolerated && same.some((row) => !row.tolerated)) {
+        return apiError(409, "allergy_exists", "알레르기로 등록된 식품이에요");
+      }
+      if (same.some((row) => row.tolerated === tolerated)) {
         return apiError(409, "already_exists", "이미 등록된 항목이에요");
+      }
+      // 같은 이름을 알레르기로 등록하면 괜찮았던 식품에서는 빠진다 (알레르기가 이긴다).
+      if (!tolerated) {
+        for (const row of same) row.retracted = true;
       }
 
       // 메모도 앞뒤 공백을 떼고 빈 글자는 null 로 저장한다 (서버 #370) — 고치기의 "바뀐 것 없음" 판정과 맞춘다.
-      const safety = newHealthSafety({ ...body, label, notes: body.notes?.trim() || null });
-      safetyState = [{ safety, retracted: false }, ...safetyState];
+      const safety = newHealthSafety({
+        type: body.type,
+        label,
+        severity: body.severity,
+        reactions: body.reactions,
+        notes: body.notes?.trim() || null,
+      });
+      safetyState = [{ safety, retracted: false, tolerated }, ...safetyState];
 
       return HttpResponse.json({ safety }, { status: 201 });
     }),
@@ -293,8 +340,12 @@ export const childrenHandlers = [
   http.get(url("/children/:cid/health-safety"), async () => {
     await networkDelay();
     if (currentScenario() === "empty")
-      return HttpResponse.json({ items: [], updated_at: daysAgo(0) });
-    return HttpResponse.json({ items: activeSafety(), updated_at: daysAgo(3) });
+      return HttpResponse.json({ items: [], tolerated: [], updated_at: daysAgo(0) });
+    return HttpResponse.json({
+      items: activeSafety(),
+      tolerated: toleratedSafety(),
+      updated_at: daysAgo(3),
+    });
   }),
 
   /**
@@ -385,7 +436,7 @@ export const childrenHandlers = [
         // 서버는 관리 정보를 새 기록으로 넘겨 준다 — 이 API 로는 받지 않는 칸이다.
         management: current.management,
       };
-      safetyState = [{ safety, retracted: false }, ...safetyState];
+      safetyState = [{ safety, retracted: false, tolerated: row.tolerated }, ...safetyState];
       return HttpResponse.json({ safety });
     }),
   ),

@@ -16,7 +16,7 @@
  */
 
 import { API_BASE_URL } from "@/lib/env";
-import type { Policy } from "@/lib/api/types";
+import type { ConsentRequest, Policy } from "@/lib/api/types";
 
 export const CONSENT_SCOPES = [
   "service_terms",
@@ -82,46 +82,46 @@ export const CONSENT_COPY: Record<ConsentScope, ConsentCopy> = {
   service_terms: {
     shortLabel: "서비스 이용약관",
     description: "보호자 계정으로 이 서비스를 쓰는 데 동의해요. 보호자마다 한 번만 받아요.",
-    blocks: ["계정 자체가 이 동의 위에 있어서, 철회하면 서비스를 쓸 수 없어요."],
+    blocks: ["이 동의가 있어야 계정을 쓸 수 있어서, 철회하면 서비스를 쓸 수 없어요."],
   },
   privacy_account: {
     shortLabel: "보호자 개인정보",
     description:
-      "로그인에 쓰는 계정 식별값만 저장해요. 이메일·프로필 사진은 받아도 저장하지 않아요.",
+      "카카오 회원번호와 가입할 때 정한 부르는 이름만 저장해요. 이메일·프로필 사진은 카카오에 요청하지 않아요.",
     blocks: ["로그인을 할 수 없게 돼요. 계정을 알아볼 방법이 이것뿐이에요."],
   },
   child_basic: {
     shortLabel: "아이 기본정보",
     description: "별명, 생일, 관계까지만 받아요. 이 동의가 없으면 아이를 등록할 수 없어요.",
-    blocks: ["아이를 등록할 수 없어요. 이 서비스의 모든 기능이 아이 등록 위에 있어요."],
+    blocks: ["아이를 등록할 수 없어요. 아이를 등록해야 모든 기능을 쓸 수 있어요."],
   },
   child_health: {
     shortLabel: "아이 건강·알레르기",
     description:
-      "알레르기와 건강 기록은 식사 제안을 걸러내고 증상을 정리하는 데만 써요. 이 동의가 없으면 식사·건강 기능이 동작하지 않아요.",
+      "알레르기와 건강 기록은 식사 추천을 걸러내고 증상을 정리하는 데만 써요. 이 동의가 없으면 식사·건강 기능을 쓸 수 없어요.",
     /**
      * 🚨 **`blocks[0]` 이 10 설정의 줄에 그대로 나간다.** 필수 줄이 말해야 하는 것은
      *    "왜 못 끄는가" 라서 서비스 수준의 결과가 먼저 온다 (선택 동의는 반대로
      *    기능 단위의 결과가 먼저다).
      */
     blocks: [
-      "한 줄 기록부터 저장되지 않아서, 철회하면 서비스를 쓸 수 없어요.",
-      "식사 제안이 멈춰요. 알레르기를 모르는 채로 먹을 것을 권하지 않아요.",
+      "철회하면 한 줄 기록도 저장되지 않아서 서비스를 쓸 수 없어요.",
+      "식사 추천이 멈춰요. 알레르기를 모르는 채로 먹을 것을 권하지 않아요.",
       "건강 기록 정리와 증상 반복 알림이 멈춰요.",
     ],
   },
   location: {
     shortLabel: "위치정보",
     description:
-      "지금 있는 지역의 날씨와 계절에 맞춰 놀이를 제안해요. 위치를 기록으로 저장하지는 않아요.",
+      "가까운 장소 · 행사와 날씨를 보고 놀이를 추천해요. 위치는 약 1km로 흐려서 쓰고 저장하지 않아요.",
     blocks: [
-      "놀이 제안이 날씨와 계절을 못 봐요. 밖에서 놀 수 있는 날인지 판단하지 않고 제안해요.",
-      "놀이 제안 자체는 그대로 나와요.",
+      "가까운 장소와 날씨를 못 봐요. 밖에서 놀 수 있는 날인지 판단하지 않고 추천해요.",
+      "놀이 추천 자체는 그대로 나와요.",
     ],
     enables: [
-      "지금 있는 지역의 날씨와 계절을 보고 놀이를 골라요.",
-      "시·군·구 수준까지만 봐요. 정확한 좌표도, 이동 경로도 받지 않아요.",
-      "위치를 아이의 기억으로 저장하지 않아요. 제안을 고를 때 한 번 쓰고 버려요.",
+      "가까운 공원 · 놀이 시설 · 행사와 그날 날씨를 보고 놀이를 골라요.",
+      "약 1km 범위로 흐린 위치만 써요. 정확한 좌표와 이동 경로는 저장하지 않아요.",
+      "위치를 아이의 기억으로 저장하지 않아요. 추천을 고를 때 한 번 쓰고 버려요.",
     ],
   },
 };
@@ -160,13 +160,13 @@ export function consentChoices(
 /**
  * 서버가 내주지만 **지금은 묻지 않는** 동의 (#221).
  *
- * 위치 기능이 첫 빌드에 없다. 개인정보 처리방침(2026-10-15 판)이 "기기의 위치 정보를 읽는 기능은
- * 두지 않는다" 고 알리는데, 가입 화면에 위치 동의가 서 있으면 두 글이 서로 다른 말을 한다.
+ * 비어 있다. 위치(`location`)를 한동안 여기 두었다가 위치 기능을 켜면서 뺐다 (#593) — 그 PR 은 위치기반서비스
+ * 신고 · 위치 약관 새 판이 끝난 뒤 머지한다 (#166).
  *
- * 🚨 **임시 예외다.** 무엇을 물을지는 원래 서버(`GET /policies`)가 정한다 (이 파일 머리말).
- *    위치 기능을 켤 때 이 목록을 비우고, 그때 서버 쪽도 위치 약관 새 판 · 신고를 마친다.
+ * 🚨 **임시 예외 자리다.** 무엇을 물을지는 원래 서버(`GET /policies`)가 정한다 (이 파일 머리말).
+ *    서버가 내주는데 화면 기능이 아직 없는 동의가 생기면 여기 넣는다.
  */
-const NOT_ASKED_YET: ReadonlySet<string> = new Set(["location"]);
+const NOT_ASKED_YET: ReadonlySet<string> = new Set<string>();
 
 /**
  * 화면에 세울 동의만 — `NOT_ASKED_YET` 을 뺀다. 가입 화면과 10 설정이 같은 기준을 쓴다.
@@ -242,6 +242,25 @@ export function consentPayload(
   return choices
     .filter(({ policy }) => isConsentChecked(policy, checked))
     .map(({ policy }) => ({ scope: policy.scope, policy_version: policy.version }));
+}
+
+/**
+ * 10 설정과 04 대화(위치 안 쓸래요 · #638 리뷰)가 같이 쓰는 `POST /consents` 본문.
+ *
+ * 🚨 버전은 지금 화면이 받은 약관의 것이다 — 상수가 아니다 (#90).
+ * 🚨 **어느 쪽인지는 서버가 말한다** (`target` · #190). 아이 스코프만 `child_id` 와 법정대리인 확인을 싣는다 (계약서 §04).
+ */
+export function consentRequestBody(
+  policy: Policy,
+  action: "granted" | "withdrawn",
+  childId: string,
+): ConsentRequest {
+  return {
+    scope: policy.scope,
+    action,
+    policy_version: policy.version,
+    ...(policy.target === "child" ? { child_id: childId, guardian_attested: true } : {}),
+  };
 }
 
 /**

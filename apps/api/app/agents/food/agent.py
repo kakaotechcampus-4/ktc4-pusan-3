@@ -3,7 +3,8 @@
 `build_gate` 로 이번 run 의 Gate 를 계산하고, 닫힌 조합이면 코드 문구로 모델 0회로 끝낸다. 결과는
 공통 `DomainAgentResult` 다.
 
-  식단 추천  코드가 후보 풀을 만들어 샘플을 뽑고(`meal_pool`), 문서 행 `[예시]` 를 조회한 뒤
+  식단 추천  코드가 후보 풀을 만들어 샘플을 뽑고(`meal_pool` — 이유기 후보는 레시피북이 아니라
+            이유식 식단 표, #399), 문서 행 `[예시]` 를 조회한 뒤
             모델에게
             후보 중 3개를 고르게 한다. 사후 안전 필터로 빠져 3개가 안 되면 새 샘플로 재호출 1회 —
             처음 통과한 것을 먼저 두고 빈자리만 채운다(`merge_drafts`). 풀이 비면 모델을
@@ -18,25 +19,41 @@
 
 import logging
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
-from app.agents.common.evidence import pick_followup
+from app.agents.common.evidence import RankedEvidence, pick_followup
+from app.agents.common.food_safety import filter_food_safety
+from app.agents.common.food_words import mentions_blocked_food
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.result import AgentStatus, DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import MAX_SUGGESTIONS, count_notice, merge_drafts
 from app.agents.common.tool_loop import run_tool_loop
+from app.agents.food.basis_notice import basis_notices
 from app.agents.food.context import FoodContext, MealPick, build_gate, require_safety
 from app.agents.food.food_check import answer_food_check, request_notices
-from app.agents.food.meal_pool import PoolItem, build_pool, remember_sample, sample_pool
+from app.agents.food.meal_pool import (
+    PoolItem,
+    build_pool,
+    remember_sample,
+    requested_rows,
+    sample_pool,
+)
 from app.agents.food.prompt import (
     build_system_prompt,
     recall_message,
     request_message,
 )
-from app.agents.food.readouts import FOLLOWUP_PREFERENCE, POOL_EMPTY, READOUTS
+from app.agents.food.readouts import (
+    CLOSED_DAYCARE_UNREAD,
+    FOLLOWUP_PREFERENCE,
+    MEAL_DAYCARE_UNREAD,
+    NUTRIENT_DAYCARE_UNREAD,
+    POOL_EMPTY,
+    READOUTS,
+)
 from app.agents.food.registry import (
     answers_by_code,
     closed_readout_key,
@@ -51,17 +68,18 @@ from app.agents.food.schemas.task import task_type_of
 from app.agents.food.store.ports import MenuCatalogRow
 from app.agents.food.tools.docs import search_food_doc
 from app.agents.food.tools.nutrition import appearance_report
-from app.agents.food.tools.safety import filter_food_safety
+from app.agents.food.tools.records import memory_record, prefetch_food_memory
 from app.rules.age import Stage
 
 logger = logging.getLogger(__name__)
 
 AGENT = "food"
 
-# 모델이 tool 을 꼭 불러야 하는가. 둘 다 required 다(`_converse`)
+# 모델이 tool 을 꼭 불러야 하는가. 셋 다 required 다(`_converse`)
 _TOOL_CHOICE: dict[FoodTaskType, str] = {
     FoodTaskType.MEAL_RECOMMENDATION: "required",
     FoodTaskType.DAYCARE_MEAL: "required",
+    FoodTaskType.DAYCARE_LOOKUP: "required",
 }
 
 # 식단 추천 [예시] 로 보여 주는 문서 행 종류 (RAG_plan Food 절). 이유기는 이유식 단계 · 재료 행이다.
@@ -81,6 +99,8 @@ async def run(
     gate = await build_gate(context)
     context.state.gate = gate
     context.state.utterance = "\n".join(task.request_texts)
+    # 앞 대화를 이어 묻는 말이면 request_texts 는 해석한 문장이다 — 말했는지는 원문으로 본다
+    context.state.said = (*task.originals(), *task.prior_texts)
 
     key = closed_readout_key(task_type, gate)
     if key is not None:
@@ -95,17 +115,18 @@ async def run(
         if task_type == FoodTaskType.FOOD_CHECK:
             return _check_foods_result(context)
         # 영양소 분석 1차 출력 — 모델을 부르지 않는다. 구간은 판정해 두되 문장은 식품군 출현만 쓴다
+        readouts = await appearance_report(context)
+        if context.state.daycare_unread:
+            # 급식 표를 못 읽어 집 기록으로만 봤다 — 읽는 도중에 정해지므로 보고서를 만든 뒤에 본다
+            readouts = (READOUTS.render(NUTRIENT_DAYCARE_UNREAD), *readouts)
         return DomainAgentResult(
-            agent=AGENT,
-            task_type=task_type.value,
-            status="completed",
-            readouts=await appearance_report(context),
+            agent=AGENT, task_type=task_type.value, status="completed", readouts=readouts
         )
 
     llm = client or LLMClient(role="food")
     if task_type == FoodTaskType.MEAL_RECOMMENDATION:
         return await _recommend(task, context, llm)
-    return await _update_daycare(task, context, llm)
+    return await _daycare(task_type, context, llm)
 
 
 def _check_foods_result(context: FoodContext) -> DomainAgentResult:
@@ -139,23 +160,36 @@ def _failed(task_type: FoodTaskType, *, model_calls: int) -> DomainAgentResult:
     )
 
 
-async def _update_daycare(
-    task: DomainTask, context: FoodContext, llm: LLMClient
+async def _daycare(
+    task_type: FoodTaskType, context: FoodContext, llm: LLMClient
 ) -> DomainAgentResult:
-    """급식 조회 · 갱신 · 삭제. 모델이 출력 tool(`update_daycare_meal` · `delete_daycare_meal`)을
-    부르면 끝난다. 화면 문구는 tool 이 쓰기가 끝난 뒤에 `state.readouts` 에 담은 코드 문구다."""
+    """급식 조회 · 갱신 · 삭제. 모델이 출력 tool(`show_daycare_meal` · `update_daycare_meal` ·
+    `delete_daycare_meal` · `keep_daycare_meal`)을 부르면 끝난다. 화면 문구는 tool 이
+    `state.readouts` 에 담은 코드 문구다 — 갱신은 쓰기가 끝난 뒤에, 조회는 읽은 행으로 만든 뒤에."""
     gate = context.state.gate
     assert gate is not None  # run() 이 build_gate 를 먼저 부른다
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": build_system_prompt(context, FoodTaskType.DAYCARE_MEAL)},
+        {"role": "system", "content": build_system_prompt(context, task_type)},
         {"role": "user", "content": context.state.utterance},
     ]
-    allowed = tools_for(FoodTaskType.DAYCARE_MEAL, gate)
-    if not await _converse(llm, messages, context, allowed, FoodTaskType.DAYCARE_MEAL):
-        return _failed(FoodTaskType.DAYCARE_MEAL, model_calls=1)
+    allowed = tools_for(task_type, gate)
+    finished = await _converse(llm, messages, context, allowed, task_type)
+    if context.state.daycare_unread:
+        # 도중에 급식 표를 못 읽었다. 게이트에서 못 읽은 것과 같은 문구 · 상태(blocked)로 닫는다 —
+        # 모델이 keep 으로 끝내도 "그대로 뒀어요" 가 아니다. 쓰기는 출력 tool 이라 성공하면 루프가
+        # 끝나고, 못 읽은 뒤의 쓰기는 행을 읽지 못해 멈추므로 여기 온 task 는 아무것도 쓰지 않았다
+        return DomainAgentResult(
+            agent=AGENT,
+            task_type=task_type.value,
+            status="blocked",
+            readouts=(READOUTS.render(CLOSED_DAYCARE_UNREAD),),
+            model_calls=1,
+        )
+    if not finished:
+        return _failed(task_type, model_calls=1)
     return DomainAgentResult(
         agent=AGENT,
-        task_type=FoodTaskType.DAYCARE_MEAL.value,
+        task_type=task_type.value,
         status="completed",
         readouts=context.state.readouts,
         model_calls=1,
@@ -176,11 +210,15 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
     )
 
     pool = await build_pool(context)
+    # 풀의 행과 조건 맞는 레시피를 run state 에 둔다 — 생성 후보 검사(풀 이름 · 자리 수)가 쓴다
+    context.state.pool_rows = {item.row.menu_key: item.row for item in pool}
+    matched = requested_rows(pool, context.state.said_texts())
+    context.state.requested_keys = frozenset(item.row.menu_key for item in matched)
     if not pool:
         # 안전 · 연령 · 최근 추천으로 다 빠졌다. 모델 없이 추천 없는 안내만 낸다 — 실패가 아니다
         return _recommendation(task_type, (), context, model_calls=0, followup=(), notices=notices)
 
-    sample = sample_pool(pool, seed=f"{context.run_id}:sample")
+    sample = sample_pool(pool, seed=f"{context.run_id}:sample", first=matched)
     remember_sample(context, sample)
     examples = await search_food_doc(
         context.ports.docs,
@@ -190,9 +228,20 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
     )
     # 프롬프트에 실은 행만 근거로 달 수 있다. 재호출도 같은 system 프롬프트라 그대로 쓴다
     context.state.seen_docs = {row.id: row for row in examples}
+    # 기억 조회를 건너뛰지 않아 전부 일반 추천이 되는 문제를 막는다(#662).
+    # 결과는 seen_evidence 에도 적혀서 모델이 인용한 id 를 출력 검증이 같은 표로 대조한다
+    records = _shown_records(context, await prefetch_food_memory(context))
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": build_system_prompt(context, task_type, examples)},
-        {"role": "user", "content": request_message(task.request_texts, _rows(sample))},
+        {
+            "role": "user",
+            "content": request_message(
+                task.request_texts,
+                _rows(sample),
+                records=records,
+                requested=context.state.requested_keys,
+            ),
+        },
     ]
     allowed = tools_for(task_type, gate)
     if not await _converse(llm, messages, context, allowed, task_type):
@@ -212,14 +261,89 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
                 # 아니라 모델이 실패한 것이다 — 1~2개가 남았으면 그것을 낸다
                 return _failed(task_type, model_calls=2)
 
+    _log_evidence(context, picks)
+    # 재호출이 state.sampled 를 덮어써서 처음 고른 메뉴는 샘플로 못 찾는다 — 풀의 행으로 찾는다
+    rows_by_key = {item.row.menu_key: item.row for item in pool}
     return _recommendation(
         task_type,
         picks,
         context,
         model_calls=model_calls,
         followup=await _followup(context),
-        notices=notices,
+        notices=(*notices, *basis_notices(context, picks, rows_by_key)),
     )
+
+
+def _shown_records(context: FoodContext, found: tuple[RankedEvidence, ...]) -> list[dict[str, Any]]:
+    """선조회 근거 중 안전 필터를 통과한 것만 모델에게 보인다.
+
+    등록 알레르기와 같은 음식의 선호 기록이 남아 있어도(알레르기를 나중에 등록한 아이) 그 이름을
+    외부 모델로 내보내지 않는다. 모델이 부르지 않아도 항상 나가는 경로라 코드가 거른다 —
+    `_followup` 이 되묻는 후보를 거르는 것과 같은 방식이다. 거른 근거는 모델이 못 본 것이므로
+    `seen_evidence` 에서도 뺀다 — 인용하면 `EVIDENCE_REQUIRED` 로 거절된다.
+    """
+    gate = context.state.gate
+    assert gate is not None  # run() 이 build_gate 를 먼저 부른다
+    verdict = filter_food_safety(
+        [
+            MenuCatalogRow(
+                menu_key=str(item.ref.id),
+                display_name=item.label,
+                source="manual",
+                resolved=True,
+                synced_at=context.now,
+                ingredients=(item.label,),
+            )
+            for item in found
+        ],
+        require_safety(context),
+        gate.stage.stage,
+        months=gate.stage.months,
+    )
+    passed = {row.menu_key for row in verdict.passed}
+    shown = [item for item in found if str(item.ref.id) in passed]
+    for item in found:
+        if str(item.ref.id) not in passed:
+            context.state.seen_evidence.pop(item.ref.id, None)
+            context.state.prefetched_evidence_ids.discard(item.ref.id)
+    return [memory_record(item, context.today) for item in shown]
+
+
+def _log_evidence(context: FoodContext, picks: tuple[MealPick, ...]) -> None:
+    """추천 한 번의 근거 건수. 선조회가 실제 인용으로 이어졌는지 라이브 eval 과 운영 로그에서 센다.
+
+    건수와 run_id 만 남긴다 — 기록 label · 음식 이름 · 알레르기 이름 · 원문은 싣지 않는다.
+    선조회 결과가 있는데 아이 기록을 하나도 인용하지 않은 일반 추천이 섞였으면 경고로 센다. 그래도
+    개인화를 강제하지 않는다 — 후보와 무관한 기록이면 일반 추천이 맞다.
+    """
+    state = context.state
+    kinds = [pick.draft.kind for pick in picks]
+    cited = {
+        citation.ref.id
+        for pick in picks
+        for citation in pick.draft.citations
+        if citation.ref.is_child_record
+    }
+    personalized = kinds.count("personalized")
+    general = kinds.count("general")
+    logger.info(
+        "Food 추천 근거 run_id=%s prefetched=%d seen=%d cited=%d personalized=%d general=%d "
+        "model_search=%s",
+        context.run_id,
+        len(state.prefetched_evidence_ids),
+        len(state.seen_evidence),
+        len(cited),
+        personalized,
+        general,
+        state.memory_search_calls > 0,
+    )
+    if state.prefetched_evidence_ids and not cited and general:
+        logger.warning(
+            "Food 가 선조회한 아이 기록 근거를 쓰지 않았다 run_id=%s prefetched=%d general=%d",
+            context.run_id,
+            len(state.prefetched_evidence_ids),
+            general,
+        )
 
 
 def _recommendation(
@@ -231,7 +355,11 @@ def _recommendation(
     followup: tuple[str, ...],
     notices: tuple[Readout, ...] = (),
 ) -> DomainAgentResult:
-    drafts = tuple(pick.draft for pick in picks)
+    # 끼니는 일정 초안 제목에 쓴다 — 여기서 빼면 서버가 끼니를 알 길이 없다 (#898)
+    drafts = tuple(replace(pick.draft, meal_slot=pick.meal_slot.value) for pick in picks)
+    if drafts and context.state.daycare_unread:
+        # 급식과 겹치는지 못 봤다. 추천이 나갈 때만 알린다 — 개수 안내보다 앞이다
+        notices = (*notices, READOUTS.render(MEAL_DAYCARE_UNREAD))
     # 개수 안내는 합친 결과로 센다 — 재호출 때 출력 tool 이 본 것은 재호출분뿐이다
     notice = count_notice(len(drafts), empty=READOUTS.get(POOL_EMPTY))
     return DomainAgentResult(
@@ -269,19 +397,44 @@ async def _recall(
     새 대화로 시작하면 모델이 기억 조회를 처음부터 다시 해 왕복이 늘고, pipeline 의 20초에 걸리면
     처음 통과한 것까지 잃는다. 풀에서 빠진 것(`blocked_keys`)과 이미 고른 것을 빼고 다시 뽑는다.
     남은 후보가 없으면 부를 이유가 없어서 None 이다. 제외 목록은 `menu_key` 만 넣고 사유는 없다.
+
+    🚨 빠진 것 중 이름에 막힌 음식이 든 메뉴("계란말이" · "견과류요거트")는 제외 목록에 싣지
+    않는다 — 이름만으로 아이의 알레르기를 외부 모델에 알린다. 새 목록에 없어 다시 고를 수 없고, 생성
+    메뉴로 다시 내도 같은 필터에 걸린다.
     """
+    gate = context.state.gate
+    assert gate is not None  # run() 이 build_gate 를 먼저 부른다
     blocked = set(context.state.blocked_keys)
     chosen = [pick.menu_key for pick in first]
     rest = tuple(item for item in pool if item.row.menu_key not in {*blocked, *chosen})
     if not rest:
         return None
-    sample = sample_pool(rest, seed=f"{context.run_id}:recall")
+    sample = sample_pool(
+        rest,
+        seed=f"{context.run_id}:recall",
+        first=requested_rows(rest, context.state.said_texts()),
+    )
     remember_sample(context, sample, recalled=True)
     messages.append(
         {
             "role": "user",
             "content": recall_message(
-                task.request_texts, avoid=[*chosen, *sorted(blocked)], sample=_rows(sample)
+                task.request_texts,
+                avoid=[
+                    *chosen,
+                    *(
+                        key
+                        for key in sorted(blocked)
+                        if not mentions_blocked_food(
+                            key,
+                            require_safety(context),
+                            stage=gate.stage.stage,
+                            months=gate.stage.months,
+                        )
+                    ),
+                ],
+                sample=_rows(sample),
+                requested=context.state.requested_keys,
             ),
         }
     )

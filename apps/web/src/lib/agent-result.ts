@@ -1,4 +1,4 @@
-import type { AgentReadout, AgentResultEvent, PartialEvent } from "@/lib/api/sse";
+import type { AgentReadout, AgentResultEvent, NoteEvent, PartialEvent } from "@/lib/api/sse";
 
 /**
  * 04 답 묶음에 무엇을 세울지 고른다 (#227). 화면(`components/run-result.tsx`)은 그리기만 한다.
@@ -22,6 +22,29 @@ export function visibleAgentResults(results: AgentResultEvent[]): AgentResultEve
 }
 
 /**
+ * run 이 **답을 기다리는 질문** 하나 (#537). 없으면 `null`.
+ *
+ * - Memory 의 되묻기(`note.kind === "question"`)가 먼저다. 그다음이 `awaits_reply` 인 Agent 질문의 첫째다.
+ * - 🚨 **하나만 고른다.** 답은 `reply_to` = 이 run 하나로 가서, 서버가 이어받는 맥락도 run 당 하나다
+ *   (`pending_reply.py`). 둘을 다 열면 보호자가 고른 질문과 서버가 이어받는 질문이 어긋날 수 있다.
+ *   그래서 고르지 않은 질문은 안내 문장으로만 선다.
+ * - 🚨 `awaits_reply` 가 없는 Agent 질문은 답할 수 없다 (#246) — 서버가 맥락을 들고 있지 않아 400 이다.
+ *
+ * @returns `result` 가 `null` 이면 Memory 의 질문이다. Agent 질문이면 그 결과 객체 자체다 — 화면은 어느 블록에
+ *   답하기 버튼을 세울지 이 참조로 가른다.
+ */
+export function askedQuestion(run: {
+  note: NoteEvent | null;
+  agentResults: readonly AgentResultEvent[];
+}): { text: string; result: AgentResultEvent | null } | null {
+  if (run.note?.kind === "question") return { text: run.note.text, result: null };
+  const result = run.agentResults.find(
+    (r) => r.awaits_reply === true && (r.question ?? "").trim() !== "",
+  );
+  return result?.question ? { text: result.question, result } : null;
+}
+
+/**
  * 블록에 그릴 readout. 🚨 **후보가 있으면 개수 안내(`code` 가 붙은 것)는 그리지 않는다** — "후보 N개" 가
  * 대신한다. 날씨 안내처럼 `code` 가 없는 readout 은 개수와 상관없어서 그대로 그린다.
  */
@@ -30,6 +53,30 @@ export function blockReadouts(result: AgentResultEvent): AgentReadout[] {
   return result.readouts.filter(
     (readout) => readout.body.trim() !== "" && !(hasCandidates && readout.code !== null),
   );
+}
+
+/**
+ * 블록의 "복약 화면 열기" 가 갈 곳 (#713 · `docs/web/medication-v1.md` §3). 세울 곳이 아니면 `null`.
+ *
+ * - 회차 현황(`dose_status`)이 있거나, readout 이 복약 코스를 가리키면(`source_refs` 의 `medication_schedule`) 선다.
+ *   "먹였어" 의 체크 안내가 뒤쪽이다 — 문구가 "홈이나 복약 화면에서 해 주세요" 라서 갈 길이 같이 있어야 한다.
+ * - 가리키는 코스가 **하나면 그 코스를 연다**(`?course=`). 둘 이상이면 어느 약인지 화면이 고르지 않고 복약 화면
+ *   처음으로 간다. 지난 대화에서 다시 그린 블록은 근거가 없어(`StoredReadout`) 회차 현황일 때 처음으로 간다.
+ * 🚨 체크는 그 화면에서만 한다. 여기서 회차를 체크하는 버튼을 만들지 않는다 (기록이 생기는 곳이 한 곳이다).
+ */
+export function medicationHref(childId: string, readouts: readonly AgentReadout[]): string | null {
+  const courses = new Set(
+    readouts.flatMap((readout) =>
+      (readout.source_refs ?? [])
+        .filter((ref) => ref.kind === "medication_schedule")
+        .map((ref) => ref.id),
+    ),
+  );
+  if (courses.size === 0 && !readouts.some((readout) => readout.kind === "dose_status")) {
+    return null;
+  }
+  const base = `/child/${childId}/profile/medications`;
+  return courses.size === 1 ? `${base}?${new URLSearchParams({ course: [...courses][0] })}` : base;
 }
 
 export interface BlockCandidates {

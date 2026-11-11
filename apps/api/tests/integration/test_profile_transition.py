@@ -30,13 +30,13 @@ async def family(session):
     return owner, child
 
 
-def _profile(child_id, *, merge_key="사과::p1", last_observed_on, state="candidate"):
+def _profile(child_id, *, merge_key="사과::p1", last_observed_on, state="candidate", polarity=1):
     return ProfileAffinity(
         child_id=child_id,
         merge_key=merge_key,
         domain=MemoryDomain.FOOD,
         state=ProfileState(state),
-        polarity=1,
+        polarity=polarity,
         strength=STRENGTH_DEFAULT,
         last_observed_on=last_observed_on,
     )
@@ -80,6 +80,57 @@ class TestRecomputeProfile:
         assert result.state == ProfileState.CONFIRMED
         assert result.strength == pytest.approx(STRENGTH_DEFAULT * 1.10)
 
+    async def test_polarity_를_모르는_기억은_관찰_3건이어도_candidate(self, session, family):
+        """confirmed 는 늘 -1 · 1 이다 (#287). 방향을 모르는 기억은 되묻기 대상으로 남는다."""
+        _, child = family
+        today = date(2026, 9, 26)
+        profile = _profile(child.id, last_observed_on=today, polarity=None)
+        session.add(profile)
+        await session.flush()
+
+        for i in range(3):
+            session.add(_food_obs(child.id, profile.id, observed_on=today - timedelta(days=i)))
+        await session.flush()
+
+        from app.domains.memory.profile.service import recompute_profile
+
+        result = await recompute_profile(session, profile_id=profile.id, today=today)
+
+        assert result.state == ProfileState.CANDIDATE
+
+    async def test_이미_confirmed_인_방향_모르는_기억은_candidate_로_내린다(self, session, family):
+        """이 변경 전에 만들어진 confirmed · polarity NULL 기억 — 다시 계산하면 내려가야 한다
+        (#287 · #844 리뷰 G2)."""
+        _, child = family
+        today = date(2026, 9, 26)
+        profile = _profile(child.id, last_observed_on=today, state="confirmed", polarity=None)
+        session.add(profile)
+        await session.flush()
+        for i in range(3):
+            session.add(_food_obs(child.id, profile.id, observed_on=today - timedelta(days=i)))
+        await session.flush()
+
+        from app.domains.memory.profile.service import recompute_profile
+
+        result = await recompute_profile(session, profile_id=profile.id, today=today)
+
+        assert result.state == ProfileState.CANDIDATE
+
+    async def test_방향_모르는_기억도_오래되면_archived(self, session, family):
+        """막는 것은 confirmed 하나다 — archived 로 갈 기억을 candidate 로 되살리면 안 된다
+        (#287 · #844 리뷰 G3)."""
+        _, child = family
+        today = date(2026, 9, 26)
+        profile = _profile(child.id, last_observed_on=today - timedelta(days=30), polarity=None)
+        session.add(profile)
+        await session.flush()
+
+        from app.domains.memory.profile.service import recompute_profile
+
+        result = await recompute_profile(session, profile_id=profile.id, today=today)
+
+        assert result.state == ProfileState.ARCHIVED
+
     async def test_재계산_두_번_돌려도_결과_동일(self, session, family):
         _, child = family
         today = date(2026, 9, 26)
@@ -98,6 +149,29 @@ class TestRecomputeProfile:
         r2 = await recompute_profile(session, profile_id=profile.id, today=today)
         assert r2.state == state1
         assert r2.strength == str1
+
+    async def test_호출자가_아직_flush_하지_않은_값을_지우지_않는다(self, session, family):
+        """recompute_profile 은 잠근 뒤 DB 값으로 다시 채운다(populate_existing, #636).
+
+        그 전에 autoflush 가 호출자의 변경을 먼저 써야 한다 — 아니면 Correction 이 깎은 strength
+        같은 값이 조용히 사라진다.
+        """
+        _, child = family
+        today = date(2026, 9, 26)
+        profile = _profile(child.id, last_observed_on=today, state="confirmed")
+        session.add(profile)
+        await session.flush()
+        for i in range(3):
+            session.add(_food_obs(child.id, profile.id, observed_on=today - timedelta(days=i)))
+        await session.flush()
+
+        from app.domains.memory.profile.service import recompute_profile
+
+        profile.strength = 0.8  # flush 하지 않는다
+        result = await recompute_profile(session, profile_id=profile.id, today=today)
+
+        assert result.state == ProfileState.CONFIRMED  # 전이 없음 — 보정 계수가 안 붙는다
+        assert result.strength == pytest.approx(0.8)
 
     async def test_21일_초과면_archived(self, session, family):
         _, child = family
@@ -179,7 +253,7 @@ class TestRecomputeProfile:
         result = await recompute_profile(session, profile_id=profile.id, today=today)
         assert result.state == ProfileState.CANDIDATE  # O=2 (stand_alone 제외)
 
-    async def test_inactive_관찰은_O에_안_잡힌다(self, session, family):
+    async def test_deleted_관찰은_O에_안_잡힌다(self, session, family):
         _, child = family
         today = date(2026, 9, 26)
         profile = _profile(child.id, last_observed_on=today)
@@ -193,7 +267,7 @@ class TestRecomputeProfile:
                 child.id,
                 profile.id,
                 observed_on=today - timedelta(days=2),
-                status=ObservationStatus.INACTIVE,
+                status=ObservationStatus.DELETED,
             )
         )
         await session.flush()
@@ -228,38 +302,6 @@ class TestRecomputeProfile:
 
 
 class TestObservationCorrection:
-    async def test_wrong이면_inactive_변경_후_profile_재계산(self, session, family):
-        owner, child = family
-        today = date(2026, 9, 26)
-        profile = _profile(child.id, last_observed_on=today)
-        session.add(profile)
-        await session.flush()
-
-        observations = []
-        for i in range(3):
-            obs = _food_obs(child.id, profile.id, observed_on=today - timedelta(days=i))
-            session.add(obs)
-            observations.append(obs)
-        await session.flush()
-
-        from app.domains.memory.profile.service import handle_observation_correction
-
-        await handle_observation_correction(
-            session,
-            domain="food",
-            child_id=child.id,
-            observation_id=observations[0].id,
-            verdict="wrong",
-            parent_id=owner.id,
-            today=today,
-        )
-
-        await session.refresh(observations[0])
-        assert observations[0].status == ObservationStatus.INACTIVE
-
-        await session.refresh(profile)
-        assert profile.state == ProfileState.CANDIDATE  # O=2
-
     async def test_once_only면_stand_alone_변경_후_profile_재계산(self, session, family):
         owner, child = family
         today = date(2026, 9, 26)

@@ -2,17 +2,20 @@
 
 import logging
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from datetime import timedelta
 from uuid import UUID
 
 from app.agents.activity.context import ActivityContext
-from app.agents.activity.result import ToolResult, fail, ok
-from app.agents.activity.review import error_code, explain, review_candidates
-from app.agents.activity.rules import DUPLICATE_WINDOW_DAYS
+from app.agents.activity.result import ErrorCode, ToolResult, fail, ok
+from app.agents.activity.review import RejectReason, error_code, explain, review_candidates
+from app.agents.activity.rules import DUPLICATE_WINDOW_DAYS, said_in_request
 from app.agents.activity.schemas.recommend import ActivityCandidate, ProposeActivityCandidatesArgs
 from app.agents.activity.tools.filters import allergy_cautions, safety_terms
-from app.agents.activity.tools.outing import outdoor_on
+from app.agents.activity.tools.outing import dark_now, outdoor_on, when_remedy
+from app.agents.activity.when import PastDay, days_of
+from app.agents.common.datetime_rules import DateParseError
 from app.agents.common.suggestion import check_count
 
 _NAME = "propose_activity_candidates"
@@ -38,7 +41,7 @@ async def propose_activity_candidates(
       않는다 — 어휘 회피를 가르치게 된다 (§5-2). 통과한 초안과 빠진 후보(`excluded`)를 run state
       에 담고 끝낸다. 3개가 안 되면 재호출 1회는 run() 이 제외 목록과 함께 한다 —
       재호출 결과를 합친 뒤 `check_count(..., exhausted=True)` → `count_notice(len)` 순서다.
-    - 경고 문구(위험 용어 사전 상수)는 추천과 같은 순서로 `state.warnings` 에 담는다.
+    - 경고 문구(위험 용어 사전 상수)는 그 추천의 `warnings` 칸에 `review._build` 가 싣는다 (#402).
     - 식품 사전에 없는 알레르기 이름의 확인 문구는 run 에 한 벌로 `state.cautions` 에 담는다 (D7).
       통과한 후보 수와 상관없다 — 재호출로 채운 추천에도 같이 붙어야 한다.
     - suggestion.allergens · items 는 `review._build` 가 코드로 채운다 (#232).
@@ -58,22 +61,55 @@ async def propose_activity_candidates(
         date_from=today - timedelta(days=DUPLICATE_WINDOW_DAYS - 1),
         date_to=today,
     )
+    # 날 표현을 먼저 읽는다 — 못 읽거나 지난 날이면 모델이 고쳐 다시 낸다 (#800)
+    for index, candidate in enumerate(args.candidates):
+        try:
+            days_of(candidate.day, today)
+        except PastDay:
+            return fail(
+                "propose",
+                _NAME,
+                ErrorCode.INVALID_ARGS,
+                f"{index + 1}번 후보: day '{candidate.day}' 는 이미 지난 날이다. 오늘 이후로 쓴다.",
+            )
+        except DateParseError:
+            return fail(
+                "propose",
+                _NAME,
+                ErrorCode.INVALID_ARGS,
+                f"{index + 1}번 후보: {when_remedy(candidate.day)}",
+            )
     candidates = _with_doc_ids(args.candidates, context.state.example_ids)
+    # 후보마다 그날 판정으로 야외를 거른다. 판정이 없는 날은 여기서 판정한다 (#377)
+    outdoor = {
+        label: await outdoor_on(context, label)
+        for label in dict.fromkeys(candidate.day for candidate in args.candidates)
+    }
     review = review_candidates(
         candidates,
+        # 보호자가 놀이를 정해 물었으면 그 요청에 맞춘 일반 추천이다 — [예시] 근거가 없어도 된다.
+        # 모델이 적은 놀이가 보호자 말에 없으면 막연한 요청과 같다 (#597 리뷰)
+        requested=said_in_request(args.requested_play, context.state.said()),
         months=gate.stage.months,
         seen=context.state.seen_evidence,
         docs=context.state.seen_docs,
         places=context.state.seen_places,
+        events=context.state.seen_events,
+        area_places=context.state.area_places,
         recent_activities=[row.activity for row in observations],
         safety=safety_terms(entries),
         today=today,
-        # 후보마다 그날 판정으로 야외를 거른다. 판정이 없는 날은 여기서 판정한다 (#377)
-        outdoor={
-            label: await outdoor_on(context, label)
-            for label in dict.fromkeys(candidate.day for candidate in args.candidates)
-        },
+        outdoor=outdoor,
+        # outdoor_on 이 위에서 후보의 날을 모두 판정해 넣었다. 행사는 날짜마다 본다 (#668 리뷰)
+        outdoor_days={day: brief.outdoor_ok for day, brief in context.state.weather.items()},
+        ended_today=context.state.ended_today,
+        request_texts=context.state.request_texts,
+        dark_today=dark_now(context),
+        shown_before=context.state.shown_before,
     )
+    if any(r.reason is RejectReason.DARK_PLAYGROUND for r in review.rejections):
+        # 결과에 "지금은 어두워서 놀이터는 뺐어요" 를 붙인다 — 장소 조회에서 막힌 것과 같다
+        context.state.dark_skipped = True
     if review.rejections:
         # 거절만 모델에게 돌려준다. 같이 빠진 후보는 말하지 않는다 — 다시 내면 또 빠진다
         code = error_code(review.rejections)
@@ -92,8 +128,8 @@ async def propose_activity_candidates(
         check_count(review.drafts)
         context.state.excluded = ()
     context.state.suggestions = review.drafts
-    context.state.warnings = review.warnings
     context.state.outdoor_drafts = context.state.outdoor_drafts | review.outdoor
+    context.state.draft_days = context.state.draft_days | review.days
     context.state.cautions = allergy_cautions(entries)
     return ok("propose", _NAME, count=len(review.drafts), kinds=[d.kind for d in review.drafts])
 
@@ -123,6 +159,7 @@ def _with_doc_ids(
 
 
 def _short_id(raw: str) -> str:
-    """ "[예 1]" · "예시1" 도 예1 로 읽는다. 띄어쓰기 · 괄호만 다르게 쓴 것이다."""
-    key = re.sub(r"[\s\[\]]", "", raw)
+    """ "[예 1]" · "(예1)" · "예시1" · 전각 "예１" 도 예1 로 읽는다. 띄어쓰기 · 괄호 · 글자 폭만
+    다르게 쓴 것이다 (#606)."""
+    key = re.sub(r"[\s\[\]()]", "", unicodedata.normalize("NFKC", raw))
     return "예" + key[2:] if key.startswith("예시") else key

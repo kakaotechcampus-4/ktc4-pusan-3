@@ -171,7 +171,7 @@ async def test_health_관찰도_saved_에_health_모양으로_실린다(monkeypa
 
     🚨 health 는 subject · polarity · strong_signals · affinity 키가 **아예 없다** (null 이 아니다).
        화면은 `kind === "observation_health"` 로 가른다 (apps/web types.ts 의 ObservationHealth).
-    🚨 기록 탭에는 여전히 안 보인다 — 건강 쪽은 첫 배포 범위 밖이다 (#259).
+    기록 탭에도 같은 모양으로 나온다 — "저장됨" 으로 본 카드가 기록 탭의 줄과 같다 (#764).
     """
     headers, parent_id = bearer
     created = _pipeline(monkeypatch, HEALTH)
@@ -187,7 +187,7 @@ async def test_health_관찰도_saved_에_health_모양으로_실린다(monkeypa
     assert not {"subject", "polarity", "strong_signals", "affinity"} & saved.keys()
 
     listed = (await db_client.get(OBSERVATIONS.format(cid=cid), headers=headers)).json()
-    assert listed["total"] == 0
+    assert listed["items"] == [saved]
 
 
 async def test_health_관찰_시각은_한국_시간으로_싣는다(monkeypatch, bearer, cid):
@@ -202,6 +202,26 @@ async def test_health_관찰_시각은_한국_시간으로_싣는다(monkeypatch
 
     [saved] = _saved(channel)
     assert saved["domain_fields"]["observed_time"] == nine_pm.isoformat()  # …T21:00:00+09:00
+
+
+async def test_health_체온은_숫자로_싣는다(monkeypatch, bearer, cid):
+    """#551 — DB 는 numeric(3,1) 을 Decimal 로 돌려주고, JSON 으로 바꾸면 "38.5" 글자가 된다.
+    화면이 숫자로 그리도록 숫자로 싣는다. 먹인 약 두 칸도 domain_fields 에 같이 실린다.
+    """
+    _, parent_id = bearer
+    _pipeline(
+        monkeypatch,
+        {**HEALTH, "fields": {**HEALTH["fields"], "symptom": ["발열"], "temperature": 38.5}},
+    )
+
+    channel = await _run(cid, parent_id)
+
+    [saved] = _saved(channel)
+    assert saved["domain_fields"]["temperature"] == 38.5
+    assert isinstance(saved["domain_fields"]["temperature"], float)
+    assert {"measured_at", "measure_site", "medication_given", "linked_symptom_id"} <= (
+        saved["domain_fields"].keys()
+    )
 
 
 async def test_이어받기_run_도_saved_를_보낸다(monkeypatch, bearer, cid):

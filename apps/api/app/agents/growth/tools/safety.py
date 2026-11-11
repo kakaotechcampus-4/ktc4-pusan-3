@@ -5,14 +5,18 @@
 
     음식 용어 스캔   교육 · 루틴 후보. 알레르기 사전 용어나 질식 위험 음식 용어가 나오면 **아이 ·
                     월령 · 동의와 무관하게** 뺀다. 음식 · 재료가 들어가는 놀이는 Activity 몫이다.
-                    한 글자 · 외래어 별칭(포크 · pork)은 문장에서 다른 뜻으로 걸려 쓰지 않는다
+                    외래어 별칭(포크 · pork)과 한 글자 별칭은 문장에서 다른 뜻으로 걸려 쓰지 않는다.
+                    한 글자는 잣 · 콩 · 빵 · 떡만 문장 guard 와 함께 본다.
+                    (`for_sentences(scope="scan")`) Food 음식 어휘(쿠키 · 빵 · 국수 · 소시지 …)도
+                    같이 본다(`common/food_words`, #582)
     등록한 이름 대조  교육만, 동의가 있을 때. 보호자가 `health_safety` 에 적은 이름이
                     후보 문장에 나오면 뺀다. 이름은 공용 `read_label` 로 조각마다 읽는다.
                     한 글자는 Activity 와 같은 허용 목록(잣 · 콩 · 깨 · 쑥 · 쌀 · 팥 · 꽃)만
-                    그 guard 와 함께 본다.
-                    이름을 물건 · 장소로 넓히는 대응표는 만들지 않는 대신 식품 사전에 없는
-                    알레르기 이름(꽃가루 · 라텍스)이 있으면 확인 문구
-                    (`caution.non_food_allergy`)를 붙인다
+                    그 guard 와 함께 본다. 별칭 거르기도 Activity 와 같다 —
+                    `for_sentences(scope="content")`. 등록한 아이에게는 외래어 별칭도 막는다.
+                    식품 아닌 알레르기(꽃가루 · 라텍스 · 동물털)는 사람이 정한 대응표
+                    (`reference/allergy_related_terms.yaml`)의 낱말이 든 후보도 뺀다
+                    (`allergy_related`). 표에 없는 이름은 이름 대조만 한다. 확인 문구는 없다
     위험 용어        교육. 차단이면 뺀다. 경고는 후보와 함께 나간다.
                     0–17개월은 경고도 차단이다 — Activity 와 같은 공용 판정(`HazardAxis.level_at`)
 
@@ -22,9 +26,9 @@
 
 🚨 매처 · 사전은 `SafetyRules`로 주입한다 — 판정 흐름 테스트는 가짜 매처로 돈다.
 `load_safety_rules()` 는 Food · Activity 와 같은 공용 판정을 쓴다 — 보호자 이름은 `read_label`,
-위험 용어 월령은 `HazardAxis.level_at`, 확인 문구는 `non_food_allergies`.
-TODO: 음식 용어 스캔의 한 글자 식품("콩")은 따로 고친다. 사전을 읽지 못하면 빈
-사전으로 통과시키지 않고 `SafetyRulesUnavailable` 을 올린다.
+위험 용어 월령은 `HazardAxis.level_at`, 식품 아닌 알레르기 낱말은 `related_blocks`.
+대조는 필드마다 `match_fields` 다 — guard 가 띄어쓰기를 넘지 않는다(Activity · Food 와 같다).
+사전을 읽지 못하면 빈 사전으로 통과시키지 않고 `SafetyRulesUnavailable` 을 올린다.
 """
 
 from collections.abc import Callable, Sequence
@@ -32,33 +36,26 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.agents.common.allergy import (
-    SINGLE_CHAR_NAMES,
+    SentenceScope,
     allergy_book,
+    allergy_related_table,
     for_sentences,
-    non_food_allergies,
     read_label,
+    related_blocks,
 )
+from app.agents.common.errors import (
+    SafetyRulesUnavailable as SafetyRulesUnavailable,  # 다시 내보낸다 (#768)
+)
+from app.agents.common.food_words import SCAN, find_food_words, preload
 from app.agents.common.reference import HazardTerms, allergen_terms, hazard_terms
-from app.agents.growth.readouts import CAUTION_NON_FOOD_ALLERGY, READOUTS
 from app.agents.growth.store.ports import SafetyEntry
-from app.rules.term_match import Term, match_fields, match_terms, normalize
+from app.rules.term_match import Term, match_fields
 
 HazardLevel = Literal["block", "warn"]
-RemovedBy = Literal["food_term", "allergy_name", "hazard_block"]
+RemovedBy = Literal["food_term", "allergy_name", "allergy_related", "hazard_block"]
 
 # 질식 위험 음식 축. 교육 · 루틴 문장에 나오면 아이와 상관없이 뺀다
 FOOD_CHOKING_AXIS = "food_choking"
-# 영어 이름을 한글로 옮긴 별칭. 공용 사전에는 검사지 이름을 읽으려고 있지만(#264), Growth 문장에서는
-# 다른 뜻으로 더 자주 나와서 문장 스캔에서만 뺀다 — 포크(식사 도구) · 피치(음높이) · 에그 셰이커 ·
-# 크랩 워크 · 비프 소리. 라틴 문자 별칭(pork · egg)도 같다.
-# 보호자가 이 이름으로 등록한 걸 읽을 때는 쓴다
-_LOANWORD_ALIASES = frozenset(
-    {"에그", "밀크", "피넛", "크랩", "쉬림프", "포크", "피치", "월넛", "비프", "파인넛"}
-)
-
-
-class SafetyRulesUnavailable(Exception):
-    """안전 사전을 읽지 못했다. 빈 사전으로 통과시키지 않는다 — 교육을 닫는다."""
 
 
 @dataclass(frozen=True)
@@ -75,6 +72,12 @@ FoodTermScan = Callable[[str], tuple[str, ...]]
 HazardScan = Callable[[str, int], tuple[HazardHit, ...]]
 # (text, active 행) -> 문장에 이름이 나온 행
 RegisteredNameScan = Callable[[str, Sequence[SafetyEntry]], tuple[SafetyEntry, ...]]
+# active 행 -> 그중 allergy 이름들이 막는 낱말 Term (대응표). 표에 없으면 ()
+RelatedBlocks = Callable[[Sequence[SafetyEntry]], tuple[Term, ...]]
+
+
+def _no_related(entries: Sequence[SafetyEntry]) -> tuple[Term, ...]:
+    return ()
 
 
 @dataclass(frozen=True)
@@ -82,6 +85,7 @@ class SafetyRules:
     food_terms: FoodTermScan
     hazards: HazardScan
     registered_names: RegisteredNameScan
+    related_blocks: RelatedBlocks = _no_related
 
 
 @dataclass(frozen=True)
@@ -108,6 +112,7 @@ def check_learning_candidate(
 
     `entries` 는 `build_gate` 가 읽어 run state 에 담은 행이다. 동의가 없으면 비어 있다 — 이 함수는
     건강정보를 읽지 않는다. active 가 아닌 행(retracted · none)은 막지 않는다.
+    식품 아닌 알레르기는 대응표 낱말이 든 칸이 하나라도 있으면 뺀다(`allergy_related`).
     """
     if any(rules.food_terms(text) for text in texts):
         return SafetyVerdict(allowed=False, removed_by="food_term")
@@ -115,6 +120,10 @@ def check_learning_candidate(
     active = tuple(entry for entry in entries if entry.status == "active")
     if active and any(rules.registered_names(text, active) for text in texts):
         return SafetyVerdict(allowed=False, removed_by="allergy_name")
+    blocks = rules.related_blocks(active) if active else ()
+    if blocks and match_fields(tuple(texts), blocks):
+        # 어느 낱말 · 이름에 걸렸는지는 싣지 않는다 — 로그 · 모델로 흘러가지 않게
+        return SafetyVerdict(allowed=False, removed_by="allergy_related")
 
     cautions: list[str] = []
     for text in texts:
@@ -133,21 +142,6 @@ def check_routine_candidate(texts: Sequence[str], *, rules: SafetyRules) -> Safe
     return SafetyVerdict(allowed=True)
 
 
-def allergy_cautions(entries: Sequence[SafetyEntry]) -> tuple[str, ...]:
-    """식품 사전에 없는 알레르기 이름이 active 로 있으면 확인 문구를 낸다. 교육 추천에 붙는다.
-
-    고르는 규칙은 Activity 와 같은 공용 판정(`common/allergy.non_food_allergies`)이다 — `allergy`
-    active 행 중 이름에 식품 사전이 못 찾은 조각이 있는 것, 같은 이름은 한 번. `environmental`
-    (고소공포 같은 것)에는 붙이지 않는다. 식품 알레르기는 이름 대조와 음식 용어 스캔이 뺀다.
-
-    이름 사전은 `load_safety_rules` 가 게이트에서 먼저 읽는다 — 못 읽었으면 교육이 이미 닫혔다.
-    """
-    return tuple(
-        READOUTS.render(CAUTION_NON_FOOD_ALLERGY, label=label).body
-        for label in non_food_allergies(entries, allergy_book())
-    )
-
-
 # ── 사전과 공용 판정으로 만든 SafetyRules ────────────────────────────────────────
 # 보호자가 적은 이름은 Food · Activity 와 같은 공용 `read_label` 로 읽고, 위험 용어의 월령은
 # 공용 `HazardAxis.level_at` 이 정한다(0–17개월 승격 포함). 문장 스캔에 쓸 별칭만 Growth 가 고른다.
@@ -161,18 +155,21 @@ def load_safety_rules() -> SafetyRules:
     try:  # 어떤 실패든 "사전을 못 읽음" 하나로 올린다
         hazards = hazard_terms()
         raw_allergens = allergen_terms()
-        # 보호자가 적은 이름을 읽는 사전. 확인 문구(`allergy_cautions`)도 이 사전으로 고른다
+        # 보호자가 적은 이름을 읽는 사전 — 19종 밖 식품 별칭까지 (#556)
         book = allergy_book()
+        related = allergy_related_table()
+        # 음식 어휘 사전도 게이트에서 읽는다 — 첫 스캔에서 느리게 읽다 터지면 교육이 닫히지 않는다
+        preload(SCAN)
     except Exception as exc:
         raise SafetyRulesUnavailable("안전 사전을 읽지 못했다") from exc
 
-    allergens = _scan_aliases_only(raw_allergens)
-    food_terms = (*allergens, *_food_choking_terms(hazards))
-    # 19종 코드 → 등록 이름 대조에 쓰는 별칭. 두 글자 이상 한국어 이름과, 한 글자는 Activity 와
-    # 같은 허용 목록(`SINGLE_CHAR_NAMES`)만이다 — "밀" 등록 아이의 "공 밀기" 는 통과하고
-    # "잣 까기" 는 막는다.
+    # 음식 용어 스캔은 아이와 상관없이 뺀다 — 별칭을 더 걸러 쓴다(`scope="scan"`)
+    allergen_scan = _sentence_terms(raw_allergens, "scan")
+    choking_scan = _food_choking_terms(hazards)
+    # 19종 코드 → 등록 이름 대조에 쓰는 별칭. 한 글자는 Activity 와 같은 허용 목록
+    # (`SINGLE_CHAR_NAMES`)만이다 — "밀" 등록 아이의 "공 밀기" 는 통과하고 "잣 까기" 는 막는다.
     # 보호자가 "밀" · "pork" 라고만 적었어도 `read_label` 이 코드로 읽는다
-    kept = {term.key: term for term in _registered_aliases_only(raw_allergens)}
+    kept = {term.key: term for term in _sentence_terms(raw_allergens, "content")}
 
     def registered_terms(entry: SafetyEntry) -> tuple[Term, ...]:
         # 한 칸에 여러 이름("키위, 꽃가루")도 조각마다, 띄어 쓴 이름("고양이 털")은 낱말까지 읽는다.
@@ -182,22 +179,25 @@ def load_safety_rules() -> SafetyRules:
         # "블록 3개" 를 막지 않고, "쌀" 은 "쌀쌀한 날씨" 를 막지 않는다.
         named, rest = read_label(entry.label, book)
         coded = tuple(kept[key] for code in sorted(named.codes) if (key := str(code)) in kept)
-        literal = tuple(
-            for_sentences(Term(key=word, aliases=(word,)))
-            for word in rest
-            if len(word) >= 2 or word in SINGLE_CHAR_NAMES
-        )
+        literal = _sentence_terms([Term(key=word, aliases=(word,)) for word in rest], "content")
         # 19종 밖 식품(별칭 표)과 글자 그대로의 이름은 문장용 guard 를 더하고 다른 뜻이 흔한
         # 별칭(오리)을 뺀다 — "은행" 으로 등록해도 "은행놀이" 는 통과한다 (#556 2차 리뷰)
-        sentence = tuple(for_sentences(term) for term in named.terms)
-        return (*coded, *_registered_aliases_only(sentence), *(t for t in literal if t.aliases))
+        sentence = _sentence_terms(named.terms, "content")
+        return (*coded, *sentence, *literal)
 
     def scan_food(text: str) -> tuple[str, ...]:
-        return match_terms(text, food_terms)
+        # 19종 알레르기 이름과 Food 음식 어휘(쿠키 · 빵 · 국수 …)는 띄어쓰기를 넘지 않는다 —
+        # "새 우산" 이 새우로 걸리면 오탐이 모든 아이에게 간다(#556 리뷰 · #582). 질식 위험 용어는
+        # 넘는다 — "핫 도그" · "마시 멜로" 도 그 음식이다(위험 용어 판정과 같다)
+        found = (
+            *match_fields((text,), allergen_scan, cross_spaces=False),
+            *match_fields((text,), choking_scan),
+        )
+        return (*found, *(word for word in find_food_words(text, SCAN) if word not in found))
 
     def scan_hazard(text: str, months: int) -> tuple[HazardHit, ...]:
         hits: list[HazardHit] = []
-        for label in match_terms(text, hazards.terms):
+        for label in match_fields((text,), hazards.terms):
             axis = hazards.axis_of(label)
             level = axis.level_at(months)
             if level is not None:
@@ -220,49 +220,21 @@ def load_safety_rules() -> SafetyRules:
             if match_fields((text,), registered_terms(entry), cross_spaces=False)
         )
 
+    def scan_related(entries: Sequence[SafetyEntry]) -> tuple[Term, ...]:
+        # allergy 만 본다 — environmental(고소공포)은 대상이 아니다
+        return related_blocks((e.label for e in entries if e.kind == "allergy"), related)
+
     return SafetyRules(
         food_terms=scan_food,
         hazards=scan_hazard,
         registered_names=scan_registered,
+        related_blocks=scan_related,
     )
 
 
-def _scan_aliases_only(terms: Sequence[Term]) -> tuple[Term, ...]:
-    """문장 스캔에 쓰지 않는 별칭을 뗀다.
-
-    한 글자(밀 · 게 · 닭 · 잣)는 놀이 문장의 "공 밀기" · "카드 게임" 이 걸리고,
-    외래어(포크 · pork)는 식사 도구 · 노래 이름으로 걸린다.
-    """
-    kept: list[Term] = []
-    for term in terms:
-        aliases = tuple(alias for alias in term.aliases if _scans(alias))
-        if aliases:
-            kept.append(Term(key=term.key, aliases=aliases, guards=term.guards))
-    return tuple(kept)
-
-
-def _registered_aliases_only(terms: Sequence[Term]) -> tuple[Term, ...]:
-    """등록 이름 대조에 쓰는 별칭만 남긴다. 음식 용어 스캔(`_scan_aliases_only`)과 같되, 한 글자는
-    허용 목록(`SINGLE_CHAR_NAMES`)을 남긴다 — Activity 와 같은 판정이다 (#305)."""
-    kept: list[Term] = []
-    for term in terms:
-        aliases = tuple(
-            alias
-            for alias in term.aliases
-            if _scans(alias) or normalize(alias) in SINGLE_CHAR_NAMES
-        )
-        if aliases:
-            kept.append(Term(key=term.key, aliases=aliases, guards=term.guards))
-    return tuple(kept)
-
-
-def _scans(alias: str) -> bool:
-    name = normalize(alias)
-    return (
-        len(name) >= 2
-        and name not in _LOANWORD_ALIASES
-        and not any("a" <= ch <= "z" for ch in name)
-    )
+def _sentence_terms(terms: Sequence[Term], scope: SentenceScope) -> tuple[Term, ...]:
+    """사전 Term 을 문장 대조용으로 거른다(`for_sentences`). 남는 별칭이 없는 Term 은 뺀다."""
+    return tuple(found for term in terms if (found := for_sentences(term, scope=scope)) is not None)
 
 
 def _food_choking_terms(hazards: HazardTerms) -> tuple[Term, ...]:

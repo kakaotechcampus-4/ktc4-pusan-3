@@ -108,7 +108,7 @@ export function isSelectable(row: ScanRow): boolean {
 
 /** 왜 확인이 필요한지. 🚨 사유가 섞이지 않게 **하나만** 고른다. */
 export function reviewReason(row: ScanRow): string {
-  if (row.label.trim() === "") return "이름을 읽지 못했어요. 검사지를 보고 채워주세요.";
-  if (tooLong(row)) return "옮겨 온 글이 너무 길어요. 검사지를 보고 줄여주세요.";
-  return "검사지 원문을 읽지 못했어요. 검사지를 보고 확인해주세요.";
+  if (row.label.trim() === "") return "이름을 읽지 못했어요. 검사지를 보고 채워 주세요.";
+  if (tooLong(row)) return "옮겨 온 글이 너무 길어요. 검사지를 보고 줄여 주세요.";
+  return "검사지 원문을 읽지 못했어요. 검사지를 보고 확인해 주세요.";
 }

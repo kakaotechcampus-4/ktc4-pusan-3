@@ -14,31 +14,47 @@
 pipeline 에 등록돼 있다(#380). context 는 entrypoint 가 만든다 — 좌표 · 날씨 어댑터는 api 가 넘긴다.
 """
 
+import asyncio
 import logging
 from collections.abc import Collection
 from typing import Any
 
 from app.agents.activity.context import ActivityContext, build_gate
-from app.agents.activity.gating import checks_weather
+from app.agents.activity.gating import checks_weather, finds_events, finds_places
 from app.agents.activity.prompt import (
     build_system_prompt,
     example_ids,
     recall_message,
     request_message,
 )
-from app.agents.activity.readouts import CAUTION_NON_FOOD_ALLERGY, READOUTS
+from app.agents.activity.readouts import (
+    CAUTION_NON_FOOD_ALLERGY,
+    EVENTS_NO_NEW,
+    EVENTS_PENDING,
+    LOCATION_MISSING,
+    PLACE_AREA_UNKNOWN,
+    READOUTS,
+)
 from app.agents.activity.registry import closed_readout_key, execute_tool, specs_for, tools_for
 from app.agents.activity.result import ToolResult
-from app.agents.activity.rules import normalize_activity
+from app.agents.activity.rules import asks_outing, normalize_activity
 from app.agents.activity.schemas.task import task_type_of
 from app.agents.activity.tools.docs import search_activity_doc
-from app.agents.activity.tools.outing import check_weather, days_of
+from app.agents.activity.tools.filters import request_notices
+from app.agents.activity.tools.outing import (
+    check_weather,
+    dark_now,
+    days_of,
+    start_event_prefetch,
+)
 from app.agents.activity.weather import (
+    AFTER_SUNSET,
     INDOOR_ONLY,
-    WEATHER_NOT_ASKED,
-    WEATHER_UNCHECKED,
+    OUTDOOR_ONLY,
     WeatherBrief,
 )
+from app.agents.common.datetime_rules import DateParseError
+from app.agents.common.gate import Gate
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.result import DomainAgentResult
@@ -67,7 +83,17 @@ async def run(
 ) -> DomainAgentResult:
     """놀이 추천 하나를 처리한다. 결과는 공통 `DomainAgentResult` 다."""
     task_type = task_type_of(task)
-    weather = await check_weather(context, context.today)
+    # 장소 조회의 area · 출력 tool 의 requested_play 를 이 글과 대조한다 — 지어낸 값을 받지 않게
+    context.state.request_texts = tuple(task.request_texts)
+    context.state.original_texts = tuple(task.original_texts)
+    context.state.prior_texts = tuple(task.prior_texts)
+    context.state.shown_before = tuple(task.shown_before)
+    context.state.deadline = task.deadline
+    # 나들이를 물었으면 날씨를 보는 동안 근처 행사 읽기를 뒤에서 시작한다 (#905). 일정 읽기(모델
+    # 호출)는 오늘 날씨를 받은 뒤 바깥이 될 때만 한다 (#906 리뷰)
+    today_weather = asyncio.ensure_future(check_weather(context, context.today))
+    start_event_prefetch(context, today_weather)
+    weather = await today_weather
     gate = await build_gate(context, outdoor_ok=weather.outdoor_ok)
     context.state.gate = gate
     context.state.weather[context.today] = weather
@@ -92,17 +118,20 @@ async def run(
     # 프롬프트에 실은 행만 근거로 달 수 있다. 재호출도 같은 system 프롬프트라 그대로 쓴다
     context.state.seen_docs = {row.id: row for row in examples}
     context.state.example_ids = example_ids(examples)
-    system = build_system_prompt(context, examples, weather=weather)
+    system = build_system_prompt(context, examples, weather=weather, dark=dark_now(context))
     llm = client or LLMClient(role="activity")
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system},
-        {"role": "user", "content": request_message(task.request_texts)},
+        {
+            "role": "user",
+            "content": request_message(task.request_texts, shown=task.shown_before),
+        },
     ]
 
     if not await _converse(llm, messages, context, allowed):
         return _failed(task_type.value, model_calls=1)
 
-    picked = _picked(context)
+    picked = context.state.suggestions
     model_calls = 1
     if context.state.excluded and len(picked) < MAX_SUGGESTIONS:
         # 안전 필터로 빠졌다. 사유 없이 제외 목록만 주고 1회 더 부른다 (Tool_공통.md §5-2)
@@ -113,32 +142,58 @@ async def run(
             # 모델이 실패한 것이다 — 1~2개가 남았으면 그것을 낸다 (#359 리뷰)
             return _failed(task_type.value, model_calls=model_calls)
         picked = merge_drafts(picked, again or (), key=_same_activity)
-        check_count(tuple(draft for draft, _ in picked), exhausted=True)
+        check_count(picked, exhausted=True)
 
-    drafts = tuple(draft for draft, _ in picked)
+    drafts = picked
     # 확인 문구(state.cautions)는 결과의 readouts 로 싣는다 — pipeline 은 for_task() 사본으로
     # Agent 를 돌리고 결과만 받아서, 여기 싣지 않으면 표시 없이 빠진다 (#380).
-    # 🚨 위험 경고(state.warnings)는 아직 결과에 없다. 추천 하나에 붙는 문구라 공통
-    # SuggestionDraft 에 칸이 생겨야 한다 — #402 (1차 배포 범위 밖)
+    # 위험 경고는 추천 하나에 붙는 문구라 그 초안의 warnings 칸에 이미 있다 (#402)
     context.state.suggestions = drafts
-    context.state.warnings = tuple(warning for _, warning in picked)
     notice = count_notice(len(drafts))
+    # 요청한 음식이 이 아이에게 막혔으면 보호자가 쓴 말로 빼고 골랐다고 알린다 — 0개여도 왜 없는지
+    # 이 줄이 말한다. 등록한 알레르기 이름은 싣지 않는다 (#582)
+    requested_foods = request_notices(
+        task.request_texts, context.state.safety_entries or (), months=gate.stage.months
+    )
     attempted = checks_weather(gate)
+    if context.state.area is not None:
+        # 보호자가 말한 지역을 찾았다. 장소 조회가 보호자 위치의 판정을 비웠으니 오늘도 그 지역
+        # 날씨로 다시 본다 — 위치가 없어도 그 지역 날씨는 물은 것이다
+        if context.today not in context.state.weather:
+            context.state.weather[context.today] = await check_weather(context, context.today)
+        weather = context.state.weather[context.today]
+        attempted = gate.data.weather
     return DomainAgentResult(
         agent=AGENT,
         task_type=task_type.value,
-        status="degraded" if attempted and WEATHER_UNCHECKED in weather.notices else "completed",
+        status="degraded" if attempted and weather.unread else "completed",
         suggestions=drafts,
         readouts=(
             *(_caution(text) for text in context.state.cautions),
+            *requested_foods,
             *(READOUTS.render(key) for key in _weather_notices(weather, drafts, context)),
+            *((READOUTS.render(AFTER_SUNSET),) if context.state.dark_skipped and drafts else ()),
+            *((READOUTS.render(PLACE_AREA_UNKNOWN),) if context.state.area_missed else ()),
+            *((READOUTS.render(EVENTS_NO_NEW),) if context.state.no_new_events else ()),
+            *((READOUTS.render(EVENTS_PENDING),) if context.state.events_pending else ()),
+            *((READOUTS.render(LOCATION_MISSING),) if _location_missing(context, gate) else ()),
             *((notice,) if notice else ()),
         ),
         model_calls=model_calls,
     )
 
 
-Picked = tuple[tuple[SuggestionDraft, tuple[str, ...]], ...]
+def _location_missing(context: ActivityContext, gate: Gate) -> bool:
+    """위치도 지역도 없어 장소 · 행사를 못 찾는 run 인가 — 찾으려다 막혔거나 나들이를 물었을 때만.
+    집 놀이를 물었으면 붙이지 않는다. 장소 · 행사 데이터가 아예 없으면(어댑터 없음) 위치 탓이
+    아니라 붙이지 않는다. 보호자가 말한 지역을 못 찾았으면 그 안내(`place.area_unknown`)만
+    붙인다 — 지역을 말한 사람에게 "지역을 말해 달라" 를 또 하지 않는다 (#856 리뷰)."""
+    state = context.state
+    if state.area_missed or context.outing_location is not None:
+        return False
+    if not (finds_places(gate) or finds_events(gate)):
+        return False
+    return state.location_missing or asks_outing(state.original_texts or state.request_texts)
 
 
 def _weather_notices(
@@ -146,8 +201,11 @@ def _weather_notices(
 ) -> tuple[str, ...]:
     """화면에 붙일 날씨 안내 키 — 결과에 실제로 나간 추천의 날로 고른다 (#515 리뷰).
 
-    - 바깥 활동이 없으면 오늘 판정의 안내다 — 왜 실내만인지("해가 져서" · "확인하지 못해")를
-      알린다. "날씨는 확인하지 않았어요" 는 빼고 — 실내 놀이에 날씨 확인을 당부하면 군말이다.
+    - 바깥 활동이 없으면 오늘 판정의 안내다 — 왜 실내만인지("바깥 활동이 어려운 날")를 알린다.
+      다만 오늘 하는 추천이 하나도 없으면 붙이지 않는다 — 다음 주 놀이에 오늘 날씨를 말하면
+      틀린다 (#800). "어두워서 놀이터는 뺐어요" 는 날씨 안내가 아니라 run 이 따로 붙인다.
+      "날씨는 확인하지 않았어요" · "확인하지 못했어요" 는 빼고(`OUTDOOR_ONLY`) —
+      실내 놀이에 날씨 확인을 당부하면 군말이다.
     - 바깥 활동이 있으면 그 활동의 날 중 바깥이 열린 날의 안내다. "실내 놀이만 골랐어요" 류는
       뺀다 — 오늘 해가 졌어도 내일 공원이 나가면 그 말은 틀린다.
     """
@@ -156,7 +214,9 @@ def _weather_notices(
         day for content, day in sorted(context.state.outdoor_drafts) if content in shown
     )
     if not labels:
-        return tuple(key for key in weather.notices if key != WEATHER_NOT_ASKED)
+        if not any(_includes_today(day, context) for day in context.state.draft_days):
+            return ()
+        return tuple(key for key in weather.notices if key not in OUTDOOR_ONLY)
     keys: list[str] = []
     for label in labels:
         for day in days_of(label, context.today):
@@ -166,6 +226,14 @@ def _weather_notices(
     return tuple(dict.fromkeys(keys))
 
 
+def _includes_today(when: str, context: ActivityContext) -> bool:
+    """그 날 표현에 오늘이 들어 있나. 출력 tool 이 이미 읽은 표현이라 실패하지 않는다."""
+    try:
+        return context.today in days_of(when, context.today)
+    except DateParseError:
+        return False
+
+
 def _caution(text: str) -> Readout:
     """알레르기 확인 문구 한 줄. 문구는 출력 tool 이 상수 템플릿(`caution.non_food_allergy`)으로
     이미 만들었다 — 모델을 거치지 않으므로 `authored_by="code"` 다.
@@ -173,14 +241,9 @@ def _caution(text: str) -> Readout:
     return Readout(kind=READOUTS.get(CAUTION_NON_FOOD_ALLERGY).kind, body=text, authored_by="code")
 
 
-def _picked(context: ActivityContext) -> Picked:
-    """출력 tool 이 통과시킨 후보와 그 경고 문구를 짝으로. 합칠 때 순서가 같이 간다."""
-    return tuple(zip(context.state.suggestions, context.state.warnings, strict=True))
-
-
-def _same_activity(item: tuple[SuggestionDraft, tuple[str, ...]]) -> str:
+def _same_activity(draft: SuggestionDraft) -> str:
     """재호출 결과에서 "같은 후보" — 최근 중복 검사와 같은 정규화다 (Tool_공통.md §5-2)."""
-    return normalize_activity(item[0].content)
+    return normalize_activity(draft.content)
 
 
 def _failed(task_type: str, *, model_calls: int) -> DomainAgentResult:
@@ -195,8 +258,8 @@ async def _recall(
     task: DomainTask,
     context: ActivityContext,
     allowed: Collection[str],
-    first: Picked,
-) -> Picked | None:
+    first: tuple[SuggestionDraft, ...],
+) -> tuple[SuggestionDraft, ...] | None:
     """재호출 1회. 같은 대화에 제외 목록 한 줄을 더해 이어 부른다 (Tool_공통.md §5-2).
 
     새 대화로 시작하면 모델이 기억 · 날씨 조회를 처음부터 다시 해 왕복이 늘고, pipeline 의 20초에
@@ -208,16 +271,16 @@ async def _recall(
             "role": "user",
             "content": recall_message(
                 task.request_texts,
-                chosen=[draft.content for draft, _ in first],
+                chosen=[draft.content for draft in first],
                 excluded=context.state.excluded,
             ),
         }
     )
-    context.state.suggestions, context.state.warnings, context.state.excluded = (), (), ()
+    context.state.suggestions, context.state.excluded = (), ()
     if not await _converse(llm, messages, context, allowed):
         logger.warning("Activity 재호출이 후보를 내지 못했다 run_id=%s", context.run_id)
         return None
-    return _picked(context)
+    return context.state.suggestions
 
 
 async def _converse(

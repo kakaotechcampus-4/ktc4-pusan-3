@@ -10,6 +10,7 @@ import { useEventDraftStore } from "@/stores/event-draft";
 import {
   chatQuery,
   newerPageParam,
+  olderPageCount,
   olderPageParam,
   pastTurnsOf,
   refreshAfterRun,
@@ -31,6 +32,47 @@ function page(date: string, overrides: Partial<ChatDayResponse> = {}): ChatDayRe
 }
 
 describe("toPastRun — 리듀서를 그대로 쓴다", () => {
+  it("일반 정보 답의 참고 줄(sources)이 지난 대화에도 같은 모양으로 남는다 (#574)", () => {
+    const sources = [
+      {
+        ref: { kind: "growth_doc" as const, id: "d1" },
+        title: "계단 오르며 수 세기",
+        source_org: "교육부",
+        source_title: "누리과정 해설서",
+        source_url: null,
+      },
+    ];
+    const { run } = toPastRun([
+      {
+        type: "agent_result",
+        agent: "growth",
+        task_type: "info",
+        status: "completed",
+        readouts: [
+          {
+            kind: "doc_answer",
+            title: "만 3세 무렵 생활과 배움 · 일반 자료",
+            body: "계단을 오르며 세어 봐요.",
+            authored_by: "model",
+            code: null,
+            source_refs: [],
+            sources,
+          },
+        ],
+        question: null,
+        suggestion_ids: [],
+        kind: null,
+        reason: null,
+        record_count: null,
+        suggestions: [],
+      },
+      done,
+    ]);
+    expect(run.agentResults[0]?.readouts[0]?.sources).toEqual(sources);
+    // 🚨 추천이 아니라서 후보 id 가 없다 — 후보 보기가 서지 않는다
+    expect(run.agentResults[0]?.suggestion_ids).toEqual([]);
+  });
+
   it("지운 기록은 id 만 따로 모이고, 남은 기록은 지금 모습 그대로다 (건강 모양 포함)", () => {
     const { run, deleted } = toPastRun([
       {
@@ -115,6 +157,20 @@ describe("다음 장", () => {
       date: "2026-10-15",
     });
     expect(newerPageParam(page("2026-10-16"))).toBeUndefined();
+  });
+
+  it("🚨 미리 받는 상한은 연 날보다 이른 장만 센다 — 아래로 붙인 다음 날은 세지 않는다 (#707)", () => {
+    // 오늘부터 연 목록: 첫 장(null) 말고는 전부 이른 장이다. 같은 날 앞부분(커서)도 한 장이다.
+    expect(olderPageCount([null], null)).toBe(0);
+    expect(olderPageCount([null, { cursor: "c" }, { date: "2026-10-15" }], null)).toBe(2);
+    // 지난 날부터 연 목록: 그날 장과 더 늦은 장(다음 날)은 빼고 센다.
+    expect(
+      olderPageCount(
+        [{ date: "2026-10-16" }, { date: "2026-10-13" }, { date: "2026-10-12" }],
+        "2026-10-13",
+      ),
+    ).toBe(1);
+    expect(olderPageCount([{ date: "2026-10-13" }, { cursor: "c" }], "2026-10-13")).toBe(1);
   });
 
   it("🚨 커서만 보낸다 — 날짜를 같이 보내 어긋나면 400 이다", () => {
@@ -233,5 +289,38 @@ describe("run 이 끝난 뒤 — 오늘 장만 갈아 끼운다 (#228 리뷰)", 
       expect(client.getQueryState(qk.home(CHILD))?.isInvalidated).toBe(true);
       expect(client.getQueryState(qk.chatToday(CHILD))?.isInvalidated).toBe(true);
     });
+  });
+});
+
+describe("지난 대화의 조회 · 삭제 카드 (#535)", () => {
+  it("서버가 남긴 카드도 같은 리듀서로 되살아난다 — 끝난 삭제 카드는 상태와 건수만 있다", () => {
+    const { run } = toPastRun([
+      { type: "note", text: "지울 것을 골라 주세요.", kind: "message" },
+      {
+        type: "delete_proposal",
+        proposal_id: "dp_1",
+        status: "deleted",
+        expires_at: "2026-11-05T03:00:00Z",
+        result: { observation_food: 30 },
+        tabs: [],
+      },
+      done,
+    ]);
+    expect(run.deleteProposal).toMatchObject({ status: "deleted", tabs: [] });
+    expect(run.observations).toEqual([]);
+    expect(run.status).toBe("done");
+  });
+
+  it("조회 카드는 지금 모습의 행 그대로 탭에 들어간다", () => {
+    const tabs = [
+      {
+        kind: "observation_food" as const,
+        truncated: false,
+        records: [observations[0]!],
+        events: [],
+      },
+    ];
+    const { run } = toPastRun([{ type: "found_tabs", tabs }, done]);
+    expect(run.foundTabs).toEqual(tabs);
   });
 });

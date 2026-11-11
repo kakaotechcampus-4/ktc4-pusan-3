@@ -56,7 +56,7 @@ export function SafetyScanRowSheet({
       open={row !== null}
       onClose={onClose}
       title="옮겨 적은 것 고치기"
-      description="여기서 고친 값이 등록돼요. 등록은 아래 승인 버튼을 눌러야 돼요."
+      description="고친 값으로 등록돼요. 시트를 닫고 화면 아래 등록 버튼을 눌러야 저장돼요."
     >
       {/* 🚨 열 때마다 그 줄의 값에서 시작한다 — 앞 줄을 고치던 값이 남으면 다른 줄에 덮인다. */}
       {row ? <RowForm key={row.id} row={row} onSave={onSave} onDrop={onDrop} /> : null}
@@ -87,7 +87,7 @@ function RowForm({
     const next = {
       label:
         nextLabel === ""
-          ? "검사지를 보고 적어주세요"
+          ? "검사지를 보고 적어 주세요"
           : nextLabel.length > HEALTH_SAFETY_LIMITS.label
             ? `이름은 ${HEALTH_SAFETY_LIMITS.label}자까지 적을 수 있어요`
             : undefined,
@@ -128,7 +128,7 @@ function RowForm({
         </div>
       ) : (
         <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field px-3 py-2">
-          이 줄은 검사지 원문을 읽지 못했어요. 검사지를 직접 보고 적어주세요.
+          이 줄은 검사지 원문을 읽지 못했어요. 검사지를 직접 보고 적어 주세요.
         </p>
       )}
 

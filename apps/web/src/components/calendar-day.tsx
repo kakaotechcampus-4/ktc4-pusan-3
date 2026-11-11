@@ -14,6 +14,7 @@ import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { ObservationList } from "@/components/observation-list";
+import { ReminderField } from "@/components/reminder-field";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -24,7 +25,7 @@ import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skele
 import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
 import { useToast } from "@/components/ui/toast";
-import { api, DIARY_CONTENT_MAX_LENGTH, qk } from "@/lib/api";
+import { api, DIARY_CONTENT_MAX_LENGTH, isApiError, qk } from "@/lib/api";
 import { createSerialQueue } from "@/lib/serial-queue";
 import type {
   CalendarDayResponse,
@@ -35,17 +36,20 @@ import type {
   EventItemUpdateResponse,
   MyDiary,
   Observation,
+  ReminderRequest,
+  ReminderResponse,
   SharedPhoto,
 } from "@/lib/api/types";
 import { formatEventTime } from "@/lib/format";
 import { useReveal } from "@/lib/motion";
+import { NO_REMINDER, reminderOptions, type ReminderChoice } from "@/lib/reminder";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
  * 09 하루 패널 — 고른 날의 내 일기 · 일정 · 관찰 · 나눈 대화 · 함께 보는 사진 (이 순서로 선다 · #503 · #228).
  *
  * 🚨 **없는 구역은 그리지 않는다.** 빈 상자를 늘어놓아 하루를 채우지 않는다 — 프로토타입의
- *    "기록이 없는 날은 비워둬요. 채우려고 만들지 않아요" 가 이 화면의 태도다. 일기 카드만은
+ *    기록이 없는 날은 비워 둔다 — 빈 상태 "이날 남긴 일정이나 기록이 없어요" 가 이 화면의 태도다. 일기 카드만은
  *    빈 날에도 서지만 "이날의 일기 쓰기" 줄 하나뿐이다 (`DiaryCard`).
  *
  * 🚨 **일기와 관찰을 한 구역에 섞지 않는다.** 일기는 관찰로 자동 추출되지 않는다(계약서 §09) —
@@ -74,7 +78,7 @@ export function CalendarDayPanel({
    * 일기 편집기가 열려 있다.
    *
    * 🚨 **빈 입력창을 하루마다 세워 두지 않는다.** 처음에는 일기 칸을 늘 펼쳐 뒀는데, 그러면
-   *    아무것도 없는 날에 "채우려고 만들지 않아요" 바로 위에 **채우라는 큰 입력 상자**가 서서
+   *    아무것도 없는 날에 빈 상태 바로 위에 **채우라는 큰 입력 상자**가 서서
    *    화면이 스스로를 부정했다. 쓰겠다고 누른 날만 편집기가 열린다.
    *
    * 날짜가 바뀌면 이 상태도 처음으로 돌아가야 한다 — 그건 이 컴포넌트를 `key={date}` 로
@@ -104,7 +108,7 @@ export function CalendarDayPanel({
       />
 
       {data.events.length > 0 ? (
-        <Section title="저장된 일정">
+        <Section title="저장된 일정" tour="events">
           <ul className="flex flex-col gap-3">
             {data.events.map((event) => (
               <li key={event.id}>
@@ -116,7 +120,7 @@ export function CalendarDayPanel({
       ) : null}
 
       {data.observations.length > 0 ? (
-        <Section title="이날 남긴 기록">
+        <Section title="이날 남긴 기록" tour="records">
           <ObservationList observations={data.observations} onOpen={onOpenObservation} />
         </Section>
       ) : null}
@@ -127,7 +131,7 @@ export function CalendarDayPanel({
           🚨 **"이날의 일기 쓰기" 와 같은 줄 모양이다** (`PANEL_ROW` · #503). 테두리 버튼 하나를 두면 덩그러니
              놓여 보였다. 다른 화면(04)으로 가는 것이라 버튼이 아니라 `<Link>` 다 (10 설정 줄과 같다). */}
       {data.chat_count > 0 ? (
-        <Section title="이날 나눈 대화">
+        <Section title="이날 나눈 대화" tour="chat">
           <Link
             href={`/child/${childId}/chat?date=${date}`}
             transitionTypes={FORWARD.transitionTypes}
@@ -138,7 +142,7 @@ export function CalendarDayPanel({
         </Section>
       ) : null}
 
-      {/* 🚨 **"채우려고 만들지 않아요" 와 채우는 행동을 붙여 놓지 않는다.** 빈 상태에 `일기 쓰기`
+      {/* 🚨 **빈 상태와 채우는 행동을 붙여 놓지 않는다.** 빈 상태에 `일기 쓰기`
           버튼을 달았더니 화면이 스스로를 부정했다 — 사실을 말하는 자리와 할 일을 주는 자리를
           나눈다. 그래서 쓰는 줄은 빈 상태가 아니라 일기 구역에 따로 서고, 쓰는 동안에는
           빈 상태를 내린다. 일기를 지워 그날 다른 것이 없으면 이 빈 상태가 다시 선다. */}
@@ -146,7 +150,7 @@ export function CalendarDayPanel({
         <EmptyState
           icon={CalendarOff}
           title="이날은 아무것도 없어요"
-          description="기록이 없는 날은 비워둬요. 채우려고 만들지 않아요."
+          description="이날 남긴 일정이나 기록이 없어요."
           count={0}
           countLabel="이날의 기록"
         />
@@ -164,17 +168,20 @@ export function CalendarDayPanel({
 function Section({
   title,
   action,
+  tour,
   children,
 }: {
   title: string;
   /** 제목 줄 오른쪽 끝의 그 구역 행동. */
   action?: React.ReactNode;
+  /** 화면 투어가 비추는 자리 (`lib/tour/screens/calendar.ts`). */
+  tour?: string;
   children?: React.ReactNode;
 }) {
   // 제목이 구역의 이름이 된다 — 스크린리더가 구역(region)으로 건너다닐 수 있다.
   const headingId = useId();
   return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-2">
+    <section aria-labelledby={headingId} data-tour={tour} className="flex flex-col gap-2">
       {/* 🚨 **줄이 접힌다** (`flex-wrap`). 글자를 키우면 제목과 버튼이 한 줄에 안 들어가고,
           `keep-all` 이라 단어를 쪼개지도 못해 화면 밖으로 넘친다.
           🚨 **제목 줄은 버튼이 없어도 버튼 높이다** (`min-h-touch`). 버튼(44)이 선 구역만 줄이 커지면
@@ -255,16 +262,27 @@ function EventCard({
   date: string;
   event: CalendarEvent;
 }) {
+  /** 일정 제목 — 이 카드 안 알림 칸의 접근용 이름 앞에 붙는다 (`MyReminder`). */
+  const titleId = useId();
   return (
     <div className="rounded-card bg-surface border-line border p-4">
-      <p className="text-body text-ink">{event.title}</p>
+      <p id={titleId} className="text-body text-ink">
+        {event.title}
+      </p>
       <p className="text-caption text-ink-subtle mt-1">
         {formatEventTime(event.starts_at, event.all_day)}
       </p>
+      {/* 요일 반복 묶음의 회차면 그 반복 (#738). 🚨 서버 문구 그대로다 — 요일 · 끝 날짜로 화면이 다시 만들지 않는다.
+          준비물 체크와 알림은 이 회차 하나의 것이라, 반복이라는 사실을 시각 바로 아래에 둬 범위를 헷갈리지 않게 한다. */}
+      {event.series ? (
+        <p className="text-caption text-ink-subtle mt-0.5">{event.series.label}</p>
+      ) : null}
+
+      <MyReminder childId={childId} date={date} event={event} titleId={titleId} />
 
       {event.items.length > 0 ? (
         // 준비물은 카드 폭이 넉넉하면 두 열로 선다 — 기준과 이유는 docs/web/screen-rules-v1.md §5.
-        <div className="@container mt-3">
+        <div data-tour="prep" className="@container mt-3">
           <p className="text-label text-ink-muted">준비물</p>
           <ul className="mt-1 grid grid-cols-1 gap-x-3 @2xs:grid-cols-2">
             {event.items.map((item) => (
@@ -275,6 +293,101 @@ function EventCard({
           </ul>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * 이 일정의 **내** 알림 (#609). 함께 보는 다른 보호자가 알림을 거는 유일한 자리다 — 일정을 만든
+ * 보호자는 제출할 때 걸고, 나머지는 여기서 각자 건다. 응답에는 내 알림만 와서 남의 것은 안 보인다.
+ *
+ * 🚨 **승인 게이트가 아니다.** 일정 쓰기가 아니라 개인 설정이고 다시 고르면 그만이라, 준비물 체크와
+ *    같이 낙관적으로 바꾸고 요청만 줄을 세운다 (`PreparedCheckbox`). 고르면 바로 저장한다 — 저장 버튼을
+ *    따로 두면 고르기만 하고 떠난 보호자가 걸린 줄 안다.
+ * 🚨 **지난 일정에는 세우지 않는다.** 고를 값이 "없음" 하나뿐이면 칸이 아무 일도 하지 않는다.
+ *    이미 걸린 알림이 있으면 지났어도 그 값을 보여 준다 (지울 수 있어야 한다).
+ */
+function MyReminder({
+  childId,
+  date,
+  event,
+  titleId,
+}: {
+  childId: string;
+  date: string;
+  event: CalendarEvent;
+  /**
+   * 일정 제목 요소의 id. 🚨 하루에 일정이 여럿이면 칸 이름이 전부 "알림" 이라 스크린리더로는 어느 일정의 칸인지
+   *    모른다(#611 리뷰) — 접근용 이름만 "물놀이 알림 …" 으로 만든다. 보이는 글자는 "알림" 그대로다.
+   */
+  titleId: string;
+}) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const key = qk.calendarDay(childId, date);
+  const path = `/children/${childId}/events/${event.id}/reminder`;
+  const [queue] = useState(createSerialQueue);
+  const value: ReminderChoice = event.reminder?.lead ?? NO_REMINDER;
+
+  const save = useMutation({
+    mutationFn: (choice: ReminderChoice) =>
+      queue.run<unknown>(() =>
+        choice === NO_REMINDER
+          ? api.delete<void>(path)
+          : api.put<ReminderResponse>(path, { lead: choice } satisfies ReminderRequest),
+      ),
+    onMutate: async (choice) => {
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<CalendarDayResponse>(key);
+      queryClient.setQueryData<CalendarDayResponse>(key, (current) =>
+        current
+          ? {
+              ...current,
+              events: current.events.map((each) =>
+                each.id === event.id
+                  ? { ...each, reminder: choice === NO_REMINDER ? null : { lead: choice } }
+                  : each,
+              ),
+            }
+          : current,
+      );
+      return { previous };
+    },
+    // 🚨 되돌리기만 하면 조용하다 — 고른 값이 칸에서 되돌아가 사라져서, 왜 그런지 말할 자리가 칸에
+    //    남지 않는다. 그래서 토스트가 받는다 (`PreparedCheckbox` 와 같다).
+    // 🚨 `invalid_reminder` 는 지난 시각만이 아니다. 다른 보호자가 그사이 일정을 종일로 바꾸면 종류가
+    //    맞지 않아도 같은 코드라, 이유를 하나로 단정하지 않는다. 다시 받은 목록은 맞게 바뀐다.
+    onError: (error, _choice, context) => {
+      if (queue.pending === 0 && context?.previous) queryClient.setQueryData(key, context.previous);
+      toast.show(
+        isApiError(error, "invalid_reminder")
+          ? "그 알림은 지금 걸 수 없어요. 다른 알림을 골라 주세요."
+          : "알림을 저장하지 못했어요. 잠시 뒤에 다시 골라 주세요.",
+      );
+    },
+    onSettled: () => {
+      if (queue.pending === 0) void queryClient.invalidateQueries({ queryKey: key });
+    },
+  });
+
+  const options = reminderOptions({
+    startsAt: event.starts_at,
+    allDay: event.all_day,
+    keep: value,
+  });
+  if (options.length === 1 && value === NO_REMINDER) return null;
+
+  return (
+    <div className="mt-3">
+      <ReminderField
+        startsAt={event.starts_at}
+        allDay={event.all_day}
+        contextLabelId={titleId}
+        value={value}
+        onChange={(choice) => {
+          if (choice !== value) save.mutate(choice);
+        }}
+      />
     </div>
   );
 }
@@ -343,7 +456,7 @@ function PreparedCheckbox({
       // 🚨 뒤에 기다리는 선택이 있으면 되돌리지 않는다. 되돌리면 방금 누른 값이 화면에서
       //    한 번 뒤집혔다가 그 요청이 끝나고 다시 바뀐다 — 부모 눈에는 체크가 혼자 춤춘다.
       if (queue.pending === 0 && context?.previous) queryClient.setQueryData(key, context.previous);
-      toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러주세요.");
+      toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러 주세요.");
     },
     onSettled: () => {
       // 🚨 줄의 **마지막** 요청만 재조회한다. 중간에 부르면 아직 뒤 요청이 반영되지 않은
@@ -386,7 +499,7 @@ function DiaryCard({
   date: string;
   data: CalendarDayResponse;
   /**
-   * 편집기가 열려 있다. 하루 패널이 든다 — 쓰는 동안은 빈 상태("채우려고 만들지 않아요")를
+   * 편집기가 열려 있다. 하루 패널이 든다 — 쓰는 동안은 빈 상태("이날 남긴 일정이나 기록이 없어요")를
    * 내려야 해서다. 날짜가 바뀌면 패널째 새로 서서(`key={date}`) 닫힌다.
    */
   editing: boolean;
@@ -448,7 +561,7 @@ function DiaryCard({
    * 그날 내 일기 쓰기 (`PUT /children/{cid}/diary/{date}` · #364). 같은 날 다시 쓰면 덮어쓴다.
    *
    * 🚨 **본문은 고쳐 보내지 않는다** — 앞뒤 공백 · 줄바꿈까지 서버가 원문 그대로 저장한다.
-   *    공백뿐인 내용은 서버가 422 로 거절하므로 버튼이 먼저 막는다 (아래 `disabled`).
+   *    공백뿐인 내용은 서버가 400 으로 거절하므로 버튼이 먼저 막는다 (아래 `disabled`).
    * 🚨 **"저장됐다" 는 응답으로만 만든다.** 응답이 하루 보기 `my_diary` 와 같은 모양이라 그대로 얹는다 —
    *    `onMutate` 로 먼저 바꾸지 않는다. 사진은 일기 밖이라 싣지 않는다 (#115).
    * Idempotency-Key 를 받지 않는 경로다 — 되돌릴 수 없는 5곳이 아니다.
@@ -528,7 +641,7 @@ function DiaryCard({
   ) : null;
 
   return (
-    <Section title="이날의 일기" action={editing ? null : actions}>
+    <Section title="이날의 일기" tour="diary" action={editing ? null : actions}>
       {editing ? (
         // 편집기 카드는 두 덩어리다 — 입력칸과 그 아래 안내문(붙인다), 저장 · 취소와 그 사유(띄운다).
         <div className="rounded-card bg-surface border-line flex flex-col gap-4 border p-4">
@@ -540,7 +653,7 @@ function DiaryCard({
               autoFocus
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder="이날 어땠는지 편하게 적어주세요."
+              placeholder="이날 어땠는지 편하게 적어 주세요."
               maxLength={DIARY_CONTENT_MAX_LENGTH}
             />
             {/* 10 문제 알리기와 같은 카운터다 (#549). 브라우저의 `maxLength` 와 같은 단위(UTF-16)로
@@ -556,7 +669,7 @@ function DiaryCard({
             <div className="flex gap-2">
               <Button
                 onClick={() => save.mutate(draft)}
-                // 🚨 공백뿐이면 막는다 — 서버가 422 로 거절한다. 다 지우고 싶으면 "지우기" 다 (#364).
+                // 🚨 공백뿐이면 막는다 — 서버가 400 으로 거절한다. 다 지우고 싶으면 "지우기" 다 (#364).
                 disabled={save.isPending || draft.trim() === "" || draft.trim() === saved.trim()}
                 aria-describedby={emptied ? emptiedHintId : undefined}
               >
@@ -579,13 +692,13 @@ function DiaryCard({
 
             {/* 🚨 **이유 없이 꺼진 버튼을 두지 않는다** — "왜 안 눌리지" 를 먼저 묻게 만든다
               (디자인 시스템 §7 바텀시트). 다 비우고 저장하려던 보호자는 지우고 싶은 것이다 — 빈
-              저장은 서버가 지우기로 보지 않으므로(422) 지우는 길을 알려준다.
+              저장은 서버가 지우기로 보지 않으므로(400) 지우는 길을 알려준다.
               🚨 **편집 중에는 지우기를 세우지 않는다.** 아직 저장 안 한 글이 열린 자리에
               "지우기" 가 "취소" 옆에 서면, 고치던 글을 버리는 것인지 저장된 일기를 지우는 것인지
               갈리지 않는다. 새로 쓰는 중이면 지울 것도 없다. 지우는 길은 읽는 상태의 하나뿐이다. */}
             {emptied ? (
               <p id={emptiedHintId} className="text-caption text-ink-subtle">
-                비운 채로는 저장되지 않아요. 일기를 지우려면 취소한 뒤 지우기를 눌러주세요.
+                비운 채로는 저장되지 않아요. 일기를 지우려면 취소한 뒤 지우기를 눌러 주세요.
               </p>
             ) : null}
 
@@ -708,7 +821,7 @@ function DiaryCard({
 function DiaryNote() {
   return (
     <p className="text-caption text-ink-subtle">
-      일기는 아이 기록으로 저장되지 않아요. 기록으로 남기려면 홈에서 한 줄로 적어주세요.
+      일기는 아이 기록으로 저장되지 않아요. 기록으로 남기려면 홈에서 한 줄로 적어 주세요.
     </p>
   );
 }

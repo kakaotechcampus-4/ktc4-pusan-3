@@ -37,6 +37,7 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   RefreshResponse: "AuthRefreshResponse",
   MeResponse: "Me",
   MeChild: "Me.children[]",
+  SeenTours: "SeenTours",
   WithdrawRequest: "WithdrawRequest",
   WithdrawResponse: "WithdrawResponse",
 
@@ -49,6 +50,9 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   ConsentOut: "ConsentResponse.consent",
   ConsentHistoryEntry: "ConsentHistoryEntry",
   ConsentsResponse: "ConsentsResponse",
+  NotificationSettings: "NotificationSettings",
+  PushDeviceIn: "PushDeviceRequest",
+  PushPlatform: "PushPlatform",
 
   /* ── 아이 · 보호자 · 초대 ── */
   CreateChildRequest: "CreateChildRequest",
@@ -88,12 +92,28 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   UpdateHealthSafetyRequest: "UpdateHealthSafetyRequest",
   UpdateHealthSafetyResponse: "UpdateHealthSafetyResponse",
 
+  /* ── 복약 — 초안 제출 · 수정 · 진행 중 코스 · 회차 체크 (#537) ── */
+  SubmitMedicationRequest: "SubmitMedicationBody",
+  ReviseMedicationRequest: "ReviseMedicationBody",
+  MedicationScheduleIn: "SubmitMedicationBody.schedule",
+  MedicationDoseIn: "SubmitMedicationBody.doses[]",
+  MedicationSource: "SubmitMedicationBody.source",
+  TimingAnchor: "TimingAnchor",
+  MedicationStorage: "MedicationStorage",
+  MedicationForm: "MedicationForm",
+  SubmitMedicationResponse: "SubmitMedicationResponse",
+  MedicationsResponse: "MedicationsResponse",
+  MedicationCourseOut: "MedicationCourse",
+  MedicationDoseOut: "MedicationDose",
+  CheckDoseRequest: "CheckDoseRequest",
+
   /* ── 03 홈 · 04 한 줄 입력 · 지난 대화 ── */
   HomeResponse: "HomeResponse",
   HighlightOut: "HomeResponse.highlight",
   AgentPromptOut: "HomeResponse.agent_prompts[]",
   TodayEventOut: "HomeResponse.today[]<kind=event>",
   CreateInputRequest: "CreateInputRequest",
+  InputLocation: "InputLocation",
   CreateInputResponse: "CreateInputResponse",
   ChatDayResponse: "ChatDayResponse",
   ChatTurnOut: "ChatTurnOut",
@@ -105,9 +125,28 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   AgentResultOut: "ChatReply<type=agent_result>",
   PartialReply: "ChatReply<type=partial>",
   DoneReply: "ChatReply<type=done>",
-  StoredReadout: "AgentReadout",
+  // 조회 · 삭제 카드 (#535). 탭 모양은 SSE `found_tabs` · `delete_proposal` 과 같다.
+  FoundTabsOut: "ChatReply<type=found_tabs>",
+  DeleteProposalCardOut: "ChatReply<type=delete_proposal>",
+  CardTabOut: "CardTab",
+  ProposalTabOut: "ProposalTab",
+  ConfirmDeleteProposalRequest: "ConfirmDeleteProposalRequest",
+  DeleteProposalOut: "DeleteProposal",
+  DeleteProposalResponse: "DeleteProposalResponse",
+  StoredReadout: {
+    web: "AgentReadout",
+    allow: {
+      source_refs:
+        "SSE 에만 온다 (#713). 지난 대화에는 readout 근거를 싣지 않아서 웹은 선택 칸으로 받는다",
+    },
+  },
   SuggestionStateOut: "AgentResultEvent.suggestions[]",
   StoredRef: "StoredRef",
+  // readout 근거 중 화면이 받는 종류만(지금은 복약 코스) — 웹 `Ref` 의 kind 목록 안이다
+  StoredScreenRef: "Ref",
+  // 일반 정보 답변의 참고 줄 (#574). 일반 추천의 `DocEvidence` 에서 note 를 뺀 모양이다
+  StoredDocSource: "DocSource",
+  StoredDocRef: "DocSource.ref",
 
   /* ── 07 기록 · 기억 · 고치기 ── */
   Ref: "Ref",
@@ -124,7 +163,7 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   TargetRef: {
     web: "CorrectionRequest.target_ref",
     allow: {
-      kind: "웹은 Ref 를 그대로 싣는다. 서버가 받지 않는 건강 기록은 목록 · 상세 · 캘린더에서 빠져서(#259) 고치기 시트까지 오지 않는다",
+      kind: "웹은 Ref 를 그대로 싣는다. 서버가 받지 않는 건강 기록은 상세 시트가 고치기 버튼을 세우지 않아서(#764) 보내지 않는다",
     },
   },
   CorrectionResponse: "CorrectionResponse",
@@ -168,11 +207,25 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
         "웹 타입은 04 SSE 초안(app/core/event_draft.py)과 같이 쓴다. 이 응답은 create 초안만이라 서버가 싣지 않고, 화면은 없으면 비교를 안 그린다 (event-draft-card.tsx)",
       needs_review: "웹이 제안한 칸이고 서버는 아직 보내지 않는다 (types.ts 의 EventDraft 주석)",
       review_reason: "needs_review 와 같다",
+      repeat:
+        "04 SSE 반복 초안(#738 · core/event_draft.py 의 CreateRepeatEventDraft)에만 있다. 이 응답은 제안 초안이라 반복이 없다",
     },
   },
   EventBodyOut: "EventDraftFields",
   DraftItemPayload: "EventDraftItem",
-  SubmitEventRequest: "SubmitEventBody",
+  // 반복 일정(#738)은 같은 본문에 최상위 `repeat` 를 더한다 — 웹은 두 타입으로 나눠 보낸다
+  SubmitEventRequest: ["SubmitEventBody", "SubmitRepeatEventBody"],
+  PhotoEntry: "PhotoEntry",
+  PhotoEntryDetail: "PhotoEntryDetail",
+  PhotoUploadTicket: "PhotoUploadTicket",
+  PhotoCommitRequest: "PhotoCommitRequest",
+  PhotoCommitResponse: {
+    web: "PhotoCommitResponse",
+    allow: {
+      observations:
+        "서버는 빈 배열만 보낸다 (관찰을 만들지 않는다). 화면도 이 칸을 읽지 않는다 (#151)",
+    },
+  },
   SubmitEventBody: {
     web: "EventDraftFields",
     allow: {
@@ -198,7 +251,19 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   CalendarDayOut: "CalendarDay",
   CalendarDayResponse: "CalendarDayResponse",
   CalendarEventOut: "CalendarEvent",
+  EventSeriesOut: "EventSeriesRef",
+
+  /* ── 반복 묶음 고치기 (#738 · 승인 게이트 ㉠) ── */
+  RepeatIn: "RepeatRequest",
+  SeriesEventIn: "SeriesDraftFields",
+  SeriesBeforeIn: "UpdateSeriesBody.before",
+  UpdateSeriesRequest: "UpdateSeriesBody",
+  UpdateSeriesResponse: "UpdateSeriesResponse",
   EventItemOut: "EventItem",
+  ReminderOut: "Reminder",
+  ReminderLead: "ReminderLead",
+  ReminderIn: "ReminderRequest",
+  ReminderResponse: "ReminderResponse",
   EventItemUpdateRequest: "EventItemUpdateRequest",
   EventItemUpdateResponse: "EventItemUpdateResponse",
   MyDiaryOut: "MyDiary",
@@ -226,11 +291,9 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
  * FE 는 그 이슈에서 웹 타입을 붙이고 이 줄을 뺀다 (docs/web/mock-and-tests-v1.md §2 · #560 리뷰).
  */
 export const NOT_MAPPED: Record<string, string> = {
-  HTTPValidationError:
-    "FastAPI 가 자동으로 붙이는 422 모양. 서버는 실제로 ErrorEnvelope 로 바꿔 보낸다 (app/api/errors.py · #438)",
-  ValidationError: "HTTPValidationError 안쪽",
-  InputLocation:
-    "웹이 아직 위치를 보내지 않는다. 위치 동의를 묻지 않고 있다 (lib/consent.ts 의 NOT_ASKED_YET)",
+  PhotoUploadResponse: "웹은 `{ run_id: string }` 을 함수 반환형에 바로 적는다 (uploadPhoto)",
+  Body_upload_photo_api_v1_children__cid__photos_post:
+    "multipart 본문. 웹은 photoFormData 가 FormData 로 만든다",
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
 };

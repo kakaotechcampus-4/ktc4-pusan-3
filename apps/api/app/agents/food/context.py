@@ -9,6 +9,7 @@ LLM이 만들면 안 되는 값(child_id, 식이 단계)과 날짜 계산의 기
 한 값(Gate)으로 판단한다.
 """
 
+import logging
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
 from functools import partial
@@ -23,6 +24,8 @@ from app.agents.common.readout import Readout
 from app.agents.common.suggestion import SuggestionDraft
 from app.agents.food.schemas.common import MealSlot
 from app.agents.food.store.ports import (
+    DaycareLookupError,
+    DaycareMealRow,
     FoodDocRow,
     FoodPorts,
     MenuCatalogRow,
@@ -34,6 +37,8 @@ if TYPE_CHECKING:
     # nutrition_eval.py 가 FoodContext 를 쓰므로 런타임에 여기서 가져오면 순환 임포트다
     # (설계 §3 ⑤ — 판정 결과는 run state 에만 둔다)
     from app.agents.food.nutrition_eval import NutrientVerdict
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -57,17 +62,46 @@ class FoodRunState:
     것인가"를 확인할 때 쓴다 — 모델이 근거·후보를 지어내는 것을 막는 자리다.
     """
 
+    # 급식 표를 읽다 실패했다(`DaycareLookupError`). 참이면 이 task 는 급식을 다시 읽지 않는다 —
+    # 한 task 안에서 여러 번 읽는데(가중치 · 영양 판정 · tool) 실패가 읽을 때마다 달라지면 안 되고,
+    # 느리게 실패하는 읽기를 되풀이하면 20초 예산을 먹는다. `mark_daycare_unread` 만 쓴다
+    daycare_unread: bool = False
     utterance: str = ""  # span 검증용. request_texts를 줄바꿈으로 이은 것
+    # 보호자가 실제로 한 말 — 이번 입력 원문과 앞 턴의 원문. 앞 대화를 이어 묻는 말이면
+    # `utterance` 는 Supervisor 가 해석한 문장이라 앞 추천 이름(AI 가 쓴 글)이 든다. "보호자가
+    # 재료 · 메뉴를 정해 물었는가" 를 코드가 보는 곳(`said_texts`)은 이 칸을 읽는다
+    said: tuple[str, ...] = ()
     seen_refs: set[tuple[str, UUID]] = field(default_factory=set)  # 조회 tool이 돌려준 근거
     # search_food_memory 가 돌려준 근거(id → 순위 매긴 근거). 출력 tool 이 이 표 밖 id 를 인용한
     # 후보를 거절하고(`common/evidence.unseen`), 기피 근거를 이 표로 찾는다
     seen_evidence: dict[UUID, RankedEvidence] = field(default_factory=dict)
+    # 식단 추천이 모델을 부르기 전에 기본 기억 검색을 했는가(`prefetch_food_memory`). 0건이어도 참.
+    # 모델이 도구로 다시 찾은 근거와 가르려고 선조회로 보여 준 id 를 따로 둔다.
+    # 출력 검증은 계속 `seen_evidence` 만 믿는다
+    memory_prefetched: bool = False
+    prefetched_evidence_ids: set[UUID] = field(default_factory=set)
+    # 모델이 `search_food_memory` 를 부른 횟수. 선조회는 세지 않는다 — 품질 로그용
+    memory_search_calls: int = 0
     # 이번 run 에서 모델에게 보여 준 문서 행([예시] · guide_weaning_stage). 인용하면 `food_doc`
     # 근거가 되고 개인화로 세지 않는다
     seen_docs: dict[UUID, FoodDocRow] = field(default_factory=dict)
     # 모델에게 보여 준 후보(menu_key → 카탈로그 행). 출력 tool 이 이 표 밖 menu_key 를 거절하고,
     # 이름 · 재료는 이 행에서 온다 — 모델이 쓰지 않는다
     sampled: dict[str, MenuCatalogRow] = field(default_factory=dict)
+    # 이번 run 의 후보 풀(menu_key → 카탈로그 행)과 레시피북 전체 · 최근 추천한 menu_key.
+    # 보호자가 정한 조건으로 생성 후보를 받을 때(#740) 풀 이름과 같은 생성은 그 레시피 행으로 받고,
+    # 풀 밖 레시피(안전 필터로 막힘 · 최근 추천)와 같은 이름은 막힌 것으로 본다. 최근 추천한 이름은
+    # 거절한다
+    pool_rows: dict[str, MenuCatalogRow] = field(default_factory=dict)
+    recipe_keys: frozenset[str] = frozenset()
+    recent_keys: frozenset[str] = frozenset()
+    # 요청 글에 이름 · 재료가 나와 샘플 앞에 넣은 레시피(조건 맞는 레시피)의 menu_key. 생성 후보
+    # 자리는 3 - (샘플 안에 든 이 수)다. 요리 종류 조건이면 세지 않는다
+    requested_keys: frozenset[str] = frozenset()
+    # 조건 불일치(`REQUEST_MISMATCH`)로 거절한 횟수. 모델이 요리 이름을 재료로 적는 등 조건을
+    # 못 맞추면
+    # 거절 루프에 갇혀 0개로 끝난다 — 두 번 거절한 뒤에는 조건 없는 요청으로 본다
+    request_misses: int = 0
     # 사후 안전 필터에 걸려 풀에서 빼야 하는 menu_key. 사유는 모델에게도 로그에도 싣지 않는다
     blocked_keys: set[str] = field(default_factory=set)
     # 더 채울 길이 없다 — 후보 풀이 처음부터 3개 미만이거나 안전 필터 뒤 재호출을 이미 했다.
@@ -92,6 +126,10 @@ class FoodRunState:
     # () = 동의가 없어 읽지 않음(거를 것 없음), None = 조회 실패("알레르기 확인 못 함")
     safety: tuple[SafetyEntry, ...] | None = None
 
+    def said_texts(self) -> tuple[str, ...]:
+        """보호자가 실제로 한 말. `said` 가 비어 있으면(직접 채운 state) `utterance` 다."""
+        return self.said or tuple(self.utterance.splitlines())
+
 
 @dataclass(frozen=True)
 class FoodContext:
@@ -112,6 +150,32 @@ class FoodContext:
         한 run에 Food task가 둘이면(식단 추천 + 영양소 분석) pipeline이 동시에 돌린다.
         """
         return replace(self, state=FoodRunState())
+
+
+def mark_daycare_unread(context: FoodContext, *, at: str) -> None:
+    """급식 표를 못 읽었다고 이 task 에 표시한다. 로그에는 run_id 와 자리 이름만 싣는다."""
+    context.state.daycare_unread = True
+    logger.warning("Food 급식 읽기 실패 run_id=%s at=%s", context.run_id, at)
+
+
+async def read_daycare_rows(
+    context: FoodContext, *, date_from: date, date_to: date, at: str
+) -> list[DaycareMealRow]:
+    """Food 가 급식 행을 읽는 유일한 길. 읽기에 실패하면 표시하고 `DaycareLookupError` 를 다시 낸다.
+
+    이 task 에서 이미 못 읽었으면(`state.daycare_unread`) DB 에 가지 않고 바로 같은 예외를 낸다 —
+    느리게 실패하는 읽기를 되풀이하지 않고, 앞에서 "못 읽음" 으로 정한 것을 뒤에서 뒤집지 않는다
+    (뒤집으면 화면 안내와 실제로 본 급식이 어긋난다). 잡는 쪽이 무엇을 할지는 자리마다 다르다.
+    """
+    if context.state.daycare_unread:
+        raise DaycareLookupError("이 task 에서 이미 daycare_meal 을 읽지 못했다")
+    try:
+        return await context.ports.daycare.rows(
+            child_id=context.child_id, date_from=date_from, date_to=date_to
+        )
+    except DaycareLookupError:
+        mark_daycare_unread(context, at=at)
+        raise
 
 
 async def build_gate(context: FoodContext) -> Gate:
@@ -146,13 +210,19 @@ async def build_gate(context: FoodContext) -> Gate:
         )
     context.state.safety = basis.entries
 
-    daycare_meal = await ports.daycare.has_rows(child_id=context.child_id)
+    # 급식 표를 못 읽는 것은 안전 조회 실패와 다르다 — 식단 추천 · 영양소 분석을 닫지 않는다.
+    # "없음" 으로 바꾸지도 않는다(`daycare_unread`). 급식 조회 · 고치기만 못 읽음 문구로 닫힌다
+    try:
+        daycare_meal = await ports.daycare.has_rows(child_id=context.child_id)
+    except DaycareLookupError:
+        mark_daycare_unread(context, at="gate")
+        daycare_meal = False
 
     return Gate(
         stage=stage,
         consent_child_health=consent,
         safety_ok=basis.ok,
-        data=DataReady(daycare_meal=daycare_meal),
+        data=DataReady(daycare_meal=daycare_meal, daycare_unread=context.state.daycare_unread),
     )
 
 

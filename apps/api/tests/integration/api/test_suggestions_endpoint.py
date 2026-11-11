@@ -2,20 +2,26 @@
 
 import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import Range
 
 from app.agents import entrypoint
+from app.agents.activity.review import REQUESTED_REASON
 from app.agents.common.readout import Readout
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft
+from app.agents.food.meal_review import GENERAL_REASON_REQUEST as FOOD_REQUESTED_REASON
 from app.agents.suggestion_save import SuggestionBatch
-from app.api import agent_ports, quota
+from app.api import agent_ports
 from app.api.runs import suggestion_retry
+from app.api.v1.schemas.suggestions import DocEvidenceOut
+from app.core import llm_usage
 from app.core.config import settings
+from app.domains.consent.models import ConsentAction
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationActivity,
@@ -35,16 +41,15 @@ from app.domains.suggestion.models import (
 
 DOC_ID = uuid.UUID("00000000-0000-5000-8000-0000000000aa")
 DOC_CARD = entrypoint.DocCard("블록 쌓기", "교육부", "표준보육과정", None)
+# 아래 autouse 가 테스트마다 갈아 끼우는 원본 — 공개용 출처 투영까지 거치는 실제 색인을 볼 때 쓴다
+REAL_DOC_INDEX = entrypoint._doc_index
 
 
 @pytest.fixture(autouse=True)
-def _clean(monkeypatch):
-    suggestion_retry.clear()
-    quota.clear()
+def _clean(monkeypatch, pending_db):
+    """05 다시 시도 보관함 · 하루 한도는 표(run_hold · rate_event, #877)라 `pending_db` 가 테스트
+    트랜잭션에 묶는다."""
     monkeypatch.setattr(entrypoint, "_doc_index", lambda: {("activity_doc", DOC_ID): DOC_CARD})
-    yield
-    suggestion_retry.clear()
-    quota.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -100,7 +105,9 @@ def agents(monkeypatch):
     return plan, calls
 
 
-def _general(agent="activity", content="블록 쌓기") -> SuggestionDraft:
+def _general(
+    agent="activity", content="블록 쌓기", place_notice=None, warnings=()
+) -> SuggestionDraft:
     doc = EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="또래 놀이 자료")
     return SuggestionDraft(
         agent=agent,
@@ -108,6 +115,20 @@ def _general(agent="activity", content="블록 쌓기") -> SuggestionDraft:
         content=content,
         reason="또래 아이들이 많이 하는 놀이예요.",
         citations=(doc,),
+        place_notice=place_notice,
+        warnings=warnings,
+    )
+
+
+def _requested(*, citations=()) -> SuggestionDraft:
+    """보호자가 놀이를 정해 물은 Activity 일반 추천("물놀이 뭐 하지?"). 기준은 그 요청이다."""
+    return SuggestionDraft(
+        agent="activity",
+        kind="general",
+        content="물놀이 — 대야에 컵 띄우기",
+        reason=REQUESTED_REASON,
+        citations=tuple(citations),
+        requested=True,
     )
 
 
@@ -162,6 +183,9 @@ async def test_홈_요청은_Agent_마다_묶음과_안내를_싣는다(db_clien
     [food] = data["suggestions"]
     assert food["evidence"][0]["label"] == "계란말이"
     assert food["evidence"][0]["is_stale"] is False
+    assert food["place_notice"] is None  # 장소가 없는 추천
+    assert food["warnings"] == []
+    assert food["items"] == []  # 준비물이 없는 추천 — null 이 아니다
     groups = {g["agent"]: g for g in data["groups"]}
     assert groups["food"]["notice"] == {
         "code": "fewer",
@@ -196,6 +220,23 @@ async def test_05_도_러너와_같은_안전_어댑터를_넘긴다(db_client, 
     assert resp.status_code == 200
     assert isinstance(calls[0]["food_safety"], DbSafetyReader)
     assert calls[0]["activity_safety"] is calls[0]["food_safety"]
+    assert calls[0]["growth_safety"] is calls[0]["food_safety"]
+
+
+async def test_05_도_인증키가_있으면_도서_어댑터를_넘긴다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    from app.integrations.data4library.client import Data4LibraryBooks
+
+    monkeypatch.setattr(settings, "DATA4LIBRARY_AUTH_KEY", "test-auth-key")
+    plan, calls = agents
+    headers, _ = bearer
+    plan["food"] = ("empty", "준비할 수 있는 메뉴가 없어요.")
+
+    resp = await _post(db_client, cid, headers, agents=["food"])
+
+    assert resp.status_code == 200
+    assert isinstance(calls[0]["growth_books"], Data4LibraryBooks)
 
 
 async def test_05_도_관심_어댑터를_넘긴다(db_client, bearer, cid, agents):
@@ -233,10 +274,35 @@ async def test_닫힌_Agent_는_guard_로_실패는_묶음에서_빠진다(db_cl
 async def test_구현_안_된_Agent_는_not_ready(db_client, bearer, cid, agents):
     headers, _ = bearer
 
-    data = (await _post(db_client, cid, headers, agents=["growth"])).json()
+    data = (await _post(db_client, cid, headers, agents=["health"])).json()
 
     assert [(g["code"], g["deeplink"]) for g in data["guards"]] == [("not_ready", None)]
     assert agents[1] == []  # Agent 를 부르지 않았다
+
+
+async def test_Growth_처음_요청은_라벨을_못_골라_not_ready(db_client, bearer, cid, agents):
+    """Growth 는 추천 라벨이 셋이라 run 없이 무엇을 돌릴지 모른다."""
+    headers, _ = bearer
+
+    data = (await _post(db_client, cid, headers, agents=["growth"])).json()
+
+    assert [g["code"] for g in data["guards"]] == ["not_ready"]
+    assert [g["blocked_agents"] for g in data["guards"]] == [["growth"]]
+    assert agents[1] == []
+
+
+async def test_run_이_있으면_Growth_추천도_그_run_에서_재생한다(
+    db_client, session, bearer, cid, agents
+):
+    _, calls = agents
+    headers, parent_id = bearer
+    row = await _saved_in_run(session, cid, parent_id, "run-1", agent="growth")
+
+    data = (await _post(db_client, cid, headers, agents=["growth"], run_id="run-1")).json()
+
+    assert [s["id"] for s in data["suggestions"]] == [str(row.id)]
+    assert data["guards"] == []
+    assert calls == []  # 다시 만든 것이 없다
 
 
 # ── 판단 순서 ────────────────────────────────────────────────────────────
@@ -295,7 +361,7 @@ async def test_채택한_추천도_돌려준다(db_client, session, bearer, cid,
 
 async def test_0개_기록은_같은_안내(db_client, bearer, cid, agents):
     headers, parent_id = bearer
-    suggestion_retry.put_empty(
+    await suggestion_retry.put_empty(
         run_id="run-1",
         parent_id=parent_id,
         child_id=cid,
@@ -315,7 +381,7 @@ async def test_실패_맥락은_처음_시각과_문장으로_다시_만든다(
     plan, calls = agents
     headers, parent_id = bearer
     sent_at = datetime(2026, 10, 14, 7, 0, tzinfo=UTC)
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1",
         parent_id=parent_id,
         child_id=cid,
@@ -333,7 +399,9 @@ async def test_실패_맥락은_처음_시각과_문장으로_다시_만든다(
     assert call["save_run_id"] == "run-1"  # 새로고침하면 ① 로 찾는다
     assert call["request_id"] != "run-1"  # seed 는 새 요청 id
     # 성공했으니 맥락은 지웠다
-    gone = suggestion_retry.claim(run_id="run-1", parent_id=parent_id, child_id=cid, agent="food")
+    gone = await suggestion_retry.claim(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="food"
+    )
     assert gone is None
 
 
@@ -341,7 +409,7 @@ async def test_다시_만들기가_또_실패하면_맥락은_남는다(db_clien
     plan, _ = agents
     headers, parent_id = bearer
     task = suggestion_retry.RetryTask("meal_recommendation", (), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="food", task=task
     )
     plan["food"] = ("fail",)
@@ -349,17 +417,19 @@ async def test_다시_만들기가_또_실패하면_맥락은_남는다(db_clien
     data = (await _post(db_client, cid, headers, agents=["food"], run_id="run-1")).json()
 
     assert data["groups"] == []
-    kept = suggestion_retry.claim(run_id="run-1", parent_id=parent_id, child_id=cid, agent="food")
+    kept = await suggestion_retry.claim(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="food"
+    )
     assert kept == task
 
 
 async def test_사용_중인_맥락은_실패로_둔다(db_client, bearer, cid, agents):
     headers, parent_id = bearer
     task = suggestion_retry.RetryTask("meal_recommendation", (), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="food", task=task
     )
-    suggestion_retry.claim(run_id="run-1", parent_id=parent_id, child_id=cid, agent="food")
+    await suggestion_retry.claim(run_id="run-1", parent_id=parent_id, child_id=cid, agent="food")
 
     data = (await _post(db_client, cid, headers, agents=["food"], run_id="run-1")).json()
 
@@ -369,7 +439,7 @@ async def test_사용_중인_맥락은_실패로_둔다(db_client, bearer, cid, 
 async def test_다른_보호자의_맥락은_보이지_않는다(db_client, bearer, cid, agents):
     headers, _ = bearer
     task = suggestion_retry.RetryTask("meal_recommendation", (), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=uuid.uuid4(), child_id=cid, agent="food", task=task
     )
 
@@ -405,6 +475,81 @@ async def test_사전검사(db_client, session, bearer, cid, agents, monkeypatch
             "suggestion_id": shown["id"],
         }
     ]
+
+
+async def test_내린_알레르기는_사전검사에서_다시_묻는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """내린 기록(retracted)은 "모름" 과 같다 — 잘못 등록했다 지운 식품을 영영 안 묻지 않게."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    session.add(
+        HealthSafety(
+            child_id=cid, kind=SafetyKind.ALLERGY, label="견과류", status=SafetyStatus.RETRACTED
+        )
+    )
+    walnut = await _personal(session, cid, parent_id, content="호두죽", allergens=["호두"])
+    plan["food"] = ("drafts", [walnut])
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
+    assert [s["content"] for s in data["suggestions"]] == ["호두죽"]
+
+
+async def test_괜찮았던_식품으로_저장한_항목은_다시_묻지_않는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """05 확인 시트의 "먹어봤어요 · 괜찮았어요" 를 저장하면(tolerated) 다음 사전검사에서 빠진다."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+
+    async def granted(*args, **kwargs):
+        return ConsentAction.GRANTED
+
+    monkeypatch.setattr("app.api.v1.routers.health_safety.latest_action", granted)
+    saved = await db_client.post(
+        f"/api/v1/children/{cid}/health-safety",
+        json={"type": "allergy", "label": "잣", "tolerated": True},
+        headers={**headers, "Idempotency-Key": "tolerated-pine"},
+    )
+    assert saved.status_code == 201
+    plan["food"] = (
+        "drafts",
+        [await _personal(session, cid, parent_id, content="잣호두죽", allergens=["잣", "호두"])],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
+    assert [p["item"] for p in data["prechecks"]] == ["호두"]
+
+
+async def test_괜찮았던_식품을_내리면_사전검사에서_다시_묻는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """프로필에서 괜찮았던 식품을 빼면 다음 05 에서 그 식품을 다시 묻는다.
+
+    내린 기록을 "모름" 으로 보는 AI 쪽 판정 위에서만 성립한다 — 이 브랜치가 그 위에 쌓인 이유다.
+    """
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    pine = HealthSafety(child_id=cid, kind=SafetyKind.ALLERGY, label="잣", status=SafetyStatus.NONE)
+    session.add(pine)
+    await session.flush()
+    removed = await db_client.delete(
+        f"/api/v1/children/{cid}/health-safety/{pine.id}", headers=headers
+    )
+    assert removed.status_code == 204
+    plan["food"] = (
+        "drafts",
+        [await _personal(session, cid, parent_id, content="잣죽", allergens=["잣"])],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
+    assert [p["item"] for p in data["prechecks"]] == ["잣"]
 
 
 async def test_동의가_없으면_알레르기_든_추천을_뺀다(
@@ -457,6 +602,84 @@ async def test_일반_추천은_문서_근거와_기록_건수를_싣는다(db_c
         }
     ]
     assert data["scarcity"] == {"count": 0, "question": None}
+    assert general["place_notice"] is None  # 장소가 없는 추천
+    assert general["warnings"] == []
+    assert general["items"] == []
+    assert (general["event_starts_on"], general["event_ends_on"]) == (None, None)
+
+
+async def test_장소가_붙은_추천은_확인_문구를_칸으로_싣는다(db_client, bearer, cid, agents):
+    """문장에 섞지 않는다 — 화면이 제안 문장 아래 한 줄로 세운다 (#516)."""
+    plan, _ = agents
+    headers, _ = bearer
+    notice = "공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를 확인해 주세요."
+    plan["activity"] = (
+        "drafts",
+        [_general(content="사직어린이공원에서 모래성 쌓기", place_notice=notice)],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [general] = data["general"]
+    assert general["content"] == "사직어린이공원에서 모래성 쌓기"
+    assert general["place_notice"] == notice
+    assert [e["ref"]["kind"] for e in general["evidence"]] == ["activity_doc"]
+
+
+async def test_개인화_추천도_확인_문구를_싣는다(db_client, session, bearer, cid, agents):
+    plan, _ = agents
+    headers, parent_id = bearer
+    notice = "가기 전에 운영 여부를 확인해 주세요."
+    draft = await _personal(session, cid, parent_id, agent="activity", content="공원에서 공놀이")
+    plan["activity"] = ("drafts", [replace(draft, place_notice=notice)])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [activity] = data["suggestions"]
+    assert activity["place_notice"] == notice
+    assert (activity["event_starts_on"], activity["event_ends_on"]) == (None, None)
+
+
+async def test_행사가_붙은_추천은_기간을_날짜_칸으로_싣는다(
+    db_client, session, bearer, cid, agents
+):
+    """화면이 확인 문구 줄에 "9월 29일 ~ 10월 1일" 로 세운다 (#516 FE 합의)."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    period = {"event_starts_on": date(2026, 9, 29), "event_ends_on": date(2026, 10, 1)}
+    general = replace(_general(content="광안리 가을 축제에서 축제 구경"), **period)
+    personal = replace(
+        await _personal(session, cid, parent_id, agent="activity", content="축제 구경"), **period
+    )
+    plan["activity"] = ("drafts", [personal, general])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [activity] = data["suggestions"]
+    [general_out] = data["general"]
+    for out in (activity, general_out):
+        assert (out["event_starts_on"], out["event_ends_on"]) == ("2026-09-29", "2026-10-01")
+
+
+async def test_개인화와_일반_추천_모두_저장한_준비물을_싣는다(
+    db_client, session, bearer, cid, agents
+):
+    """고르기 전에 필요한 것을 본다 — 일정 초안의 준비물과 같은 `suggestion.items` 다 (#674)."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    personal = replace(
+        await _personal(session, cid, parent_id, agent="activity", content="종이컵 탑 쌓기"),
+        items=("종이컵", "색종이"),
+    )
+    general = replace(_general(), items=("블록",))
+    plan["activity"] = ("drafts", [personal, general])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [activity] = data["suggestions"]
+    [general_out] = data["general"]
+    assert activity["items"] == ["종이컵", "색종이"]  # 저장한 순서 그대로
+    assert general_out["items"] == ["블록"]
 
 
 async def test_문서_행을_읽을_수_없으면_일반_추천을_내지_않는다(
@@ -467,6 +690,87 @@ async def test_문서_행을_읽을_수_없으면_일반_추천을_내지_않는
     headers, _ = bearer
     monkeypatch.setattr(entrypoint, "_doc_index", lambda: {})
     plan["activity"] = ("drafts", [_general()])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    assert data["general"] == []
+    assert data["scarcity"] is None
+
+
+async def test_요청_기반_일반_추천은_문서_근거_없이도_05_에_선다(db_client, bearer, cid, agents):
+    """저장부터 05 응답까지 — 문서 근거가 없어 evidence 는 비고, 기준은 basis 문구다 (#597 리뷰)."""
+    plan, _ = agents
+    headers, _ = bearer
+    plan["activity"] = ("drafts", [_requested()])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [general] = data["general"]
+    assert general["content"] == "물놀이 — 대야에 컵 띄우기"
+    assert general["basis"] == REQUESTED_REASON
+    assert general["evidence"] == []
+    assert data["scarcity"] == {"count": 0, "question": None}
+
+
+async def test_Food_요청_기반_일반_추천은_메뉴_근거_없이도_05_에_선다(
+    db_client, bearer, cid, agents
+):
+    """보호자가 재료를 정해 물어 레시피북에 없는 메뉴를 냈다 — 저장부터 05 응답까지 문서 · 메뉴
+    근거가 비어도 기준 문구만으로 선다 (#740)."""
+    plan, _ = agents
+    headers, _ = bearer
+    plan["food"] = (
+        "drafts",
+        [
+            SuggestionDraft(
+                agent="food",
+                kind="general",
+                content="파프리카볶음",
+                reason=FOOD_REQUESTED_REASON,
+                requested=True,
+            )
+        ],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
+    [general] = data["general"]
+    assert general["content"] == "파프리카볶음"
+    assert general["basis"] == "요청하신 조건을 바탕으로 골랐어요."
+    assert general["evidence"] == []
+
+
+async def test_요청_기반_일반_추천은_같은_run_으로_다시_열어도_그대로다(
+    db_client, bearer, cid, agents
+):
+    """저장한 run 을 다시 열면(새로고침) 행에 남긴 requested 로 거른다 (#653 리뷰)."""
+    plan, calls = agents
+    headers, parent_id = bearer
+    task = suggestion_retry.RetryTask(None, ("물놀이 뭐 하지?",), datetime.now(UTC))
+    await suggestion_retry.put_failed(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity", task=task
+    )
+    plan["activity"] = ("drafts", [_requested()])
+
+    first = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
+    second = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
+
+    assert len(calls) == 1  # 두 번째는 저장된 행을 읽었다
+    [general] = second["general"]
+    assert general == first["general"][0]
+    assert general["basis"] == REQUESTED_REASON
+    assert general["evidence"] == []
+
+
+async def test_요청_기반이어도_단_문서가_검수에서_빠지면_내지_않는다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    """그 문서를 바탕으로 만든 추천이다 — 요청 기반이어도 검수가 풀린 문서의 추천은 서지 않는다."""
+    plan, _ = agents
+    headers, _ = bearer
+    monkeypatch.setattr(entrypoint, "_doc_index", lambda: {})
+    doc = EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="또래 놀이 자료")
+    plan["activity"] = ("drafts", [_requested(citations=[doc])])
 
     data = (await _post(db_client, cid, headers, agents=["activity"])).json()
 
@@ -501,14 +805,16 @@ async def test_한도에_걸리면_꺼낸_맥락은_사용_중이_아니다(
     headers, parent_id = bearer
     monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 0)
     task = suggestion_retry.RetryTask("meal_recommendation", (), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="food", task=task
     )
 
     resp = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
 
     assert resp.status_code == 429
-    kept = suggestion_retry.claim(run_id="run-1", parent_id=parent_id, child_id=cid, agent="food")
+    kept = await suggestion_retry.claim(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="food"
+    )
     assert kept == task
 
 
@@ -526,7 +832,7 @@ async def test_맥락을_꺼낸_뒤_터져도_사용_중이_아니다(db_client,
     """claim 뒤 예외로 끝나도 맥락을 푼다 — 안 풀면 15분 동안 다시 시도가 BUSY 다 (#433 리뷰 ②)."""
     headers, parent_id = bearer
     task = suggestion_retry.RetryTask("meal_recommendation", (), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="food", task=task
     )
 
@@ -539,7 +845,9 @@ async def test_맥락을_꺼낸_뒤_터져도_사용_중이_아니다(db_client,
     except RuntimeError:
         pass  # 테스트 클라이언트가 앱 예외를 그대로 올리는 경우
 
-    kept = suggestion_retry.claim(run_id="run-1", parent_id=parent_id, child_id=cid, agent="food")
+    kept = await suggestion_retry.claim(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="food"
+    )
     assert kept == task
 
 
@@ -548,7 +856,7 @@ async def test_다시_만들었더니_닫혔으면_다음_요청도_같은_guard
     plan, calls = agents
     headers, parent_id = bearer
     task = suggestion_retry.RetryTask(None, ("놀이 추천해줘",), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity", task=task
     )
     plan["activity"] = ("blocked", "알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요.")
@@ -560,6 +868,37 @@ async def test_다시_만들었더니_닫혔으면_다음_요청도_같은_guard
     assert second["guards"] == first["guards"]
     assert second["groups"] == []
     assert len(calls) == 1  # 두 번째는 다시 돌리지 않는다
+
+
+async def test_다시_만든_결과를_기록하는_칸은_지우지_않고_바로_덮는다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    """지운 뒤 기록을 넣으면 그 사이에 온 요청이 "맥락도 기록도 없음" 을 본다 (#899 리뷰).
+
+    닫힘 · 0개 기록은 실패 맥락 칸을 그대로 덮는다(upsert) — 그 칸은 지우지 않는다.
+    """
+    plan, _ = agents
+    headers, parent_id = bearer
+    task = suggestion_retry.RetryTask(None, ("놀이 추천해줘",), datetime.now(UTC))
+    await suggestion_retry.put_failed(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity", task=task
+    )
+    plan["activity"] = ("blocked", "알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요.")
+    dropped: list[str] = []
+    real_drop = suggestion_retry.drop
+
+    async def spy_drop(*, run_id, agent):
+        dropped.append(agent)
+        await real_drop(run_id=run_id, agent=agent)
+
+    monkeypatch.setattr(suggestion_retry, "drop", spy_drop)
+
+    await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")
+
+    assert dropped == []
+    assert await suggestion_retry.guard_of(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity"
+    ) == ("safety_unknown", "알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요.")
 
 
 async def test_Agent_를_돌리기_전에_요청_세션의_트랜잭션을_닫는다(
@@ -578,6 +917,56 @@ async def test_Agent_를_돌리기_전에_요청_세션의_트랜잭션을_닫�
     await _post(db_client, cid, headers, agents=["food"])
 
     assert seen == [False]
+
+
+async def test_다시_만들기는_suggest_로_귀속한다(db_client, bearer, cid, agents, monkeypatch):
+    """LLM 사용량(#710) — 05 는 run 이 없어 요청마다 정한 request_id 가 run_id 다."""
+    headers, parent_id = bearer
+    seen: list[tuple[llm_usage.Attribution | None, str]] = []
+
+    async def fake_suggest(**kwargs):
+        seen.append((llm_usage.current(), kwargs["request_id"]))
+        return entrypoint.SuggestRun((), ())
+
+    monkeypatch.setattr(entrypoint, "suggest", fake_suggest)
+
+    await _post(db_client, cid, headers, agents=["food"])
+
+    [(attribution, request_id)] = seen
+    assert attribution == llm_usage.Attribution(
+        parent_id=parent_id, run_id=request_id, source="suggest"
+    )
+
+
+async def test_다시_시도는_원래_run_의_run_id_로_귀속한다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    """실패한 추천을 다시 만드는 것은 그 run 의 일이다 (#710 리뷰).
+
+    새 request_id 로 남기면 `WHERE run_id = <그 run>` 에 안 잡히고, run 수 집계가 05 호출마다 하나씩
+    늘어난다. 창구는 `source` 가 가른다.
+    """
+    headers, parent_id = bearer
+    await suggestion_retry.put_failed(
+        run_id="run-1",
+        parent_id=parent_id,
+        child_id=cid,
+        agent="food",
+        task=suggestion_retry.RetryTask(
+            "meal_recommendation", ("내일 아침 추천해줘",), datetime.now(UTC)
+        ),
+    )
+    seen: list[llm_usage.Attribution | None] = []
+
+    async def fake_suggest(**kwargs):
+        seen.append(llm_usage.current())
+        return entrypoint.SuggestRun((), ())
+
+    monkeypatch.setattr(entrypoint, "suggest", fake_suggest)
+
+    await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+
+    assert seen == [llm_usage.Attribution(parent_id=parent_id, run_id="run-1", source="suggest")]
 
 
 async def test_질문_id_는_질문을_낸_Agent_다(db_client, bearer, cid, agents, monkeypatch):
@@ -723,7 +1112,9 @@ async def test_일반_추천은_그_도메인의_기록_수를_싣는다(
 
     counts = {g["agent"]: g["record_count"] for g in data["general"]}
     assert counts == {"food": 2, "activity": 1}
-    assert data["scarcity"]["count"] == 3  # 질문 카드의 "이 주제" 는 합 그대로
+    # 호환 필드는 일반 추천을 낸 Agent별 수의 합이다.
+    # 화면의 정상 문구는 general[].record_count를 쓴다.
+    assert data["scarcity"]["count"] == 3
 
 
 async def test_한도에_걸려도_다른_Agent_재생은_보인다(
@@ -734,7 +1125,7 @@ async def test_한도에_걸려도_다른_Agent_재생은_보인다(
     monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 0)
     row = await _saved_in_run(session, cid, parent_id, "run-1")
     task = suggestion_retry.RetryTask(None, ("놀이 추천해줘",), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity", task=task
     )
 
@@ -746,7 +1137,7 @@ async def test_한도에_걸려도_다른_Agent_재생은_보인다(
     groups = {g["agent"]: g for g in data["groups"]}
     assert groups["activity"]["notice"]["code"] == "daily_limit"
     assert agents[1] == []  # 돌리지 않았다
-    kept = suggestion_retry.claim(
+    kept = await suggestion_retry.claim(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity"
     )
     assert kept == task  # 내일 다시 시도할 수 있게 맥락은 남는다(15분 안이면)
@@ -767,6 +1158,7 @@ async def test_05_도_Food_카탈로그_어댑터를_넘긴다(db_client, bearer
     assert type(calls[0]["food_catalog"]).__name__ == "DbMenuCatalog"
     assert type(calls[0]["food_recipes"]).__name__ == "DbRecipeCatalog"
     assert type(calls[0]["food_suggestions"]).__name__ == "DbSuggestionHistory"
+    assert type(calls[0]["food_daycare"]).__name__ == "DbDaycareMeals"
 
 
 # ── Food 일반 추천의 메뉴 근거 (#442) ────────────────────────────────────
@@ -819,3 +1211,369 @@ async def test_Food_일반_추천은_고른_메뉴를_근거로_보여_준다(
     assert evidence["ref"] == {"kind": "recipe_catalog", "id": str(menu)}
     assert evidence["title"] == "두부조림"
     assert evidence["source_org"] and evidence["note"] == "재료가 검수된 메뉴예요."
+
+
+async def _post_food_menu(db_client, session, bearer, cid, agents, *, source: str):
+    """후보 풀에 `source` 의 레시피 한 행을 넣고, 그 메뉴를 근거로 단 Food 일반 추천을 받는다."""
+    from app.domains.food import repository as food_repository
+    from app.rules.menu_evidence import menu_evidence_id
+
+    plan, _ = agents
+    headers, _ = bearer
+    await food_repository.upsert_recipes(
+        session,
+        rows=[
+            {
+                "source": source,
+                "source_id": "7",
+                "menu_key": "두부조림",
+                "display_name": "두부조림",
+                "ingredients": ["두부"],
+                "resolved": True,
+                "synced_at": datetime.now(UTC),
+            }
+        ],
+    )
+    menu = menu_evidence_id(source, "7")
+    plan["food"] = (
+        "drafts",
+        [
+            SuggestionDraft(
+                agent="food",
+                kind="general",
+                content="두부조림",
+                reason="또래 아이들이 많이 먹는 메뉴예요.",
+                citations=(
+                    EvidenceCitation(
+                        ref=Ref(kind="recipe_catalog", id=menu), note="재료가 검수된 메뉴예요."
+                    ),
+                ),
+            )
+        ],
+    )
+    return await _post(db_client, cid, headers, agents=["food"])
+
+
+async def test_Food_메뉴_근거는_농식품정보원_레시피를_그_출처로_보여_준다(
+    db_client, session, bearer, cid, agents
+):
+    """#510 — 소스별 표로 바꿔도 기존 농식품정보원 카드의 응답은 그대로다."""
+    resp = await _post_food_menu(db_client, session, bearer, cid, agents, source="mafra_recipe")
+
+    assert resp.status_code == 200
+    [evidence] = resp.json()["general"][0]["evidence"]
+    assert (evidence["source_org"], evidence["source_title"], evidence["source_url"]) == (
+        "농식품정보원",
+        "농림축산식품 공공데이터포털 레시피 기본 · 재료정보",
+        "https://data.mafra.go.kr",
+    )
+
+
+async def test_Food_메뉴_근거는_농촌진흥청_레시피를_그_출처로_보여_준다(
+    db_client, session, bearer, cid, agents
+):
+    resp = await _post_food_menu(db_client, session, bearer, cid, agents, source="nics_recipe")
+
+    assert resp.status_code == 200
+    [evidence] = resp.json()["general"][0]["evidence"]
+    assert evidence["title"] == "두부조림"
+    assert (evidence["source_org"], evidence["source_title"], evidence["source_url"]) == (
+        "농촌진흥청 국립식량과학원",
+        "농식품 이달의 식재료 목록정보",
+        "https://www.data.go.kr/data/15168024/openapi.do",
+    )
+
+
+async def test_Food_메뉴_근거의_소스가_출처_표에_없으면_다른_기관으로_대신하지_않는다(
+    db_client, session, bearer, cid, agents
+):
+    """DB 는 받지만 운영에서 받지 않는 소스(mfds_recipe)다. 농식품정보원 카드로 바꿔 내면 틀린
+    출처다 — 보여 줄 근거가 없으면 일반 추천도 내지 않는다."""
+    resp = await _post_food_menu(db_client, session, bearer, cid, agents, source="mfds_recipe")
+
+    assert resp.status_code == 200
+    assert resp.json()["general"] == []
+
+
+async def test_문서_근거는_라이선스_표시를_마친_공개용_출처로_나가고_NHS_이름은_없다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    """#510 — OGL 문장 · CC BY 변경 표시는 기존 `source_title` 칸으로 낸다. NHS 자료는 기관 · 제목 ·
+    주소가 OGL 안내로 바뀐다 (NHS 약관 3.6(b)). 색인을 대신하지 않고 시드 → 05 응답을 지난다."""
+    from app.agents.common.reference_docs import (
+        CC_BY_URL,
+        NHS_PUBLIC_ORG,
+        OGL_STATEMENT,
+        OGL_URL,
+        doc_row_id,
+    )
+    from app.agents.food import doc_seed as food_seed
+
+    base = {
+        "row_type": "feeding_tip",
+        "body": "가짜 문장이다.",
+        "min_month": 24,
+        "max_month": 72,
+        "tags": ["test"],
+        "source_year": 2025,
+        "source_locator": "(테스트) 내부 추적용 위치 7쪽",
+        "status": "approved",
+        "authored_by": "writer-a",
+        "reviewed_by": "reviewer-b",
+        "reviewed_at": date(2026, 11, 3),
+        "version": 1,
+    }
+    sources = {
+        "food.test.nhs": (
+            "NHS (테스트)",
+            "(테스트) 가짜 NHS 문서 제목",
+            "https://www.nhs.uk/x",
+            "ogl_3",
+        ),
+        "food.test.dfe": (
+            "Department for Education (테스트)",
+            "(테스트) 가짜 DfE 문서",
+            "https://www.gov.uk/x",
+            "ogl_3",
+        ),
+        "food.test.nz": (
+            "Ministry of Health (New Zealand)",
+            "(테스트) 가짜 뉴질랜드 지침",
+            "https://www.health.govt.nz/x",
+            "cc_by",
+        ),
+    }
+    entries = food_seed.parse_food_doc(
+        {
+            "rows": [
+                {
+                    **base,
+                    "doc_key": key,
+                    "title": f"행 {key}",
+                    "source_org": org,
+                    "source_title": title,
+                    "source_url": url,
+                    "license_basis": basis,
+                }
+                for key, (org, title, url, basis) in sources.items()
+            ]
+        }
+    )
+    monkeypatch.setattr(food_seed, "food_doc_seed", lambda: entries)
+    REAL_DOC_INDEX.cache_clear()
+    monkeypatch.setattr(entrypoint, "_doc_index", REAL_DOC_INDEX)
+
+    plan, _ = agents
+    headers, _ = bearer
+    ids = {key: doc_row_id("food_doc", key) for key in sources}
+    plan["food"] = (
+        "drafts",
+        [
+            SuggestionDraft(
+                agent="food",
+                kind="general",
+                content="두부조림",
+                reason="또래 기준",
+                citations=tuple(
+                    EvidenceCitation(ref=Ref(kind="food_doc", id=doc_id), note="참고")
+                    for doc_id in ids.values()
+                ),
+            )
+        ],
+    )
+    try:
+        resp = await _post(db_client, cid, headers, agents=["food"])
+    finally:
+        REAL_DOC_INDEX.cache_clear()
+
+    assert resp.status_code == 200
+    by_id = {e["ref"]["id"]: e for e in resp.json()["general"][0]["evidence"]}
+    nhs, dfe, nz = (by_id[str(ids[key])] for key in sources)
+    assert (nhs["source_org"], nhs["source_url"]) == (NHS_PUBLIC_ORG, OGL_URL)
+    assert nhs["source_title"] == f"{OGL_STATEMENT} ({OGL_URL})"
+    assert dfe["source_org"] == "Department for Education (테스트)"
+    assert dfe["source_title"].startswith("(테스트) 가짜 DfE 문서")
+    assert f"{OGL_STATEMENT} ({OGL_URL})" in dfe["source_title"]
+    assert nz["source_title"].startswith("(테스트) 가짜 뉴질랜드 지침")
+    assert "번역·재구성함" in nz["source_title"] and CC_BY_URL in nz["source_title"]
+    assert nz["source_url"] == "https://www.health.govt.nz/x"
+    leaked = repr(nhs).lower()
+    for text in ("nhs (", "nhs.uk", "가짜 nhs 문서 제목", "내부 추적용"):
+        assert text not in leaked, text
+
+
+async def test_레시피_행이_지워진_뒤에도_05_는_오류_없이_근거_카드만_뺀다(
+    db_client, session, bearer, cid, agents
+):
+    """#510 A4 — downgrade 는 `nics_recipe` 행을 지운다. `suggestion_evidence.source_id` 는 FK 가
+    아니라 그 근거 행은 남는데, 그 근거로 05 를 불러도 오류 없이 카드(와 그 메뉴만 근거였던 일반
+    추천)만 빠지고, 다시 적재하면 같은 id 로 돌아온다."""
+    from app.domains.food import repository as food_repository
+    from app.domains.food.models import RecipeCatalog
+    from app.domains.suggestion.repository import save_agent_suggestions
+    from app.rules.menu_evidence import menu_evidence_id
+
+    headers, _ = bearer
+    recipe = {
+        "source": "nics_recipe",
+        "source_id": "7",
+        "menu_key": "두부조림",
+        "display_name": "두부조림",
+        "ingredients": ["두부"],
+        "resolved": True,
+        "synced_at": datetime.now(UTC),
+    }
+    await food_repository.upsert_recipes(session, rows=[recipe])
+    menu = menu_evidence_id("nics_recipe", "7")
+    draft = SuggestionDraft(
+        agent="food",
+        kind="general",
+        content="두부조림",
+        reason="또래 아이들이 많이 먹는 메뉴예요.",
+        citations=(
+            EvidenceCitation(
+                ref=Ref(kind="recipe_catalog", id=menu), note="재료가 검수된 메뉴예요."
+            ),
+        ),
+    )
+    await save_agent_suggestions(
+        session, child_id=cid, run_id="run-1", payloads=[draft.to_payload()], now=datetime.now(UTC)
+    )
+
+    shown = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+    [evidence] = shown.json()["general"][0]["evidence"]
+    assert evidence["ref"]["id"] == str(menu)
+
+    # downgrade 가 하는 일 — 그 소스의 행을 지운다. 근거 행은 FK 가 아니라 남는다
+    await session.execute(delete(RecipeCatalog).where(RecipeCatalog.source == "nics_recipe"))
+    kept = await session.scalar(
+        select(func.count())
+        .select_from(SuggestionEvidence)
+        .where(SuggestionEvidence.source_id == menu)
+    )
+    assert kept == 1
+
+    after = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+    assert after.status_code == 200
+    assert after.json()["general"] == []  # 보여 줄 근거가 없으면 일반 추천도 내지 않는다
+
+    # 다시 올리고 재적재하면 같은 (source, source_id) 라 같은 근거 id 로 이어진다
+    await food_repository.upsert_recipes(session, rows=[recipe])
+    again = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+    [evidence] = again.json()["general"][0]["evidence"]
+    assert evidence["ref"]["id"] == str(menu)
+    assert evidence["source_org"] == "농촌진흥청 국립식량과학원"
+
+
+def test_근거_카드_응답_칸은_그대로다():
+    """#510 — 출처 표시 문구는 기존 `source_title` 칸에 붙는다. 칸을 더하거나 빼지 않는다."""
+    assert set(DocEvidenceOut.model_json_schema()["properties"]) == {
+        "ref",
+        "title",
+        "source_org",
+        "source_title",
+        "source_url",
+        "note",
+    }
+
+
+def test_근거_카드의_source_title_설명은_라이선스_표시를_말한다():
+    description = DocEvidenceOut.model_json_schema()["properties"]["source_title"]["description"]
+
+    assert "라이선스" in description
+
+
+async def test_합친_메뉴의_대표_레시피가_내려가도_다른_소스_근거로_추천이_남는다(
+    db_client, session, bearer, cid, agents
+):
+    """같은 이름을 합친 메뉴는 합쳐진 레시피를 모두 근거로 단다. 대표(농식품정보원)가 후보 풀에서
+    내려가도 농촌진흥청 레시피가 남아 있으면 그 근거로 05 에 나온다."""
+    from app.domains.food import repository as food_repository
+    from app.domains.suggestion.repository import save_agent_suggestions
+    from app.rules.menu_evidence import menu_evidence_id
+
+    headers, _ = bearer
+
+    def recipe(source: str, source_id: str, *, resolved: bool = True) -> dict:
+        return {
+            "source": source,
+            "source_id": source_id,
+            "menu_key": "열무김치",
+            "display_name": "열무김치",
+            "ingredients": ["열무"],
+            "resolved": resolved,
+            "synced_at": datetime.now(UTC),
+        }
+
+    await food_repository.upsert_recipes(
+        session, rows=[recipe("mafra_recipe", "9"), recipe("nics_recipe", "3")]
+    )
+    mafra, nics = menu_evidence_id("mafra_recipe", "9"), menu_evidence_id("nics_recipe", "3")
+    draft = SuggestionDraft(
+        agent="food",
+        kind="general",
+        content="열무김치",
+        reason="또래 아이들이 많이 먹는 메뉴예요.",
+        citations=tuple(
+            EvidenceCitation(
+                ref=Ref(kind="recipe_catalog", id=menu), note="재료가 검수된 메뉴예요."
+            )
+            for menu in (mafra, nics)
+        ),
+    )
+    await save_agent_suggestions(
+        session, child_id=cid, run_id="run-1", payloads=[draft.to_payload()], now=datetime.now(UTC)
+    )
+
+    # 농식품정보원이 9 번을 내렸다(적재가 resolved=false 로)
+    await food_repository.upsert_recipes(
+        session, rows=[recipe("mafra_recipe", "9", resolved=False)]
+    )
+    resp = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+
+    assert resp.status_code == 200
+    [general] = resp.json()["general"]
+    [evidence] = general["evidence"]
+    assert evidence["ref"]["id"] == str(nics)
+    assert evidence["source_org"] == "농촌진흥청 국립식량과학원"
+
+
+# ── Growth 도서 추천의 책 근거 ───────────────────────────────────────────
+async def test_Growth_도서_일반_추천은_그_책을_정보나루_출처로_보여_준다(
+    db_client, session, bearer, cid, agents
+):
+    """도서는 책 정보 표가 없어서 카드 제목은 그 추천의 "제목(저자)" 다 — 근거는 그 책 자체다."""
+    from app.domains.suggestion.repository import save_agent_suggestions
+    from app.rules.book_evidence import book_evidence_id
+
+    headers, _ = bearer
+    book = book_evidence_id("9788900000001")
+    draft = SuggestionDraft(
+        agent="growth",
+        kind="general",
+        content="공룡 기차(가나다)",
+        reason="이 나이에 맞는 형태의 책 중에서 골랐어요.",
+        citations=(
+            EvidenceCitation(
+                ref=Ref(kind="book_catalog", id=book),
+                note="도서관 정보나루 검색 결과에 있는 책이에요.",
+            ),
+        ),
+        items=("공룡 기차(가나다)",),
+    )
+    await save_agent_suggestions(
+        session, child_id=cid, run_id="run-1", payloads=[draft.to_payload()], now=datetime.now(UTC)
+    )
+
+    resp = await _post(db_client, cid, headers, agents=["growth"], run_id="run-1")
+
+    assert resp.status_code == 200
+    [general] = resp.json()["general"]
+    [evidence] = general["evidence"]
+    assert evidence["ref"] == {"kind": "book_catalog", "id": str(book)}
+    assert evidence["title"] == "공룡 기차(가나다)"
+    assert (evidence["source_org"], evidence["source_title"]) == (
+        "국립중앙도서관",
+        "도서관 정보나루",
+    )
+    assert evidence["source_url"] == "https://data4library.kr"

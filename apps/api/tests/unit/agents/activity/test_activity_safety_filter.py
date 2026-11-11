@@ -6,6 +6,7 @@
 import pytest
 
 from app.agents.activity.doc_seed import activity_doc_seed
+from app.agents.activity.readouts import READOUTS
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import SafetyEntry
 from app.agents.activity.tools import filters
@@ -22,6 +23,7 @@ from app.agents.common.reference import (
     food_safety_terms,
     hazard_terms,
 )
+from app.agents.entrypoint import SafetyLabel, check_allergens
 from app.rules.allergen import ALLERGEN_NAMES
 
 
@@ -155,6 +157,80 @@ class TestHealthSafety:
         assert check(content, entries=[allergy(label)]).blocked is True
 
     @pytest.mark.parametrize(
+        ("label", "content"),
+        [
+            ("조개류", "전복죽 끓이기"),
+            ("전복", "전복구이 그림 그리기"),
+            ("돼지고기", "돼지국밥 만들기"),
+            ("돼지고기", "돼지껍데기 굽기"),
+        ],
+    )
+    def test_다른_뜻이_흔한_별칭도_음식_이름의_일부면_막는다(self, label, content):
+        """돼지 · 전복을 통째로 빼면 전복죽 · 돼지국밥이 그 식품인데 통과한다 (#582 리뷰)."""
+        assert check(content, entries=[allergy(label)]).blocked is True
+
+    @pytest.mark.parametrize(
+        ("label", "content"),
+        [
+            ("돼지고기", "아기 돼지 삼형제 동화 읽기"),
+            ("돼지고기", "돼지저금통 만들기"),
+            ("조개류", "전복 모양 종이 접기"),
+            ("돼지고기", "돼지 그림 색칠하기"),
+            ("돼지고기", "돼지 흉내 내며 걷기"),
+            ("조개류", "전복 껍데기 만져 보기"),
+        ],
+    )
+    def test_돼지_전복의_다른_뜻은_통과한다(self, label, content):
+        assert check(content, entries=[allergy(label)]).blocked is False
+
+    def test_돼지_인형은_준비물이어도_통과한다(self):
+        assert check("인형극 하기", ("돼지 인형",), entries=[allergy("돼지고기")]).blocked is False
+
+    @pytest.mark.parametrize("label", ["밤나무 꽃가루", "밤꽃 알레르기"])
+    def test_밤나무_밤꽃은_밤이_아니라_꽃가루라_확인_문구를_낸다(self, label):
+        """밤을 사전에 넣으면 "밤나무" 안의 밤이 식품으로 읽혀 꽃가루 확인 문구가 사라진다
+        (#582 리뷰)."""
+        assert allergy_cautions([allergy(label)]) != ()
+
+    @pytest.mark.parametrize("label", ["콩", "대두"])
+    @pytest.mark.parametrize(
+        "content", ["콩콩 뛰기 놀이", "콩닥콩닥 심장 소리 듣기", "콩쥐 동화 읽기"]
+    )
+    def test_콩이_아닌_뜻의_콩콩_콩닥_콩쥐는_막지_않는다(self, label, content):
+        """Growth 스캔이 먼저 쓰던 콩 guard 를 합쳤다 (#582). 콩주머니 · 콩 고르기는 계속 막는다."""
+        assert check(content, entries=[allergy(label)]).blocked is False
+
+    @pytest.mark.parametrize(
+        ("label", "content"),
+        [
+            ("밤", "군밤 까서 맛보기"),
+            ("밤", "알밤 줍기"),
+            ("견과류", "군밤 까서 맛보기"),
+            ("견과류", "도토리 줍기"),
+            ("도토리", "도토리 줍기"),
+        ],
+    )
+    def test_밤_도토리를_막는다(self, label, content):
+        """ "밤" 한 글자는 문장에서 다른 뜻이라 대조하지 않고 붙은 이름(군밤 · 알밤)으로 막는다
+        (#582). 도토리는 밤과 같은 참나뭇과라 견과류 묶음에 넣는다 — 애매하면 막는다."""
+        assert check(content, entries=[allergy(label)]).blocked is True
+
+    @pytest.mark.parametrize("content", ["오늘 밤 별 보기", "밤하늘 그리기", "밤에 불 끄고 자기"])
+    def test_밤으로_등록해도_밤_시간_놀이는_통과한다(self, content):
+        assert check(content, entries=[allergy("밤")]).blocked is False
+
+    @pytest.mark.parametrize(
+        ("label", "content"),
+        [
+            # 스캔처럼 외래어 별칭을 빼면 놓치는 문장 — 두 목록을 합집합으로 못 합치는 이유
+            ("땅콩", "피넛버터 바르기"),
+            ("호두", "월넛 쿠키 굽기"),
+        ],
+    )
+    def test_등록한_아이에게는_외래어_별칭도_막는다(self, label, content):
+        assert check(content, entries=[allergy(label)]).blocked is True
+
+    @pytest.mark.parametrize(
         ("label", "content", "blocked"),
         [
             ("쌀", "쌀쌀한 날씨에 산책", False),
@@ -218,6 +294,37 @@ class TestAllergens:
 
     def test_재료에서도_찾는다(self):
         assert check("점토 놀이", ("밀가루", "물")).allergens == ("밀",)
+
+    def test_19종_밖은_조각이_아니라_보호자가_적은_이름으로_담는다(self):
+        """띄어 쓴 이름의 조각("고양")으로 담으면 05 가 적은 적 없는 이름을 묻는다 (#891).
+
+        여러 이름을 이어 적었으면 조각이 나온 이름 하나로, 뒤에 붙인 말은 떼고 — "땅콩, 고양이 털
+        알레르기" 의 "고양이 털".
+        """
+        entries = [allergy("땅콩, 고양이 털 알레르기", "retracted")]
+
+        assert check("고양이 그림 그리기", entries=entries).allergens == ("고양이 털",)
+
+    @pytest.mark.parametrize(
+        ("label", "status", "blocked", "unknown"),
+        [
+            ("쑥 가루", "none", (), ("밀",)),
+            ("쑥 가루", "retracted", (), ("밀", "쑥 가루")),
+            ("쑥 가루", "active", ("쑥 가루",), ("밀",)),
+            ("쑥", "active", ("쑥 가루",), ("밀",)),
+        ],
+    )
+    def test_조각에서_나온_태그를_05_사전검사가_그_행으로_알아본다(
+        self, label, status, blocked, unknown
+    ):
+        """괜찮았던 식품이면 다시 묻지 않고, 내린 기록이면 묻고, 그 뒤 다시 등록하면 채택 · 초안
+        만들기의 재확인이 막는다 (#891). 나중에 낱말("쑥")만 등록해도 막혀야 한다 — 조각 태그
+        "쑥" 은 막혔는데, 띄어쓰기를 지운 "쑥가루" 로 달면 05 가 한 낱말로 읽어 통과시킨다."""
+        tags = check("반죽 놀이", ("밀가루",), entries=[allergy("쑥 가루", "retracted")]).allergens
+
+        found = check_allergens(tags, [SafetyLabel(kind="allergy", label=label, status=status)])
+
+        assert (found.blocked, found.unknown) == (blocked, unknown)
 
 
 class TestNonFoodAllergyCaution:
@@ -354,7 +461,7 @@ class TestExtraAllergenAliases:
     def test_그_식품을_다루거나_띄어_쓴_다른_뜻은_막는다(self, label, content):
         assert check(content, entries=[allergy(label)]).blocked
 
-    @pytest.mark.parametrize("label", ["버섯류", "키위", "귀리", "오리"])
+    @pytest.mark.parametrize("label", ["버섯류", "키위", "귀리", "오리", "밤"])
     def test_19종_밖_식품에는_확인_문구를_내지_않는다(self, label):
         """식품은 이름 대조가 후보를 뺀다 — "식품 아닌 알레르기" 로 보면 결과마다 문구가 붙는다."""
         assert allergy_cautions([allergy(label)]) == ()
@@ -413,3 +520,122 @@ class TestFilter:
         monkeypatch.setattr(filters, "hazard_terms", broken)
         with pytest.raises(ValueError):
             check("큰 블록 쌓기")
+
+
+# ── 음식 칸(foods) · 음식 활동 문장 (#582) ───────────────────────────────────────────
+
+
+def food_candidate(
+    content: str,
+    foods: tuple[str, ...],
+    *,
+    involves_food: bool = True,
+    materials: tuple[str, ...] = (),
+    reason: str = "이유",
+) -> ActivityCandidate:
+    return ActivityCandidate.model_validate(
+        dict(
+            content=content,
+            setting="indoor",
+            materials=list(materials),
+            foods=list(foods),
+            physical_intensity="low",
+            involves_food=involves_food,
+            caregiver_role="together",
+            reason=reason,
+        )
+    )
+
+
+def check_food(content, foods=(), *, months=40, entries=(), involves_food=True, materials=()):
+    return check_candidate(
+        food_candidate(content, foods, involves_food=involves_food, materials=materials),
+        months=months,
+        terms=safety_terms(entries),
+    )
+
+
+class TestFoods:
+    def test_foods_는_기본값이_빈_목록이다(self):
+        assert candidate("블록 쌓기").foods == []
+
+    @pytest.mark.parametrize(
+        ("label", "food"),
+        [("밀", "쿠키"), ("돼지고기", "소시지"), ("난류", "마요네즈"), ("땅콩", "땅콩버터")],
+    )
+    def test_음식_칸의_항목은_Food_판정으로_막는다(self, label, food):
+        """문장에는 "간식" 이라고만 써도 음식 칸의 쿠키가 밀이다 — 놀이 문장 대조로는 못 막던 것."""
+        assert check_food("간식 만들어 나눠 먹기", (food,), entries=[allergy(label)]).blocked
+
+    def test_음식_칸의_항목이_겹치지_않으면_통과한다(self):
+        assert not check_food("과일 꼬치 만들기", ("바나나",), entries=[allergy("땅콩")]).blocked
+
+    def test_사전이_모르는_음식은_음식_알레르기가_있으면_뺀다(self):
+        """빈 판정은 "괜찮다" 가 아니라 "확인 못 함" 이다 (#582 합의 10-28)."""
+        result = check_food("마라탕 맛보기", ("마라탕",), entries=[allergy("땅콩")])
+
+        assert result.blocked
+        assert "food_unknown" in result.hits  # 로그에는 축 이름만
+
+    def test_사전이_모르는_음식도_알레르기가_없으면_둔다(self):
+        assert not check_food("마라탕 맛보기", ("마라탕",)).blocked
+
+    @pytest.mark.parametrize("label", ["꽃가루", "고양이털", "라텍스"])
+    def test_식품이_아닌_알레르기만_있으면_모르는_음식을_빼지_않는다(self, label):
+        assert not check_food("마라탕 맛보기", ("마라탕",), entries=[allergy(label)]).blocked
+
+    def test_사전이_모르는_알레르기_이름은_음식_알레르기로_본다(self):
+        """식품인지 아닌지 사전이 모르는 이름(지어낸 "테스트열매")은 막는 쪽으로 읽는다."""
+        assert check_food("마라탕 맛보기", ("마라탕",), entries=[allergy("테스트열매")]).blocked
+
+    def test_보호자가_적은_이름이_음식_칸에_그대로_있으면_막는다(self):
+        result = check_food("주스 만들기", ("테스트열매 주스",), entries=[allergy("테스트열매")])
+
+        assert result.blocked
+
+    @pytest.mark.parametrize("status", ["none", "retracted"])
+    def test_활성이_아닌_알레르기로는_모르는_음식을_빼지_않는다(self, status):
+        entries = [allergy("땅콩", status=status)]
+
+        assert not check_food("마라탕 맛보기", ("마라탕",), entries=entries).blocked
+
+    def test_연령_규칙은_알레르기와_상관없이_본다(self):
+        """10개월 아이에게 꿀 — Activity 가 전에는 꿀을 아예 보지 않았다 (#582 시하 코멘트)."""
+        result = check_food("요거트에 꿀 섞어 맛보기", ("요거트", "꿀"), months=10)
+
+        assert result.blocked
+        assert "food_age" in result.hits
+
+    def test_음식_활동이면_문장의_음식_이름도_Food_어휘로_본다(self):
+        """음식 칸에 버터만 적어도 문장의 쿠키가 밀이다."""
+        result = check_food("쿠키 반죽 빚어 굽기", ("버터",), entries=[allergy("밀")])
+
+        assert result.blocked
+
+    def test_음식_활동이_아니면_문장의_요리_이름으로_막지_않는다(self):
+        """흉내 · 종이 놀이 — 쿠키를 만지지도 먹지도 않는다 (#582 실험: 223/407 이 과잉 차단)."""
+        result = check_food(
+            "종이로 쿠키 모양 오려 꾸미기", (), entries=[allergy("밀")], involves_food=False
+        )
+
+        assert not result.blocked
+
+    def test_음식_칸의_음식은_알레르기_항목_표시에_들어간다(self):
+        """suggestion.allergens — 아이 등록과 상관없이 놀이에 든 19종을 표시한다."""
+        result = check_food("간식 만들어 나눠 먹기", ("쿠키",))
+
+        assert "밀" in result.allergens
+
+
+class TestRequestNoticesEnglishFood:
+    """#864 — 붙은 영어 음식 이름은 한 음식으로 한 번만 말한다."""
+
+    def test_영어_음식_이름은_한_줄이다(self):
+        notices = filters.request_notices(
+            ["Recommend a peanut butter activity for my kid"],
+            [allergy("땅콩"), allergy("우유")],
+            months=50,
+        )
+        assert [n.body for n in notices] == [
+            READOUTS.render("request.food_conflict", food="peanut butter", what="알레르기").body
+        ]

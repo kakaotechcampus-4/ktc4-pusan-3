@@ -89,8 +89,9 @@ export function AgentPrompts<T extends AgentPrompt>({
     <ul className="-mx-3 flex gap-2 overflow-x-auto overscroll-x-contain px-3 min-[380px]:-mx-4 min-[380px]:px-4">
       {lead ? <li className="shrink-0">{lead}</li> : null}
       {waiting ? <PromptPillSkeletons /> : null}
-      {shown.map((prompt) => (
-        <li key={prompt.agent} className="shrink-0">
+      {shown.map((prompt, i) => (
+        // 화면 투어는 첫 알약을 비춘다 (`lib/tour/screens/home.ts`). 줄 전체는 화면 밖까지 흘러 구멍이 잘린다.
+        <li key={prompt.agent} data-tour={i === 0 ? "prompts" : undefined} className="shrink-0">
           <PromptButton prompt={prompt} onPick={onPick} disabled={disabled} />
         </li>
       ))}
@@ -131,7 +132,7 @@ function PromptButton<T extends AgentPrompt>({
 /** 받는 동안의 알약 두 개. `PromptButton` 과 같은 테두리 · 높이 · 칩 자리다. */
 function PromptPillSkeletons() {
   return (
-    <li role="status" aria-label="제안을 불러오는 중" className="flex shrink-0 gap-2">
+    <li role="status" aria-label="추천을 불러오는 중" className="flex shrink-0 gap-2">
       {[0, 1].map((i) => (
         <span key={i} aria-hidden className={cn(PROMPT_PILL, "w-64")}>
           {/* 도메인 칩 자리 (`DomainChip` · 28px 알약) */}

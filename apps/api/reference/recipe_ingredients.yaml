@@ -20,12 +20,20 @@
 #   rows    이 이름이 나온 재료 행 수 — 많이 나온 것부터 보면 레시피가 빨리 풀린다
 #
 # 검수: 696항목 전부 사람이 봤다. 초안이 unknown 후보로 표시한 육수 · 상표 양념 · 소스 28항목은 unknown 이다.
+#   NICS 로 더한 850항목 중 초안이 이름을 정리한 220항목은 사람이 아니라 모델 2개가 따로 봤다. 답이 같은
+#   199항목(이름만 다른 1항목은 합침)을 PM 승인으로 반영했다 — note 에 "모델 2중 검토" 로 표시했다(11-07 · 11-08).
+#   답이 갈린 21항목(음식 이름이 든 구간 머리 — "쇠고기 밑간")과 나머지 618항목은 모델 하나가 11-08 에 다시 봤다
+#   (ok 577 · unknown 62 — 2중 검토가 아니라 단독 검토다). 구간 머리 21항목은 원문을 보기 전이라 unknown 으로 뒀다.
+#   이 639항목은 PM 이 11-09 에 승인했다 — 근거는 모델 단독 검토 + 필터 사전(menu_codes) 대조 + 사람 검수본과
+#   위험 품목(김치 · 어묵 · 와인 · 치즈 등) 기준 비교다. 이때 5항목을 고쳤다(살사 소스 · 떡볶이떡 코드,
+#   부순 참깨 · 수수가루 · 베이킹소다 not_food → ok). 사람 검수본 "견과류" 도 unknown 으로 바꿨다. note 에 "PM 승인 11-09" 로 표시했다.
 #
-# 다시 만들기: uv run python -m scripts.draft_recipe_ingredients --fetch  (있는 항목은 덮지 않는다)
+# 다시 만들기: uv run python -m scripts.draft_recipe_ingredients --fetch [--source nics]  (있는 항목은 덮지 않는다)
+#   농식품정보원(mafra)과 농촌진흥청 이달의 식재료(nics) 두 레시피 소스가 이 표를 공유한다 (#510)
 
-source: "농식품정보원 레시피 재료정보 — 재료 이름별 정리 (초안 스크립트 + 사람 검수)"
+source: "농식품정보원 · 농촌진흥청 이달의 식재료 레시피 재료 — 재료 이름별 정리 (초안 스크립트 + 사람 검수)"
 version: "2026.1"
-fetched_at: 2026-10-11
+fetched_at: 2026-11-07
 
 ingredients:
   - raw: "소금"
@@ -3648,8 +3656,9 @@ ingredients:
     rows: 1
   - raw: "견과류"
     names: ["견과류"]
-    codes: []
-    status: ok
+    codes: [4, 14, 19]
+    status: unknown
+    note: "어떤 견과인지 모름 — 아몬드 등으로 등록한 아이를 못 거르므로 unknown(견과류 1C · 모둠견과류와 같게) — PM 리뷰 11-09"
     rows: 1
   - raw: "허브솔트"
     names: ["허브솔트"]
@@ -3738,4 +3747,5095 @@ ingredients:
     codes: [10, 16]
     status: ok
     note: "사전이 모르는 이름 — 고기 종류를 모르는 다진 고기"
+    rows: 1
+  - raw: "올리고당"
+    names: ["올리고당"]
+    codes: []
+    status: ok
+    rows: 52
+  - raw: "매실청"
+    names: ["매실청"]
+    codes: []
+    status: ok
+    rows: 16
+  - raw: "베이킹파우더"
+    names: ["베이킹파우더"]
+    codes: []
+    status: ok
+    rows: 14
+  - raw: "빨간 파프리카"
+    names: ["빨간 파프리카"]
+    codes: []
+    status: ok
+    rows: 12
+  - raw: "플레인 요거트"
+    names: ["플레인 요거트"]
+    codes: [2]
+    status: ok
+    rows: 12
+  - raw: "부순 참깨"
+    names: ["부순 참깨"]
+    codes: []
+    status: ok
+    note: "음식이라 not_food → ok — PM 리뷰 11-09"
+    rows: 12
+  - raw: "유자청"
+    names: ["유자청"]
+    codes: []
+    status: ok
+    rows: 12
+  - raw: "블루베리"
+    names: ["블루베리"]
+    codes: []
+    status: ok
+    rows: 12
+  - raw: "귤"
+    names: ["귤"]
+    codes: []
+    status: ok
+    rows: 11
+  - raw: "수수가루"
+    names: ["수수가루"]
+    codes: []
+    status: ok
+    note: "음식이라 not_food → ok — PM 리뷰 11-09"
+    rows: 11
+  - raw: "아몬드슬라이스"
+    names: ["아몬드슬라이스"]
+    codes: []
+    status: ok
+    rows: 10
+  - raw: "베이킹소다"
+    names: ["베이킹소다"]
+    codes: []
+    status: ok
+    note: "음식이라 not_food → ok — PM 리뷰 11-09"
+    rows: 10
+  - raw: "맛간장"
+    names: ["맛간장"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 10
+  - raw: "기장"
+    names: ["기장"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 10
+  - raw: "파르메산 치즈가루"
+    names: ["파르메산 치즈가루"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 9
+  - raw: "통조림 옥수수"
+    names: ["통조림 옥수수"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 8
+  - raw: "율무"
+    names: ["율무"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 8
+  - raw: "천도복숭아"
+    names: ["천도복숭아"]
+    codes: [11]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 8
+  - raw: "현미"
+    names: ["현미"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 7
+  - raw: "연유"
+    names: ["연유"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 7
+  - raw: "발사믹식초"
+    names: ["발사믹식초"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 7
+  - raw: "슈레드 모차렐라치즈"
+    names: ["슈레드 모차렐라치즈"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 7
+  - raw: "박력분"
+    names: ["박력분"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 7
+  - raw: "참외"
+    names: ["참외"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 7
+  - raw: "오색미"
+    names: ["오색미"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 7
+  - raw: "두유"
+    names: ["두유"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 6
+  - raw: "모차렐라 치즈"
+    names: ["모차렐라 치즈"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 6
+  - raw: "강낭콩"
+    names: ["강낭콩"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 6
+  - raw: "씨겨자"
+    names: ["씨겨자"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 6
+  - raw: "스트링치즈"
+    names: ["스트링치즈"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 6
+  - raw: "건표고버섯"
+    names: ["건표고버섯"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 6
+  - raw: "현미밥"
+    names: ["현미밥"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 6
+  - raw: "참다래"
+    names: ["참다래"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 6
+  - raw: "적양파"
+    names: ["적양파"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 5
+  - raw: "쌀 조청"
+    names: ["쌀 조청"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 5
+  - raw: "녹인 버터"
+    names: ["녹인 버터"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 5
+  - raw: "천일염"
+    names: ["천일염"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 5
+  - raw: "묵은지"
+    names: ["묵은지"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 5
+  - raw: "불린 표고버섯"
+    names: ["불린 표고버섯"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 5
+  - raw: "보리가루"
+    names: ["보리가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 5
+  - raw: "노랑파프리카"
+    names: ["노랑파프리카"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 5
+  - raw: "적양배추"
+    names: ["적양배추"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 5
+  - raw: "자두"
+    names: ["자두"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 5
+  - raw: "늙은 호박"
+    names: ["늙은 호박"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 5
+  - raw: "단감"
+    names: ["단감"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 5
+  - raw: "우리 밀"
+    names: ["우리 밀"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "밑간 양념"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 4
+  - raw: "쇠고기 불고기용"
+    names: ["쇠고기 불고기용"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "슈레드 피자치즈"
+    names: ["슈레드 피자치즈"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "귀리"
+    names: ["귀리"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "불고기 양념"
+    names: ["불고기 양념"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 4
+  - raw: "검은콩"
+    names: ["검은콩"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "다진 소고기"
+    names: ["다진 소고기"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "슈레드 모짜렐라치즈"
+    names: ["슈레드 모짜렐라치즈"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "삶은 고사리"
+    names: ["삶은 고사리"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "마른 대추"
+    names: ["마른 대추"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "케찹"
+    names: ["케첩"]
+    codes: [12]
+    status: ok
+    note: "이름 정리: 오타 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 4
+  - raw: "건고추"
+    names: ["건고추"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "백미"
+    names: ["백미"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "편마늘"
+    names: ["편마늘"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "딸기잼"
+    names: ["딸기잼"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "머위순"
+    names: ["머위순"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "건새우"
+    names: ["건새우"]
+    codes: [9]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "산딸기"
+    names: ["산딸기"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "멜론"
+    names: ["멜론"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "청오이"
+    names: ["청오이"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "리코타치즈"
+    names: ["리코타치즈"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "메밀가루"
+    names: ["메밀가루"]
+    codes: [3, 6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 4
+  - raw: "김가루"
+    names: ["김가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "탈각 새우"
+    names: ["탈각 새우"]
+    codes: [9]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "뜨거운 물"
+    names: ["뜨거운 물"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "깐 호두"
+    names: ["깐 호두"]
+    codes: [14]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "습식 찹쌀가루"
+    names: ["습식 찹쌀가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "허브가루"
+    names: ["허브가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "삶은 토란대"
+    names: ["삶은 토란대"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "한라봉"
+    names: ["한라봉"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "다진 땅콩"
+    names: ["다진 땅콩"]
+    codes: [4]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "쑥가루"
+    names: ["쑥가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "청·홍·황 파프리카 각각"
+    names: ["파프리카"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 3
+  - raw: "멸치육수"
+    names: ["멸치육수"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "훈제오리"
+    names: ["훈제오리"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "삶은시래기"
+    names: ["삶은시래기"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "불린 서리태"
+    names: ["불린 서리태"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "다시마 물"
+    names: ["다시마 물"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "발사믹글레이즈"
+    names: ["발사믹글레이즈"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "달걀흰자"
+    names: ["달걀흰자"]
+    codes: [1]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "움파"
+    names: ["움파"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "마른 김"
+    names: ["마른 김"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "차돌박이"
+    names: ["차돌박이"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "식용꽃"
+    names: ["식용꽃"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "불린 당면"
+    names: ["불린 당면"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "거피 녹두"
+    names: ["거피 녹두"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "돈가스소스"
+    names: ["돈가스소스"]
+    codes: [1, 6, 10]
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "청·홍고추 각각"
+    names: ["청고추", "홍고추"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 3
+  - raw: "현미식초"
+    names: ["현미식초"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "팥앙금"
+    names: ["팥앙금"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "달걀                    물(2개 분량)"
+    names: ["달걀물"]
+    codes: [1]
+    status: ok
+    note: "이름 정리: 양 표기 뗌; 끊긴 낱말을 붙임 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "미숫가루"
+    names: ["미숫가루"]
+    codes: []
+    status: unknown
+    note: "구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "박력 쌀가루"
+    names: ["박력 쌀가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "참두릅"
+    names: ["참두릅"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "오리 정육 슬라이스"
+    names: ["오리 정육 슬라이스"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "애플민트"
+    names: ["애플민트"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "생 곤드레"
+    names: ["생 곤드레"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "닭다릿살"
+    names: ["닭다릿살"]
+    codes: [15]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "오디"
+    names: ["오디"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "소금약간"
+    names: ["소금"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 3
+  - raw: "깨소금20g"
+    names: ["깨소금"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 3
+  - raw: "참기름10g"
+    names: ["참기름"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 3
+  - raw: "파15g"
+    names: ["파"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 3
+  - raw: "초당 옥수수"
+    names: ["초당 옥수수"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "닭안심살"
+    names: ["닭안심살"]
+    codes: [15]
+    status: ok
+    note: "안심은 닭고기뿐이라 코드 [15] · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "포도즙"
+    names: ["포도즙"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "복숭아"
+    names: ["복숭아"]
+    codes: [11]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "무화과"
+    names: ["무화과"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "청포도"
+    names: ["청포도"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "파김치"
+    names: ["파김치"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "돼지고기 뒷다릿살"
+    names: ["돼지고기 뒷다릿살"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "석류 즙"
+    names: ["석류 즙"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 3
+  - raw: "무장아찌"
+    names: ["무장아찌"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "마른 고춧잎"
+    names: ["마른 고춧잎"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "새우중하"
+    names: ["새우중하"]
+    codes: [9]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "따뜻한 물"
+    names: ["따뜻한 물"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "계피가루"
+    names: ["계피가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "맵쌀"
+    names: ["멥쌀"]
+    codes: []
+    status: ok
+    note: "이름 정리: 오타 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "새우(중하 5마리)"
+    names: ["새우(중하)"]
+    codes: [9]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "해바라기씨"
+    names: ["해바라기씨"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "말린 크랜베리"
+    names: ["말린 크랜베리"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "연잎"
+    names: ["연잎"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "청·홍피망(1/2개 씩)"
+    names: ["청피망", "홍피망"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "생강술"
+    names: ["생강술"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "황태채"
+    names: ["황태채"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "조랭이떡"
+    names: ["조랭이떡"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "단호박가루"
+    names: ["단호박가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "후추약간"
+    names: ["후추"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "닭 다리 살"
+    names: ["닭 다리 살"]
+    codes: [15]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "요거트"
+    names: ["요거트"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "중력분"
+    names: ["중력분"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "청상추"
+    names: ["청상추"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "오트밀"
+    names: ["오트밀"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "나무꼬치"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 음식이 아닌 것으로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "청*홍고추(각 1개씩)"
+    names: ["청고추", "홍고추"]
+    codes: []
+    status: ok
+    note: "이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "건크랜베리"
+    names: ["건크랜베리"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "거피 들깻가루"
+    names: ["거피 들깻가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "불고기용 쇠고기"
+    names: ["불고기용 쇠고기"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "사과말랭이"
+    names: ["사과말랭이"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "알감자"
+    names: ["알감자"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "다진 호두"
+    names: ["다진 호두"]
+    codes: [14]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "통밀쿠키"
+    names: ["통밀쿠키"]
+    codes: [1, 2, 6]
+    status: ok
+    note: "쿠키라 달걀 · 우유 · 밀을 더 막는 쪽으로 넣음 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "물 1/2C"
+    names: ["물"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "등갈비"
+    names: ["등갈비"]
+    codes: [10, 16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "치킨스톡"
+    names: ["치킨스톡"]
+    codes: [15]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "다시마육수"
+    names: ["다시마육수"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "한천"
+    names: ["한천"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "모둠해물"
+    names: ["모둠해물"]
+    codes: [9, 17, 18]
+    status: unknown
+    note: "해물 구성을 모름 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "주꾸미"
+    names: ["주꾸미"]
+    codes: []
+    status: ok
+    note: "모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "가다랑어포"
+    names: ["가다랑어포"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "건목이버섯"
+    names: ["건목이버섯"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "건다시마"
+    names: ["건다시마"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "돼지고기 목살"
+    names: ["돼지고기 목살"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "체다치즈"
+    names: ["체다치즈"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "통후추 간 것"
+    names: ["통후추 간 것"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "대파 푸른 부분"
+    names: ["대파 푸른 부분"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "찰흑미"
+    names: ["찰흑미"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "다진당근"
+    names: ["다진당근"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "재래상추"
+    names: ["재래상추"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "모둠견과류"
+    names: ["모둠견과류"]
+    codes: [4, 14, 19]
+    status: unknown
+    note: "견과류 구성을 모름 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "빨강파프리카"
+    names: ["빨강파프리카"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "다진 아몬드"
+    names: ["다진 아몬드"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "식용유(2)"
+    names: ["식용유"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "고추장아찌"
+    names: ["고추장아찌"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "고추장아찌국물"
+    names: ["고추장아찌국물"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "대파 파란부분"
+    names: ["대파 파란부분"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "오리고기 슬라이스"
+    names: ["오리고기 슬라이스"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "다시마 5X10cm"
+    names: ["다시마"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "미니 단호박"
+    names: ["미니 단호박"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "쌈채소"
+    names: ["쌈채소"]
+    codes: []
+    status: unknown
+    note: "구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "파프리카(2색, 각 1/2개)"
+    names: ["파프리카"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "물·식초·설탕 각"
+    names: ["물", "식초", "설탕"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "간장 100"
+    names: ["간장"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "전분물"
+    names: ["전분물"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "양념1"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "양념2"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "다시마 10×10cm"
+    names: ["다시마"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "주황 파프리카"
+    names: ["주황 파프리카"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "송송 썬 쪽파"
+    names: ["송송 썬 쪽파"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "거피들깨가루"
+    names: ["거피들깨가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "다시마(1장=5cmX5cm)"
+    names: ["다시마"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "홍고추10g"
+    names: ["홍고추"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "매실액기스"
+    names: ["매실액기스"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "머스터드소스"
+    names: ["머스터드소스"]
+    codes: []
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "고기 양념"
+    names: ["고기 양념"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "우리통밀"
+    names: ["우리통밀"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "우리밀가루"
+    names: ["우리밀가루"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "미삼"
+    names: ["미삼"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "찰보리"
+    names: ["찰보리"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "생표고"
+    names: ["생표고"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "수박"
+    names: ["수박"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "삼겹살"
+    names: ["삼겹살"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "오미자청"
+    names: ["오미자청"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "대두 풋콩"
+    names: ["대두 풋콩"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "손질된 새우 중하"
+    names: ["손질된 새우 중하"]
+    codes: [9]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "전분가루"
+    names: ["전분가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "도토리가루"
+    names: ["도토리가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "돼지고기 앞다릿살"
+    names: ["돼지고기 앞다릿살"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "고구마순"
+    names: ["고구마순"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "복숭아즙"
+    names: ["복숭아즙"]
+    codes: [11]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "대파 흰부분"
+    names: ["대파 흰부분"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "건식 찹쌀가루"
+    names: ["건식 찹쌀가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "청포묵가루"
+    names: ["청포묵가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "두 가지 색 파프리카(1/2개씩)"
+    names: ["파프리카"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "알배추"
+    names: ["알배추"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "쇠고기 우둔살"
+    names: ["쇠고기 우둔살"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "<10개 분량>"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "건고춧잎"
+    names: ["건고춧잎"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "쌀밥"
+    names: ["쌀밥"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "고춧잎"
+    names: ["고춧잎"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "달걀흰자(1개 분량)"
+    names: ["달걀흰자"]
+    codes: [1]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "다진 깻잎"
+    names: ["다진 깻잎"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "홍시"
+    names: ["홍시"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "손질된 늙은 호박"
+    names: ["손질된 늙은 호박"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "채 썬 돼지고기"
+    names: ["채 썬 돼지고기"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "석류 알"
+    names: ["석류 알"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "삼치"
+    names: ["삼치"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "건도토리묵"
+    names: ["건도토리묵"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "슈레드 체다치즈"
+    names: ["슈레드 체다치즈"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "모과청"
+    names: ["모과청"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "동부"
+    names: ["동부"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "황·홍 파프리카 각각"
+    names: ["파프리카"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 2
+  - raw: "통조림 참치"
+    names: ["통조림 참치"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "겨자소스"
+    names: ["겨자소스"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "귀리밥"
+    names: ["귀리밥"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "기장밥"
+    names: ["기장밥"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 2
+  - raw: "오이지"
+    names: ["오이지"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "옛날 소시지"
+    names: ["옛날 소시지"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "볶은 김치"
+    names: ["볶은 김치"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소시지"
+    names: ["소시지"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "돼지고기(불고기용 400g).                   더덕고추장 장아찌"
+    names: ["돼지고기(불고기용)", "더덕고추장 장아찌"]
+    codes: [5, 10]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 불고기용에서 온 16 을 뺌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "시판용 만두피"
+    names: ["시판용 만두피"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "육수 양념"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "전분물(물1+전분1)"
+    names: ["전분", "물"]
+    codes: []
+    status: ok
+    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "다진파(1큰술)          *TIP! 다진 파는 대파의 흰 부분을 사용해요."
+    names: ["다진파", "대파"]
+    codes: []
+    status: ok
+    note: "이름 정리: 설명 글을 뗌; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "옥수수가루"
+    names: ["옥수수가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "볶음참깨"
+    names: ["볶음참깨"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소금(약간, )간장"
+    names: ["소금", "간장"]
+    codes: [5]
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "노랑&주황 파프리카"
+    names: ["파프리카"]
+    codes: []
+    status: ok
+    note: "이름 정리: 색 · 크기 구분 없이 한 이름으로 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "자숙문                  어"
+    names: ["자숙문어"]
+    codes: []
+    status: ok
+    note: "이름 정리: 끊긴 낱말을 붙임 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "자숙죽순"
+    names: ["자숙죽순"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "자색무순"
+    names: ["자색무순"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "불린 건표고버섯"
+    names: ["불린 건표고버섯"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "옥수수(4큰술)                  토르티야(10인치 2장)"
+    names: ["옥수수", "토르티야"]
+    codes: [6]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "덩어리 파르메산치즈(1큰술분량)"
+    names: ["파르메산치즈"]
+    codes: [2]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "홍합(1컵)                  양파"
+    names: ["홍합", "양파"]
+    codes: [18]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "찬물(1½컵)+다시마"
+    names: ["찬물", "다시마"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "백태"
+    names: ["백태"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "찌개용 돼지고기"
+    names: ["찌개용 돼지고기"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "건가지나물 불린 것"
+    names: ["건가지나물 불린 것"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쌀식빵"
+    names: ["쌀식빵"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "설탕(1T)+고춧가루(1T)+다진 마늘(1t)+고추장(2T)+참기름(1t)+식초"
+    names: ["설탕", "고춧가루", "다진 마늘", "고추장", "참기름", "식초"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "쇠고기(불고기용 200g)"
+    names: ["쇠고기(불고기용)"]
+    codes: [16]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "빨간색·노란색 파프리카(½개씩)"
+    names: ["파프리카"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "콘옥수수"
+    names: ["콘옥수수"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "토르티야(8인치 ?장)"
+    names: ["토르티야"]
+    codes: [6]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "설탕(1½T)+간장(2½T)+청주(1T)+다진 마늘(½T)+다진대파                          (1T)+부순 참깨(1t)+참기름"
+    names: ["설탕", "간장", "청주", "다진 마늘", "다진대파", "부순 참깨", "참기름"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "귤껍질(2개 분량)"
+    names: ["귤껍질"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "귤껍질(1개 분량)"
+    names: ["귤껍질"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쇠고기 구이용"
+    names: ["쇠고기 구이용"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "삼치구이용"
+    names: ["삼치구이용"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "대패삽겹살"
+    names: ["대패삼겹살"]
+    codes: [10]
+    status: ok
+    note: "이름 정리: 오타 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "된장(1)"
+    names: ["된장"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "백년초가루"
+    names: ["백년초가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "맛간장 비율   ☞ 간장"
+    names: ["간장"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 설명 글을 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "물:양파:마늘:조청:통후추:다시마:대파:건표고버섯:건고추:무        = 1L:1L:2개:1/2컵:500g:30g:45cm:2대:5개:3개:300g"
+    names: ["물", "양파", "마늘", "조청", "통후추", "다시마", "대파", "건표고버섯", "건고추", "무"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 비율 · 배합 표기를 재료로 나눔 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "잣15g"
+    names: ["잣"]
+    codes: [19]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "꼬치4개"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 음식이 아닌 것으로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "깨소금약간"
+    names: ["깨소금"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "참기름15g"
+    names: ["참기름"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "견과류                 (피스타치오, 호두, 아몬드, 땅콩)"
+    names: ["피스타치오", "호두", "아몬드", "땅콩"]
+    codes: [4, 14]
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "생강시럽"
+    names: ["생강시럽"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "후추·파슬리 가루"
+    names: ["후추", "파슬리 가루"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "냉동대구"
+    names: ["냉동대구"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "밤콩 또는 검은콩"
+    names: ["밤콩", "검은콩"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽) · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "밥물(팥 삶은 물과 합하여)"
+    names: ["밥물(팥 삶은 물)"]
+    codes: []
+    status: ok
+    note: "이름 정리: 설명 글을 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "고사리(삶은 것)"
+    names: ["고사리(삶은 것)"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "호박오가리"
+    names: ["호박오가리"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "호박오가리 양념"
+    names: ["호박오가리 양념"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쇠고기(사태)"
+    names: ["쇠고기(사태)"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "마른 표고버섯(소)"
+    names: ["마른 표고버섯"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "찜 양념장"
+    names: ["찜 양념장"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "불린 콩"
+    names: ["불린 콩"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "적치커리"
+    names: ["적치커리"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "샐러드 드레싱"
+    names: ["샐러드 드레싱"]
+    codes: []
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "그릭요거트"
+    names: ["그릭요거트"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "딸기칩"
+    names: ["딸기칩"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "그레놀라"
+    names: ["그레놀라"]
+    codes: []
+    status: unknown
+    note: "구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "홍게살"
+    names: ["홍게살"]
+    codes: [8]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "요거트 소스"
+    names: ["요거트 소스"]
+    codes: [2]
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "볶음 현미"
+    names: ["볶음 현미"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "계핏물(계피가루 1작은술 + 물 2작은술)"
+    names: ["계피가루", "물"]
+    codes: []
+    status: ok
+    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "데친 미나리"
+    names: ["데친 미나리"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "깐 밤(6개)                    실고추"
+    names: ["깐 밤", "실고추"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "돼지목살"
+    names: ["돼지목살"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "밑 양념"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "슬라이스 체다치즈"
+    names: ["슬라이스 체다치즈"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "청.홍피망    (각 ¼개)"
+    names: ["청피망", "홍피망"]
+    codes: []
+    status: ok
+    note: "이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "라디치오"
+    names: ["라디치오"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "비타민"
+    names: ["비타민"]
+    codes: []
+    status: unknown
+    note: "구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "현미쌀"
+    names: ["현미쌀"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "고명용 대추"
+    names: ["고명용 대추"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "감자 수제비"
+    names: ["감자 수제비"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "파채"
+    names: ["파채"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "말린 귤"
+    names: ["말린 귤"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "말린 참다래"
+    names: ["말린 참다래"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "말린사과"
+    names: ["말린사과"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "부순 크래커"
+    names: ["부순 크래커"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "요거트 드레싱"
+    names: ["요거트 드레싱"]
+    codes: [2]
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "꼬막"
+    names: ["꼬막"]
+    codes: [18]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "진미채"
+    names: ["진미채"]
+    codes: [17]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "엿기름가루"
+    names: ["엿기름가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "감말랭이"
+    names: ["감말랭이"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "배말랭이"
+    names: ["배말랭이"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "연어 스테이크용"
+    names: ["연어 스테이크용"]
+    codes: []
+    status: ok
+    note: "연어라 스테이크에서 온 16 을 뺌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "사과식초"
+    names: ["사과식초"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "백설기"
+    names: ["백설기"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "카놀라유"
+    names: ["카놀라유"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "밀가루 2C"
+    names: ["밀가루"]
+    codes: [6]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "딸기식초"
+    names: ["딸기식초"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "부재료 1"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "부재료 2"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "콜라비 말랭이"
+    names: ["콜라비 말랭이"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "멥쌀가루 6C"
+    names: ["멥쌀가루"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "사각초콜릿"
+    names: ["사각초콜릿"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "초코볼"
+    names: ["초코볼"]
+    codes: []
+    status: unknown
+    note: "구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "백앙금"
+    names: ["백앙금"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다시마 3×5cm"
+    names: ["다시마"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "보리밥"
+    names: ["보리밥"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "건메밀면"
+    names: ["건메밀면"]
+    codes: [3, 6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "사각유부"
+    names: ["사각유부"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "겨자 양념장"
+    names: ["겨자 양념장"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "불린 목이버섯"
+    names: ["불린 목이버섯"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "볶은현미"
+    names: ["볶은현미"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "볶은 콩가루"
+    names: ["볶은 콩가루"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "(700㎖기준)"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "(15~16개 분량)"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "달걀흰자(2개 분량)"
+    names: ["달걀흰자"]
+    codes: [1]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "박력분(25g)                  녹인 버터"
+    names: ["박력분", "녹인 버터"]
+    codes: [2, 6]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "땅콩잼"
+    names: ["땅콩잼"]
+    codes: [4]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "움파 흰부분(9cmX10대)"
+    names: ["움파 흰부분"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "달걀(2개)             미지근한 밥"
+    names: ["달걀", "밥"]
+    codes: [1]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "소고기(불고기용 200g)"
+    names: ["소고기(불고기용)"]
+    codes: [16]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "호박고지"
+    names: ["호박고지"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "말린 취나물"
+    names: ["말린 취나물"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "말린 아주까리"
+    names: ["말린 아주까리"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "들깻가루(4)"
+    names: ["들깻가루"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "시래기 양념"
+    names: ["시래기 양념"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "취나물 양념"
+    names: ["취나물 양념"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "아주까리 양념"
+    names: ["아주까리 양념"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "연겨자 양념장"
+    names: ["연겨자 양념장"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "건가지"
+    names: ["건가지"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "채끝등심(쇠고기)100g"
+    names: ["채끝등심(쇠고기)"]
+    codes: [16]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 쇠고기라 코드 [16] · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소금·후춧가루"
+    names: ["소금", "후춧가루"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "쇠고기 양념"
+    names: ["쇠고기 양념"]
+    codes: [16]
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "와인식초"
+    names: ["와인식초"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "피클링스파이스"
+    names: ["피클링스파이스"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "식용유약간"
+    names: ["식용유"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "쇠고기(부채살)"
+    names: ["쇠고기(부채살)"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "돼지고기(아롱사태)"
+    names: ["돼지고기(아롱사태)"]
+    codes: [10, 16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "홍고추1개"
+    names: ["홍고추"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "식초 15g                  다진 마늘"
+    names: ["식초", "다진 마늘"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "다시마 5×6cm"
+    names: ["다시마"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "수삼 3개"
+    names: ["수삼"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "발효 겨자"
+    names: ["발효 겨자"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "닭가슴살 1쪽"
+    names: ["닭가슴살"]
+    codes: [15]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "발아현미"
+    names: ["발아현미"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "곤드레"
+    names: ["곤드레"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다진 달래"
+    names: ["다진 달래"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "발효생햄(판체타60g)"
+    names: ["발효생햄(판체타)"]
+    codes: [10]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "달걀물"
+    names: ["달걀물"]
+    codes: [1]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "유자 타르타르 소스"
+    names: ["유자 타르타르 소스"]
+    codes: [1]
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "피클물"
+    names: ["피클물"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "민트잎"
+    names: ["민트잎"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "미니 치즈식빵"
+    names: ["미니 치즈식빵"]
+    codes: [2, 6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "발효생햄(살라미 8장)"
+    names: ["발효생햄(살라미)"]
+    codes: [10]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "버터 갈릭 소스"
+    names: ["버터 갈릭 소스"]
+    codes: [2]
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "파르메산가루"
+    names: ["파르메산가루"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "발효생햄(코파 100g)"
+    names: ["발효생햄(코파)"]
+    codes: [10]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "스콘 반죽"
+    names: ["스콘 반죽"]
+    codes: [6]
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "발효생햄(론지노 30g)"
+    names: ["발효생햄(론지노)"]
+    codes: [10]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "천혜향"
+    names: ["천혜향"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "메밀 부침가루"
+    names: ["메밀 부침가루"]
+    codes: [3, 6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소 양념"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "오징어젓갈"
+    names: ["오징어젓갈"]
+    codes: [17]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "일자콩나물"
+    names: ["일자콩나물"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "레이디핑거"
+    names: ["레이디핑거"]
+    codes: [1, 6]
+    status: ok
+    note: "스펀지 과자라 달걀 · 밀 [1, 6] 을 넣음 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "코코아 파우더"
+    names: ["코코아 파우더"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "커피 가루"
+    names: ["커피 가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "오리고기"
+    names: ["오리고기"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "설탕(3)"
+    names: ["설탕"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "오리고기 로스용"
+    names: ["오리고기 로스용"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "물엿(2)"
+    names: ["물엿"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "토막 낸 오리고기"
+    names: ["토막 낸 오리고기"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쇠고기 등심"
+    names: ["쇠고기 등심"]
+    codes: [16]
+    status: ok
+    note: "쇠고기 등심이라 코드 [16] · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소금(½T)+물"
+    names: ["소금", "물"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "식초(1T)+간장"
+    names: ["식초", "간장"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "불린 녹두"
+    names: ["불린 녹두"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "볶음용 잔멸치"
+    names: ["볶음용 잔멸치"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "찹쌀떡"
+    names: ["찹쌀떡"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "청양고추맛 소시지(12cm×3개)"
+    names: ["청양고추맛 소시지"]
+    codes: [10]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "파프리카(1/6개씩)"
+    names: ["파프리카"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "돼지고기(볶음용 150g)"
+    names: ["돼지고기(볶음용)"]
+    codes: [10]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쇠고기 잡채용"
+    names: ["쇠고기 잡채용"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "참기름(1t) 올리고당"
+    names: ["참기름", "올리고당"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "카레맛 소시지(12cm×4개)"
+    names: ["카레맛 소시지"]
+    codes: [10]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "세발나물"
+    names: ["세발나물"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "견과류맛 소시지(7cm×6개)"
+    names: ["견과류맛 소시지"]
+    codes: [4, 10, 14, 19]
+    status: unknown
+    note: "이름 정리: 양 표기 뗌 · 견과류 종류를 모름 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다진 돼지고기(앞다릿살 600g)"
+    names: ["다진 돼지고기(앞다릿살)"]
+    codes: [10]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다진 땅콩과 호두"
+    names: ["다진 땅콩", "다진 호두"]
+    codes: [4, 14]
+    status: ok
+    note: "이름 정리: 묶음 표기를 다시 나눔 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다시멸치"
+    names: ["다시멸치"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다시마 4×5cm"
+    names: ["다시마"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "청·홍고1개"
+    names: ["청고추", "홍고추"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌; 오타 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "캐슈넛"
+    names: ["캐슈넛"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소금 약간 다진파"
+    names: ["소금", "다진파"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "영계"
+    names: ["영계"]
+    codes: [15]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "황기"
+    names: ["황기"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "물 2리터"
+    names: ["물"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "찰흑미가루"
+    names: ["찰흑미가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "백미밥"
+    names: ["백미밥"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "우엉조림"
+    names: ["우엉조림"]
+    codes: []
+    status: unknown
+    note: "구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "파프리카(빨강)1개"
+    names: ["파프리카(빨강)"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소금·후추·참기름·통깨가루"
+    names: ["소금", "후추", "참기름", "통깨가루"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "멍게"
+    names: ["멍게"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "돼지앞다리살"
+    names: ["돼지앞다리살"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "물 1ℓ"
+    names: ["물"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "조림맛간장(물 500g, 간장 200g, 배즙 100g, 마늘 30g, 생강 15g,                   설탕 100g, 다진 파 150g, 통후추 1작은술, 정종 50g)"
+    names: ["물", "간장", "배즙", "마늘", "생강", "설탕", "다진 파", "통후추", "정종"]
+    codes: [5]
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "조림장에 들어가는 채소"
+    names: ["조림장에 들어가는 채소"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 무엇인지 이름만으로 모름 → unknown 후보 · 구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "대파 10g                                               다진표고"
+    names: ["대파", "다진표고"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "돼지고기앞다리살"
+    names: ["돼지고기앞다리살"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "풋고추 5개(청3개, 홍2개)"
+    names: ["풋고추"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "황태 머리"
+    names: ["황태 머리"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "코코넛워터"
+    names: ["코코넛워터"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다진 마늘(1작은 술)다진 생강"
+    names: ["다진 마늘", "다진 생강"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "살사 소스"
+    names: ["살사 소스"]
+    codes: [12]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09 · 살사는 토마토 소스라 12 를 넣음 — PM 리뷰 11-09"
+    rows: 1
+  - raw: "토마토 시판소스"
+    names: ["토마토 시판소스"]
+    codes: [12]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "요구르트 드레싱"
+    names: ["요구르트 드레싱"]
+    codes: [2]
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "고추냉이 마요소스"
+    names: ["고추냉이 마요소스"]
+    codes: [1]
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다진 피클"
+    names: ["다진 피클"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "스테이크용 연어"
+    names: ["스테이크용 연어"]
+    codes: []
+    status: ok
+    note: "연어라 스테이크에서 온 16 을 뺌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "페페론치니"
+    names: ["페페론치니"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "휘핑크림"
+    names: ["휘핑크림"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "디종머스터드"
+    names: ["디종머스터드"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소보로 양념장"
+    names: ["소보로 양념장"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "병어"
+    names: ["병어"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "슈거파우더"
+    names: ["슈거파우더"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "부순 땅콩"
+    names: ["부순 땅콩"]
+    codes: [4]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "돼지고기(사태살 250g)"
+    names: ["돼지고기(사태살)"]
+    codes: [10]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 돼지고기라 코드 [10] · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "들깨 소스"
+    names: ["들깨 소스"]
+    codes: []
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "죽순(200g?)"
+    names: ["죽순"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "참외(1개) 쪽파"
+    names: ["참외", "쪽파"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "꿀(1T) 플레인 요거트"
+    names: ["꿀", "플레인 요거트"]
+    codes: [2]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "돼지고기(구이용 130g)"
+    names: ["돼지고기(구이용)"]
+    codes: [10]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "귀리가루"
+    names: ["귀리가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "(각 2인분)"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "그린빈스"
+    names: ["그린빈스"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "밥 2공기"
+    names: ["밥"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "마른 김 8X10cm"
+    names: ["마른 김"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "매실장아찌무침"
+    names: ["매실장아찌무침"]
+    codes: []
+    status: unknown
+    note: "구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쇠고기 샤브샤브용"
+    names: ["쇠고기 샤브샤브용"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "닭고기 안심"
+    names: ["닭고기 안심"]
+    codes: [15]
+    status: ok
+    note: "안심은 닭고기뿐이라 코드 [15] · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "오리고기 슬라이스 또는 오리가슴살"
+    names: ["오리고기 슬라이스", "오리가슴살"]
+    codes: []
+    status: ok
+    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽) · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "오리"
+    names: ["오리"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "오리고기가슴살"
+    names: ["오리고기가슴살"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "우유 300mL"
+    names: ["우유"]
+    codes: [2]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "콩고물"
+    names: ["콩고물"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "오겹살"
+    names: ["오겹살"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "곁들임 샐러드"
+    names: ["곁들임 샐러드"]
+    codes: []
+    status: unknown
+    note: "구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "돼지고기(삽겹, 목살, 앞다리살 가능)"
+    names: ["돼지고기(삼겹살, 목살, 앞다리살)"]
+    codes: [10]
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 오타 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "어린잎"
+    names: ["어린잎"]
+    codes: []
+    status: unknown
+    note: "구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "파·마늘·생강 다진 것 각각"
+    names: ["다진 파", "다진 마늘", "다진 생강"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "돼지고기(갈비살)400g"
+    names: ["돼지고기(갈비살)"]
+    codes: [10]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 돼지고기라 코드 [10] · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다진마늘·생강"
+    names: ["다진마늘", "다진생강"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "간장·조청·물 각"
+    names: ["간장", "조청", "물"]
+    codes: [5]
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "삶은 죽순"
+    names: ["삶은 죽순"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소고기(우둔)120g"
+    names: ["소고기(우둔)"]
+    codes: [16]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다홍고추"
+    names: ["다홍고추"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다진파10g"
+    names: ["다진파"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "다진마늘5g"
+    names: ["다진마늘"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "설탕10g"
+    names: ["설탕"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "깨소금5g"
+    names: ["깨소금"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "설탕5g"
+    names: ["설탕"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "대나무꼬지"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 음식이 아닌 것으로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "다진파·마늘"
+    names: ["다진파", "다진마늘"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "참기름·깨소금 각"
+    names: ["참기름", "깨소금"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "멸치(다시용)5마리"
+    names: ["멸치(다시용)"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "머위나물"
+    names: ["머위나물"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "매실액·참기름 각각10g"
+    names: ["매실액", "참기름"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "애플민트(10g) 핫케이크 가루"
+    names: ["애플민트", "핫케이크 가루"]
+    codes: [1, 6]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "데리야키소스"
+    names: ["데리야키소스"]
+    codes: []
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "탄산수(1병=550㎖)"
+    names: ["탄산수"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "배 음료"
+    names: ["배 음료"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "참치액"
+    names: ["참치액"]
+    codes: []
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "건 곤드레"
+    names: ["건 곤드레"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "식초(3큰술)  다진 마늘"
+    names: ["식초", "다진 마늘"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "소주"
+    names: ["소주"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "닭 넓적다릿살"
+    names: ["닭 넓적다릿살"]
+    codes: [15]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "황설탕 또는 흑설탕"
+    names: ["황설탕", "흑설탕"]
+    codes: []
+    status: ok
+    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽) · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "숏파스타"
+    names: ["숏파스타"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소금(1/2,t)"
+    names: ["소금"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "돼지등뼈"
+    names: ["돼지등뼈"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "데친 열무"
+    names: ["데친 열무"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "물(2L) 청주"
+    names: ["물", "청주"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "고추장(2T) 다진 마늘"
+    names: ["고추장", "다진 마늘"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "옥수수 알갱이"
+    names: ["옥수수 알갱이"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다시마(1장=5cm×5cm)"
+    names: ["다시마"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "주키니호박"
+    names: ["주키니호박"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "슈렐드 모차렐라치즈"
+    names: ["슈레드 모차렐라치즈"]
+    codes: [2]
+    status: ok
+    note: "이름 정리: 오타 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "레몬즙(2큰술)                  인스턴트이스트"
+    names: ["레몬즙", "인스턴트이스트"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "양파청소스"
+    names: ["양파청소스"]
+    codes: []
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "양파청"
+    names: ["양파청"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "청주15g"
+    names: ["청주"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "녹두가루"
+    names: ["녹두가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "도라지 30"
+    names: ["도라지"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "숙주 30g                  묵은김치"
+    names: ["숙주", "묵은김치"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "반 죽"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "좁쌀"
+    names: ["좁쌀"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "양파쌈장"
+    names: ["양파쌈장"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "건조양파"
+    names: ["건조양파"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "된장17g"
+    names: ["된장"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "고추장17g"
+    names: ["고추장"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "청고추10g"
+    names: ["청고추"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "간장15g"
+    names: ["간장"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "물20g"
+    names: ["물"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "양파쨈30g"
+    names: ["양파잼"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌; 오타 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "찹쌀풀"
+    names: ["찹쌀풀"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "물 1.2Kg"
+    names: ["물"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "소금물(굵은소금 200g: 물 2Kg)"
+    names: ["굵은소금", "물"]
+    codes: []
+    status: ok
+    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "냉국 국물"
+    names: ["냉국 국물"]
+    codes: []
+    status: unknown
+    note: "구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "설탕(4)"
+    names: ["설탕"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "소금(1)"
+    names: ["소금"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "털복숭아"
+    names: ["털복숭아"]
+    codes: [11]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "수제 요구르트"
+    names: ["수제 요구르트"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "피스타치오"
+    names: ["피스타치오"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "달걀(½개 분량)"
+    names: ["달걀"]
+    codes: [1]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "소고기(불고기용 300g)"
+    names: ["소고기(불고기용)"]
+    codes: [16]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "찰옥수수"
+    names: ["찰옥수수"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "냉동 완두콩"
+    names: ["냉동 완두콩"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "통조림 골뱅이"
+    names: ["통조림 골뱅이"]
+    codes: [18]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "진미 오징어채"
+    names: ["진미 오징어채"]
+    codes: [17]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "실곤약"
+    names: ["실곤약"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다진 마늘(1작은술)                 통조림 골뱅이 국물"
+    names: ["다진 마늘", "통조림 골뱅이 국물"]
+    codes: [18]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "우리밀싹"
+    names: ["우리밀싹"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "송송 썬 청*홍고추(각1개씩)"
+    names: ["청고추", "홍고추"]
+    codes: []
+    status: ok
+    note: "이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "또띠아(6 또는 8인치 x 4장)"
+    names: ["또띠아"]
+    codes: [6]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "슈레드 모짜렐라&체다 믹스치즈"
+    names: ["모짜렐라치즈", "체다치즈"]
+    codes: [2]
+    status: ok
+    note: "이름 정리: 묶음 표기를 다시 나눔 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "칠리소스"
+    names: ["칠리소스"]
+    codes: []
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "닭고기 밑간"
+    names: ["닭고기 밑간"]
+    codes: [15]
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "토마토 살사 소스 양념"
+    names: ["토마토 살사 소스 양념"]
+    codes: [12]
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "슈레드 모짜렐라"
+    names: ["슈레드 모짜렐라"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "체다 믹스치즈"
+    names: ["체다 믹스치즈"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "무염버터"
+    names: ["무염버터"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "초코칩"
+    names: ["초코칩"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "새우살 밑간"
+    names: ["새우살 밑간"]
+    codes: [9]
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "떡볶이떡"
+    names: ["떡볶이떡"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09 · 밀떡일 수 있어 6 을 넣음(애매하면 넣는다) — PM 리뷰 11-09"
+    rows: 1
+  - raw: "단호박(큰 것 1개)"
+    names: ["단호박"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "흰살생선(대구 280g)"
+    names: ["흰살생선(대구)"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "등심 샤브샤브용"
+    names: ["등심 샤브샤브용"]
+    codes: [10, 16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "돼지고기/삼겹살"
+    names: ["돼지고기", "삼겹살"]
+    codes: [10]
+    status: ok
+    note: "묶음 표기를 나눔 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "목살"
+    names: ["목살"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "앞다리살 등"
+    names: ["앞다리살"]
+    codes: [10]
+    status: unknown
+    note: "이름 정리: '등' 이 붙어 다른 재료가 더 있을 수 있음 → unknown 후보 · 구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "또띠아(2장x8㎝)"
+    names: ["또띠아"]
+    codes: [6]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "<8개 분량>"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "생막걸리"
+    names: ["생막걸리"]
+    codes: [6]
+    status: ok
+    note: "누룩 때문에 밀 [6] 을 더 막는 쪽으로 넣음 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "껍질 벗긴 밤"
+    names: ["껍질 벗긴 밤"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "작은 토마토"
+    names: ["작은 토마토"]
+    codes: [12]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "샌드위치 햄"
+    names: ["샌드위치 햄"]
+    codes: [6, 10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "흰깨(볶은 것)"
+    names: ["흰깨(볶은 것)"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "고  명"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "건표고"
+    names: ["건표고"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "홍·노랑 파프리카 각각"
+    names: ["파프리카"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "마늘즙"
+    names: ["마늘즙"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "간장50g"
+    names: ["간장"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "파·마늘·생강 각5g"
+    names: ["파", "마늘", "생강"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "옥수수캔"
+    names: ["옥수수캔"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "양송이 1개                  모짜렐라 치즈"
+    names: ["양송이", "모짜렐라 치즈"]
+    codes: [2]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "소금· 후추·올리브오일"
+    names: ["소금", "후추", "올리브오일"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "알옥수수"
+    names: ["알옥수수"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "장  국"
+    names: ["장국"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다시마 3*4cm"
+    names: ["다시마"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "옥수수알"
+    names: ["옥수수알"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "우유200g"
+    names: ["우유"]
+    codes: [2]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "수박 흰 부분"
+    names: ["수박 흰 부분"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "매실엑기스"
+    names: ["매실엑기스"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "홍·청고추 각1개"
+    names: ["홍고추", "청고추"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "소금·생강"
+    names: ["소금", "생강"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "커피"
+    names: ["커피"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "절임용 소금"
+    names: ["절임용 소금"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "물고추"
+    names: ["물고추"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "흰깨·검정깨 각50g"
+    names: ["흰깨", "검정깨"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "칵테일 생새우"
+    names: ["칵테일 생새우"]
+    codes: [9]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "통조림 연어"
+    names: ["통조림 연어"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "대파(10cm×2대)"
+    names: ["대파"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "삶은 메추리알"
+    names: ["삶은 메추리알"]
+    codes: [1]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "후레쉬 모짜렐라치즈"
+    names: ["후레쉬 모짜렐라치즈"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "샐러드용 채소"
+    names: ["샐러드용 채소"]
+    codes: []
+    status: unknown
+    note: "구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "인스턴트 드라이이스트"
+    names: ["인스턴트 드라이이스트"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "참나물생채 양념"
+    names: ["참나물생채 양념"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "참나물즙"
+    names: ["참나물즙"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "풋콩 조림장"
+    names: ["풋콩 조림장"]
+    codes: [5]
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "볶은 참깨"
+    names: ["볶은 참깨"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "판젤라틴"
+    names: ["판젤라틴"]
+    codes: [10, 16]
+    status: ok
+    note: "젤라틴은 돼지 · 소에서 와서 더 막는 쪽으로 넣음 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "사과주스"
+    names: ["사과주스"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "손질된 고등어"
+    names: ["손질된 고등어"]
+    codes: [7]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "감자(작은 것 1개)"
+    names: ["감자"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "찹쌀가루(2)"
+    names: ["찹쌀가루"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "비름"
+    names: ["비름"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "메밀면"
+    names: ["메밀면"]
+    codes: [3, 6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "메밀범벅"
+    names: ["메밀범벅"]
+    codes: [3, 6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "각얼음"
+    names: ["각얼음"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "돼지고기 불고기용"
+    names: ["돼지고기 불고기용"]
+    codes: [10]
+    status: ok
+    note: "불고기용에서 온 16 을 뺌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "머스터드겨자"
+    names: ["머스터드겨자"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쌀된장"
+    names: ["쌀된장"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "청홍파프리카 각1/4개"
+    names: ["파프리카"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "생강채·마늘채"
+    names: ["생강채", "마늘채"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다시마육수 400g(다시마를 생수에 2시간 담가둔다)"
+    names: ["다시마육수"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌; 설명 글을 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "오이고추"
+    names: ["오이고추"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "노랑·홍 파프리카 각각"
+    names: ["파프리카"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "고춧가루 1C"
+    names: ["고춧가루"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "다진새우젓"
+    names: ["다진새우젓"]
+    codes: [9]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "액젓30g"
+    names: ["액젓"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "밀가루죽(밀가루:물=30g:200g)"
+    names: ["밀가루", "물"]
+    codes: [6]
+    status: ok
+    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "소금·깨소금 약간씩"
+    names: ["소금", "깨소금"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "소고기(우둔)"
+    names: ["소고기(우둔)"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "밀쌈 반죽"
+    names: ["밀쌈 반죽"]
+    codes: [6]
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "밀가루 1/2C"
+    names: ["밀가루"]
+    codes: [6]
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "소고기(불고기감)300g"
+    names: ["소고기(불고기감)"]
+    codes: [16]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "후추                  다진파"
+    names: ["후추", "다진파"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "통깨약간"
+    names: ["통깨"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "대두100g(삶은대두 300g)"
+    names: ["대두"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "데친두부"
+    names: ["데친두부"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "두유 1C"
+    names: ["두유"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "대두콩"
+    names: ["대두콩"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "글루텐가루 1C"
+    names: ["글루텐가루"]
+    codes: [6]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "견과류 1C"
+    names: ["견과류"]
+    codes: [4, 14, 19]
+    status: unknown
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "양파즙 1/2C"
+    names: ["양파즙"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "물전분"
+    names: ["물전분"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "날(생)콩가루"
+    names: ["날콩가루"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "참기름·통깨 각15g"
+    names: ["참기름", "통깨"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "촛물(물:간장:식초=1:1:0.7)"
+    names: ["물", "간장", "식초"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "참기름·통깨 각각"
+    names: ["참기름", "통깨"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "백만송이버섯"
+    names: ["백만송이버섯"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "유자 겨자소스"
+    names: ["유자 겨자소스"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "닭날개"
+    names: ["닭날개"]
+    codes: [15]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "밑   간"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "간장(1큰술)                     청주"
+    names: ["간장", "청주"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "버섯 불린 물"
+    names: ["버섯 불린 물"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "시저 드레싱"
+    names: ["시저 드레싱"]
+    codes: []
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "고수"
+    names: ["고수"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소금(약간)                       까나리액젓"
+    names: ["소금", "까나리액젓"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "소금(약간)                        중력분"
+    names: ["소금", "중력분"]
+    codes: [6]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "계피 가루(약간)   *TIP! 버터와 땅콩버터는 실온에 미리 30분 전에 꺼내주세요."
+    names: ["계피 가루", "버터", "땅콩버터"]
+    codes: [2, 4]
+    status: ok
+    note: "이름 정리: 설명 글을 뗌; 양 표기 뗌; 코드 [2, 4] 는 설명 글의 버터 · 땅콩버터에서 왔다 — 검수자 확인 · 코드 [2, 4] 는 설명 글의 버터 · 땅콩버터라 그 둘을 names 에 올림 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "생 옥수수 알갱이"
+    names: ["생 옥수수 알갱이"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "건 무화과"
+    names: ["건 무화과"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "콩배기(*강낭콩 또는 완두 50ml)"
+    names: ["콩배기(강낭콩 또는 완두)"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 강낭콩 · 완두는 대두가 아니라 코드 [5] 를 뺌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "팥배기"
+    names: ["팥배기"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "건 무화과 불리는 설탕물"
+    names: ["건 무화과 불리는 설탕물"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쇠고기 우둔살 덩어리(장조림용 250g)"
+    names: ["쇠고기 우둔살(장조림용)"]
+    codes: [16]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "비빔장 양념"
+    names: ["비빔장 양념"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "밀가루(3큰술)                   삶은 옥수수 알갱이(3큰술)(*캔 스위트콘)"
+    names: ["밀가루", "옥수수 알갱이(캔 스위트콘)"]
+    codes: [6]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "달걀물(1개 분량)"
+    names: ["달걀물"]
+    codes: [1]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다진 쇠고기 우둔살"
+    names: ["다진 쇠고기 우둔살"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "채 썬 양파"
+    names: ["채 썬 양파"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "레드와인(1/2컵)                                              채 썬 표고버섯"
+    names: ["레드와인", "채 썬 표고버섯"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "스테이크 브라운소스"
+    names: ["스테이크 브라운소스"]
+    codes: []
+    status: unknown
+    note: "스테이크 이름에서 온 16 을 뺌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "슬라이스 쇠고기 우둔살"
+    names: ["슬라이스 쇠고기 우둔살"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쌈무"
+    names: ["쌈무"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "적양상추 또는 적무순"
+    names: ["적양상추", "적무순"]
+    codes: []
+    status: ok
+    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽) · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "고기 밑간"
+    names: ["고기 밑간"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "삶은 옥수수 알갱이(4큰술)(*캔 스위트콘)"
+    names: ["옥수수 알갱이(캔 스위트콘)"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "꿀(1큰술)                                 올리브유"
+    names: ["꿀", "올리브유"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "소금(0.2)"
+    names: ["소금"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "후춧가루(0.1)"
+    names: ["후춧가루"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "(지름 12cm×4개)"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "(800ml 분량)"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "(2인분 분량)"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "쌀가루 또는 밀가루(1)"
+    names: ["쌀가루", "밀가루"]
+    codes: [6]
+    status: ok
+    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽); 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "탄산음료"
+    names: ["탄산음료"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "습식 멥쌀가루"
+    names: ["습식 멥쌀가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "갈색설탕"
+    names: ["갈색설탕"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "마른 김(5cmX5cm)"
+    names: ["마른 김"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "디포리"
+    names: ["디포리"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "대파 잎부분"
+    names: ["대파 잎부분"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쇠고기 볶음용"
+    names: ["쇠고기 볶음용"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "또띠아"
+    names: ["또띠아"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "시나몬 가루"
+    names: ["시나몬 가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "불린 백태"
+    names: ["불린 백태"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "닭고기(가슴살)"
+    names: ["닭고기(가슴살)"]
+    codes: [15]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "고춧가루 1/2C"
+    names: ["고춧가루"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "다진 파 15g                   다진 마늘"
+    names: ["다진 파", "다진 마늘"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "다시마(5×5 cm)"
+    names: ["다시마"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "부추 다진 것"
+    names: ["부추 다진 것"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "멸치다싯물"
+    names: ["멸치다싯물"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소고기(사태)"
+    names: ["소고기(사태)"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "대파(녹색부분)"
+    names: ["대파(녹색부분)"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쪽파30g"
+    names: ["쪽파"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "칼국수면(생면)"
+    names: ["칼국수면(생면)"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "가다랑어포(한줌)"
+    names: ["가다랑어포"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "모둠 어묵"
+    names: ["모둠 어묵"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "달걀노른자(2개 분량)"
+    names: ["달걀노른자"]
+    codes: [1]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "연어필렛(120g)                  삶은 메추리알"
+    names: ["연어필렛", "삶은 메추리알"]
+    codes: [1]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "돼지고기(삼겹살 250g)"
+    names: ["돼지고기(삼겹살)"]
+    codes: [10]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "돼지고기(불고기용 300g)"
+    names: ["돼지고기(불고기용)"]
+    codes: [10]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 불고기용에서 온 16 을 뺌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "할라피뇨"
+    names: ["할라피뇨"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "토르티야"
+    names: ["토르티야"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "시판 토마토소스"
+    names: ["시판 토마토소스"]
+    codes: [12]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "미니 새송이버섯(2 ½컵)"
+    names: ["미니 새송이버섯"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "쇠고기 국거리용"
+    names: ["쇠고기 국거리용"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "육수 재료 및 양념"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "기피 들깨가루"
+    names: ["거피 들깻가루"]
+    codes: []
+    status: ok
+    note: "이름 정리: 오타 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "양조간장"
+    names: ["양조간장"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "물(2와½컵)"
+    names: ["물"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "돼지 호박 쥬키니"
+    names: ["주키니호박"]
+    codes: []
+    status: ok
+    note: "이름 정리: 돼지호박은 주키니 — 코드 [10] 은 이름의 '돼지' 에서 왔다, 검수자 확인 · 돼지호박은 주키니라 코드 [10] 을 뺌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "흑미"
+    names: ["흑미"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "황태포"
+    names: ["황태포"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "과일_블루베리"
+    names: ["블루베리"]
+    codes: []
+    status: ok
+    note: "이름 정리: 분류 머리 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "통삼겹살"
+    names: ["통삼겹살"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "고추냉이 또는 연겨자"
+    names: ["고추냉이", "연겨자"]
+    codes: []
+    status: ok
+    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽) · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "볶음용 쇠고기"
+    names: ["볶음용 쇠고기"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "배(1/8개)+설탕(2.5T)+간장(5T)+다진 마늘(1T)+참기름(1T)+                     부순참깨(1/2T)+후춧가루"
+    names: ["배", "설탕", "간장", "다진 마늘", "참기름", "부순참깨", "후춧가루"]
+    codes: [5]
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "시나몬파우더"
+    names: ["시나몬파우더"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "줄기콩"
+    names: ["줄기콩"]
+    codes: []
+    status: ok
+    note: "줄기콩은 대두가 아니라 코드 [5] 를 뺌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "물(3)"
+    names: ["물"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "간장(3)"
+    names: ["간장"]
+    codes: [5]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "얼갈이"
+    names: ["얼갈이"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쇠고기 아롱사태"
+    names: ["쇠고기 아롱사태"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "밀가루(½컵)                   녹말가루"
+    names: ["밀가루", "녹말가루"]
+    codes: [6]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "청·홍 피망(1/3개씩)"
+    names: ["청피망", "홍피망"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "연근 1개"
+    names: ["연근"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "유자청 시럽"
+    names: ["유자청 시럽"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "식용류"
+    names: ["식용유"]
+    codes: []
+    status: ok
+    note: "이름 정리: 오타 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "불린 찹쌀"
+    names: ["불린 찹쌀"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "불린 찰흑미"
+    names: ["불린 찰흑미"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "불린 차조"
+    names: ["불린 차조"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "애호박고지"
+    names: ["애호박고지"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "데친느타리버섯"
+    names: ["데친느타리버섯"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "호두(반태)"
+    names: ["호두"]
+    codes: [14]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "집간장"
+    names: ["집간장"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "튀김옷-튀김가루"
+    names: ["튀김가루"]
+    codes: [6]
+    status: ok
+    note: "이름 정리: 분류 머리 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "홍·노랑                    파프리카"
+    names: ["파프리카"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "연근 500g 호박"
+    names: ["연근", "호박"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "절임액(물 2L, 소금 200g)"
+    names: ["물", "소금"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "홍갓 700g(또는 돌산갓)"
+    names: ["홍갓", "돌산갓"]
+    codes: []
+    status: ok
+    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽); 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "불린 건고추 갈은 것"
+    names: ["불린 건고추 갈은 것"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "물 1Kg"
+    names: ["물"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "감자 전분 가루"
+    names: ["감자 전분 가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "닭볶음탕용 닭"
+    names: ["닭볶음탕용 닭"]
+    codes: [15]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "우엉 채"
+    names: ["우엉 채"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "무말랭이 양념장"
+    names: ["무말랭이 양념장"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "찰밀가루"
+    names: ["찰밀가루"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "대파 뿌리"
+    names: ["대파 뿌리"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다진 마늘               (1큰 술)"
+    names: ["다진 마늘"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "방울토마토(4개)                   슈레드 피자치즈"
+    names: ["방울토마토", "슈레드 피자치즈"]
+    codes: [2, 12]
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "루꼴라 또는 샐러드잎채소"
+    names: ["루꼴라", "샐러드잎채소"]
+    codes: []
+    status: unknown
+    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽) · 구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "허브_오레가노"
+    names: ["허브(오레가노)"]
+    codes: []
+    status: ok
+    note: "이름 정리: 분류 표기를 기존 표 모양(허브(민트))으로 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "로즈마리                   등"
+    names: ["로즈마리"]
+    codes: []
+    status: unknown
+    note: "이름 정리: '등' 이 붙어 다른 재료가 더 있을 수 있음 → unknown 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "시판 스테이크소스"
+    names: ["시판 스테이크소스"]
+    codes: []
+    status: unknown
+    note: "스테이크 이름에서 온 16 을 뺌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다진 고기"
+    names: ["다진 고기"]
+    codes: [10, 16]
+    status: unknown
+    note: "이름 정리: 어떤 고기인지 모름 → unknown 후보(또는 소 · 돼지 코드) · 고기 종류를 모름 — 소 · 돼지 코드 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다진 표고버섯"
+    names: ["다진 표고버섯"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "맛술(1작은술)                   소금"
+    names: ["맛술", "소금"]
+    codes: []
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "대패삼겹살"
+    names: ["대패삼겹살"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "손질된 갈치"
+    names: ["손질된 갈치"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "대추름"
+    names: ["대추름"]
+    codes: []
+    status: unknown
+    note: "구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "유자"
+    names: ["유자"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "파인애플링"
+    names: ["파인애플링"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "새우(중하, 10마리)"
+    names: ["새우(중하)"]
+    codes: [9]
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "늙은 호박 밑동"
+    names: ["늙은 호박 밑동"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "인스턴트이스트"
+    names: ["인스턴트이스트"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "대파(푸른 부분, 2대)"
+    names: ["대파(푸른 부분)"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "연와사비"
+    names: ["연와사비"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "해감된 바지락"
+    names: ["해감된 바지락"]
+    codes: [18]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "흑임자가루"
+    names: ["흑임자가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "황백지단"
+    names: ["황백지단"]
+    codes: [1]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "육수(모시조개)"
+    names: ["육수(모시조개)"]
+    codes: [18]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "모시조개 1C"
+    names: ["모시조개"]
+    codes: [18]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "돼지고기(다진육)"
+    names: ["돼지고기(다진육)"]
+    codes: [10]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "뽕잎가루"
+    names: ["뽕잎가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "편생강"
+    names: ["편생강"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "구운장어뼈"
+    names: ["구운장어뼈"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쌀밥 또는 잡곡밥"
+    names: ["쌀밥", "잡곡밥"]
+    codes: []
+    status: unknown
+    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽) · 구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "치자물"
+    names: ["치자물"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "포도쥬스"
+    names: ["포도주스"]
+    codes: []
+    status: ok
+    note: "이름 정리: 오타 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "애플 민트잎"
+    names: ["애플 민트잎"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소고기 안심"
+    names: ["소고기 안심"]
+    codes: [16]
+    status: ok
+    note: "소고기 안심이라 코드 [16] · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "감자전분 물(감자전분2큰술+물1큰술)"
+    names: ["감자전분", "물"]
+    codes: []
+    status: ok
+    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "밤앙금"
+    names: ["밤앙금"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "사과(½)개"
+    names: ["사과"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "동치미육수"
+    names: ["동치미육수"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "포도씨 오일"
+    names: ["포도씨 오일"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다시마(1장=5X5)"
+    names: ["다시마"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "동치미 무청"
+    names: ["동치미 무청"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "마스카포네 치즈"
+    names: ["마스카포네 치즈"]
+    codes: [2]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "고형카레(3블럭)"
+    names: ["고형카레"]
+    codes: [6]
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 카레 루는 밀가루가 들어 [6] 을 넣음 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "사각어묵"
+    names: ["사각어묵"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쇠고기 밑간"
+    names: ["쇠고기 밑간"]
+    codes: [16]
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "관자"
+    names: ["관자"]
+    codes: [18]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "두유 참깨소스"
+    names: ["두유 참깨소스"]
+    codes: [5]
+    status: unknown
+    note: "배합 · 제품마다 성분이 달라 이름만으로 모름 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "돼지고기 탕수육용"
+    names: ["돼지고기 탕수육용"]
+    codes: [10]
+    status: ok
+    note: "탕수육용에서 온 16 을 뺌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "적무순"
+    names: ["적무순"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "고기 밑간 양념"
+    names: ["고기 밑간 양념"]
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 — 머리 속 음식이 다른 줄에 있는지 원문 확인 전이라 unknown · 모델 2중 검토 불일치 11-07 · 모델 단독 재검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "도토리 국수"
+    names: ["도토리 국수"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "모과"
+    names: ["모과"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "설탕(1 ½컵)"
+    names: ["설탕"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "가루 한천"
+    names: ["가루 한천"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "무가당 두유"
+    names: ["무가당 두유"]
+    codes: [5]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "볶음용 멸치"
+    names: ["볶음용 멸치"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "(1판 분량)"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "(700ml 분량)"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "한천가루"
+    names: ["한천가루"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "슬라이스 귤"
+    names: ["슬라이스 귤"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "(1.2ℓ 분량)"
+    names: []
+    codes: []
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "마른 표고버섯"
+    names: ["마른 표고버섯"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "도루묵"
+    names: ["도루묵"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다시마(10cmX10cm)"
+    names: ["다시마"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "찰수수"
+    names: ["찰수수"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "찹쌀죽"
+    names: ["찹쌀죽"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "양파즙30g"
+    names: ["양파즙"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "청·홍고추"
+    names: ["청고추", "홍고추"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "브로콜리150g"
+    names: ["브로콜리"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "매실                   발효액"
+    names: ["매실 발효액"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소고기(채끝등심)"
+    names: ["소고기(채끝등심)"]
+    codes: [16]
+    status: ok
+    note: "소고기라 코드 [16] · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "찹쌀가루50g"
+    names: ["찹쌀가루"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "소고기(홍두깨살)"
+    names: ["소고기(홍두깨살)"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "메추리알"
+    names: ["메추리알"]
+    codes: [1]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소고기(양지머리)"
+    names: ["소고기(양지머리)"]
+    codes: [16]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "소갈비"
+    names: ["소갈비"]
+    codes: [16]
+    status: ok
+    note: "소갈비라 코드 [16] · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "조림맛장(물 500g, 간장 200g, 배즙 100g, 마늘 30g, 생강 15g,                  설탕 100g, 다진 파 150g, 통후추 10g, 정종 50g)"
+    names: ["물", "간장", "배즙", "마늘", "생강", "설탕", "다진 파", "통후추", "정종"]
+    codes: [5]
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "흑미밥"
+    names: ["흑미밥"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "참기름(1/2큰술)TIP 흑미밥은 백미와 흑미를 8:2로 섞어 만들어요."
+    names: ["참기름", "흑미밥", "백미", "흑미"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 설명 글을 뗌; 양 표기 뗌 · 모델 2중 검토 이름만 달라 합침 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "브로콜리(한 줌)"
+    names: ["브로콜리"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "시판 크림수프"
+    names: ["시판 크림수프"]
+    codes: [2]
+    status: unknown
+    note: "구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "후춧가루(약간)&quot;"
+    names: ["후춧가루"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "차조밥"
+    names: ["차조밥"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "통밀 식빵"
+    names: ["통밀 식빵"]
+    codes: [6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "쌀떡"
+    names: ["쌀떡"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "감자 크림수프"
+    names: ["감자 크림수프"]
+    codes: [2]
+    status: unknown
+    note: "구성을 이름만으로 알 수 없음 → unknown · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다진 파프리카"
+    names: ["다진 파프리카"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "후춧가루(1/3작은술)&quot;"
+    names: ["후춧가루"]
+    codes: []
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
+    rows: 1
+  - raw: "핫케이크가루"
+    names: ["핫케이크가루"]
+    codes: [1, 6]
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "보리 튀밥"
+    names: ["보리 튀밥"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "다크초콜릿"
+    names: ["다크초콜릿"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "크랜베리(2큰술)&quot;"
+    names: ["크랜베리"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "훈제오리 슬라이스"
+    names: ["훈제오리 슬라이스"]
+    codes: []
+    status: ok
+    note: "모델 단독 검토 11-08 · PM 승인 11-09"
+    rows: 1
+  - raw: "새싹 채소(한 줌)"
+    names: ["새싹 채소"]
+    codes: []
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1

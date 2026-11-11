@@ -83,6 +83,11 @@ Claude outputs/
 .impeccable/*
 !.impeccable/design.json
 
+# ── Claude Code ────────────────────────────────────
+# 저장소에 올리는 것은 .claude/skills/ 의 팀 공유 스킬(screen-tour · web-smoke)이다.
+# 개인 설정은 사람마다 달라서 올리지 않는다. 스킬이 돌며 만드는 것은 각 스킬의 .gitignore 가 뺀다.
+.claude/settings.local.json
+
 # ── oh-my-claudecode(OMC) 로컬 상태 ──────────────────
 # 세션별 작업 상태 · 계획 · 로그. 개인 로컬 도구 상태라 저장소와 무관하다.
 .omc/
@@ -91,3 +96,8 @@ Claude outputs/
 # 케이스와 입력만 커밋하고, 결과는 PR 코멘트에 붙인다.
 apps/api/tests/**/*_result.txt
 apps/api/tests/**/*_results.jsonl
+apps/api/tests/**/live_run_meta.json
+eval/results/raw/
+
+# 배포 스크립트가 마지막으로 성공한 커밋을 적는 곳 — 서버마다 다르다 (deploy/scripts/deploy.sh)
+deploy/docker/.deployed-tag

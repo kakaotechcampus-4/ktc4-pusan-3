@@ -69,13 +69,13 @@ test("선과 점은 뉴트럴 토큰으로만 칠한다 — 평가로 읽히는 
 });
 
 test("화면 어디에도 평가 낱말이 없다 (평가하지 않는다는 안내 한 줄 말고는)", async ({ page }) => {
-  const notice = "잰 날 그대로 쌓아 둬요. 또래와 견주거나 백분위를 매기지 않아요.";
+  const notice = "잰 날과 잰 값을 그대로 쌓아 둬요.";
   await expect(page.getByText(notice)).toBeVisible();
   const text = (await visibleText(page)).replace(notice, "");
   expect(text).not.toMatch(EVALUATIVE);
 });
 
-test("툴팁은 값과 날짜만 보여주고 직전과의 차이를 만들지 않는다", async ({ page }) => {
+test("툴팁은 값과 날짜만 보여 주고 직전과의 차이를 만들지 않는다", async ({ page }) => {
   const dots = page.locator("figure").first().locator(".recharts-line-dots circle");
   await dots.last().hover({ force: true });
   const tooltip = page.locator(".recharts-tooltip-wrapper").first();
@@ -89,20 +89,34 @@ test("툴팁은 값과 날짜만 보여주고 직전과의 차이를 만들지 �
  * 적기 시트는 서버(PR #353)가 400 으로 막는 값을 보내기 전에 거른다 — 400 은 화면에서
  * "다시 눌러 주세요" 로만 보이고, 다시 눌러도 같다.
  */
-test.describe("새로 재서 적기", () => {
+test.describe("키·몸무게 새로 적기", () => {
   async function openSheet(page: import("@playwright/test").Page) {
     await page.getByRole("button", { name: "키·몸무게 새로 적기" }).click();
-    return page.getByRole("dialog", { name: "새로 재서 적기" });
+    return page.getByRole("dialog", { name: "키·몸무게 새로 적기" });
   }
 
   test("범위 밖 값은 보내지 않고 그 칸에 이유를 붙인다", async ({ page }) => {
     const calls = recordApi(page);
     const sheet = await openSheet(page);
 
-    await sheet.getByLabel("키 · cm").fill("1042");
+    await sheet.getByLabel("키 (cm)").fill("1042");
     await sheet.getByRole("button", { name: "적어 두기" }).click();
 
-    await expect(sheet.getByText("0.1부터 300까지 적을 수 있어요")).toBeVisible();
+    await expect(sheet.getByText("cm 단위로 20부터 220까지 적을 수 있어요")).toBeVisible();
+    expect(writes(calls, "POST", /\/growth$/)).toHaveLength(0);
+  });
+
+  // 🚨 키와 몸무게가 범위 하나(0.05 ~ 300)를 같이 쓰던 때는 키 1cm 와 몸무게 300kg 이 저장됐다 (#627).
+  test("키와 몸무게는 각자의 범위로 막는다", async ({ page }) => {
+    const calls = recordApi(page);
+    const sheet = await openSheet(page);
+
+    await sheet.getByLabel("키 (cm)").fill("1");
+    await sheet.getByLabel("몸무게 (kg)").fill("300");
+    await sheet.getByRole("button", { name: "적어 두기" }).click();
+
+    await expect(sheet.getByText("cm 단위로 20부터 220까지 적을 수 있어요")).toBeVisible();
+    await expect(sheet.getByText("kg 단위로 0.3부터 150까지 적을 수 있어요")).toBeVisible();
     expect(writes(calls, "POST", /\/growth$/)).toHaveLength(0);
   });
 

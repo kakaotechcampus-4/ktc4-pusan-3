@@ -14,7 +14,8 @@ test_observation_delete.py 에 남아 단위로만 돈다.
 """
 
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta
+from dataclasses import fields
+from datetime import date, datetime, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -24,7 +25,7 @@ from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.registry import execute_tool
 from app.agents.memory.result import ErrorCode
-from app.agents.memory.store.ports import EventRow
+from app.agents.memory.store.ports import EventRow, NoticeItemRow, NoticeRow
 
 KST = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 9, 15, 9, 0, tzinfo=KST)
@@ -54,6 +55,10 @@ class Harness(Protocol):
         """체크 시각을 과거로 민다. DB now() 는 테스트 트랜잭션 안에서 늘 같아서 이렇게 구분한다."""
         ...
 
+    async def seed_notice(self, notice: NoticeRow) -> None:
+        """이 아이의 공지로 넣는다. 공지는 확인 · 저장한 뒤에만 있어서 tool 에는 저장이 없다."""
+        ...
+
 
 Scenario = Callable[..., Awaitable[None]]
 
@@ -67,7 +72,16 @@ DOMAINS = ("food", "health", "education", "activity", "routine")
 # 비울 수 있는 필드 목록(CLEARABLE)은 store_plan D3 의 표 그대로다.
 CLEARABLE: dict[str, set[str]] = {
     "food": {"action", "amount", "reaction"},
-    "health": {"severity", "body_part", "suspected_trigger", "action_taken", "observed_time"},
+    "health": {
+        "severity",
+        "body_part",
+        "suspected_trigger",
+        "action_taken",
+        "observed_time",
+        "temperature",
+        "measured_at",
+        "measure_site",
+    },
     "education": {"session_type", "duration_min", "engagement_level"},
     "activity": {"location", "companions", "duration_min", "engagement_level"},
     "routine": {"context", "assistance_level", "completion_status", "trigger"},
@@ -76,12 +90,17 @@ CLEARABLE: dict[str, set[str]] = {
 _FULL_ARGS: dict[str, dict[str, Any]] = {
     "food": {"subject": "김밥", "action": "먹었다", "amount": "반 그릇", "reaction": "좋아함"},
     "health": {
+        # 체온은 원문에 있는 숫자만 저장된다 (#551)
+        "raw_text": "이마가 뜨거워서 오전 8시에 재 보니 38.5도",
         "symptom": ["발열"],
         "severity": "mild",
         "body_part": "이마",
         "suspected_trigger": "우유 먹은 뒤",
         "action_taken": "해열제",
         "observed_time": "오전 8시",
+        "temperature": 38.5,
+        "measured_at": "오전 8시",
+        "measure_site": "ear",
     },
     "education": {
         "subject": "한글 자모",
@@ -122,9 +141,10 @@ _MODES = ["키_없음", "null", "clear"]
 _TIMED = {"starts_time": "오후 3시", "ends_time": "오후 5시"}
 _MULTI_DAY = {"starts_time": "오전 9시", "ends_on": "2026-09-19", "ends_time": "오후 5시"}
 
-# ── 관찰 삭제 = update 의 status=deleted (soft delete) ─────────────
+# ── 관찰 삭제 = store 의 soft delete ─────────────────────────────
 # 행은 store 에 남고 status 만 deleted 로 바뀐다. 지운 행은 조회·수정 대상에서 빠진다.
-# status 로 열리는 값은 deleted 하나고, 지우는 호출에는 다른 수정을 섞지 않는다.
+# 모델에게는 지우는 tool 이 없다 — 삭제 제안을 보호자가 버튼으로 확정하면 서버가 store 로 지운다
+# (#535). update 로는 status 를 쓸 수 없다.
 _MINIMAL_ARGS: dict[str, dict[str, Any]] = {
     "food": {"subject": "김밥"},
     "health": {"symptom": ["발열"]},
@@ -132,7 +152,7 @@ _MINIMAL_ARGS: dict[str, dict[str, Any]] = {
     "activity": {"subject": "레고", "activity": "레고로 성 만들기"},
     "routine": {"subject": "양치하기", "routine_category": "self_care"},
 }
-# 지우는 호출에 섞으면 안 되는 수정 하나씩
+# 지운 기록에 시도할 수정 하나씩
 _ANOTHER_CHANGE: dict[str, dict[str, Any]] = {
     "food": {"reaction": "좋아함"},
     "health": {"body_part": "이마"},
@@ -174,12 +194,8 @@ async def _event(h: Harness, event_id: str) -> EventRow | EventDraft:
     return row
 
 
-async def _delete(h: Harness, domain: str, observation_id: str) -> Any:
-    return await execute_tool(
-        f"update_observation_{domain}",
-        {"observation_id": observation_id, "status": "deleted"},
-        h.context,
-    )
+async def _delete(h: Harness, domain: str, observation_id: str) -> bool:
+    return await h.context.store.delete_observation(domain=domain, observation_id=observation_id)
 
 
 # ── 관찰: 세 갈래 ─────────────────────────────────────────────────
@@ -406,13 +422,10 @@ async def 일정은_ends_at_말고는_비울_수_없다(h: Harness, *, name: str
 
 
 # ── 관찰 삭제 ───────────────────────────────────────────────────
-async def status_deleted_로_지우면_행은_남고_조회에서_빠진다(h: Harness, *, domain: str) -> None:
+async def store_로_지우면_행은_남고_조회에서_빠진다(h: Harness, *, domain: str) -> None:
     observation_id = await _create_observation(h, domain, _MINIMAL_ARGS[domain])
 
-    result = await _delete(h, domain, observation_id)
-
-    assert result.success is True, result.error
-    assert result.data == {"id": observation_id, "status": "deleted"}
+    assert await _delete(h, domain, observation_id) is True
     # store 안에는 행이 남아 있다
     assert await h.stored(domain, observation_id) == ("deleted", "원문")
     # 조회·단건 조회에서는 빠진다
@@ -433,33 +446,13 @@ async def 지운_기록은_다시_지우거나_고칠_수_없다(h: Harness, *, 
         h.context,
     )
 
-    assert again.success is False
-    assert again.error["code"] == ErrorCode.TARGET_NOT_FOUND
+    assert again is False
     assert edit.success is False
     assert edit.error["code"] == ErrorCode.TARGET_NOT_FOUND
 
 
-async def 지우는_호출에_다른_수정을_섞으면_거절한다(h: Harness, *, domain: str, mixed: str) -> None:
-    observation_id = await _create_observation(h, domain, _MINIMAL_ARGS[domain])
-    extra: dict[str, Any] = {
-        "field": _ANOTHER_CHANGE[domain],
-        "observed_on": {"observed_on": "어제"},
-        "clear": {"clear": list(_ANOTHER_CHANGE[domain])},
-    }[mixed]
-
-    result = await execute_tool(
-        f"update_observation_{domain}",
-        {"observation_id": observation_id, "status": "deleted", **extra},
-        h.context,
-    )
-
-    assert result.success is False
-    assert result.error["code"] == ErrorCode.INVALID_ARGS
-    row = await h.context.store.get_observation(domain=domain, observation_id=observation_id)
-    assert row is not None and row.fields["status"] == "active"
-
-
-async def update_로는_deleted_말고_다른_status_를_쓸_수_없다(h: Harness, *, status: str) -> None:
+async def update_로는_status_를_쓸_수_없다(h: Harness, *, status: str) -> None:
+    """deleted 도 막는다 — 지우는 것은 보호자가 버튼으로 확정하는 제안뿐이다 (#535)."""
     observation_id = await _create_observation(h, "food", _MINIMAL_ARGS["food"])
 
     result = await execute_tool(
@@ -470,6 +463,8 @@ async def update_로는_deleted_말고_다른_status_를_쓸_수_없다(h: Harne
 
     assert result.success is False
     assert result.error["code"] == ErrorCode.INVALID_ARGS
+    row = await h.context.store.get_observation(domain="food", observation_id=observation_id)
+    assert row is not None and row.fields["status"] == "active"
 
 
 # ── 준비물 챙김 ─────────────────────────────────────────────────
@@ -519,6 +514,196 @@ async def tool_로_다시_체크해도_처음_시각을_지킨다(h: Harness) ->
     assert row is not None and row.is_prepared and row.prepared_at == earlier
 
 
+# ── 기관 공지 읽기 (#832) ────────────────────────────────────────
+# 공지 행에는 식별자 · 저장 메타 칸이 없다. 모델에게 가는 값이라 포트에서부터 담지 않는다.
+# 시나리오 공지들은 raw_text 를 서로 확실히 다르게 둔다 (save_notice 가 97% 비슷한 글을 합친다).
+_NOTICE_FIELDS = {
+    "doc_kind",
+    "input_format",
+    "audience_scope",
+    "issued_on",
+    "received_at",
+    "title",
+    "raw_text",
+    "relation",
+    "items",
+}
+_NOTICE_ITEM_FIELDS = {
+    "handling",
+    "label",
+    "title",
+    "target_scope",
+    "starts_at",
+    "ends_at",
+    "all_day",
+    "due_at",
+    "due_all_day",
+    "details",
+    "supplies",
+    "source_quote",
+    "done_at",
+}
+
+
+def _notice_item(title: str, **kw: Any) -> NoticeItemRow:
+    base: dict[str, Any] = {
+        "handling": "info",
+        "label": "안내",
+        "title": title,
+        "target_scope": "class",
+        "starts_at": None,
+        "ends_at": None,
+        "all_day": False,
+        "due_at": None,
+        "due_all_day": False,
+        "details": (),
+        "supplies": (),
+        "source_quote": title,
+        "done_at": None,
+    }
+    return NoticeItemRow(**{**base, **kw})
+
+
+def _notice_row(raw_text: str, **kw: Any) -> NoticeRow:
+    base: dict[str, Any] = {
+        "doc_kind": "newsletter",
+        "input_format": "text",
+        "audience_scope": "class",
+        "issued_on": None,
+        "received_at": datetime(2026, 9, 1, 9, 0, tzinfo=KST),
+        "title": None,
+        "raw_text": raw_text,
+        "relation": None,
+        "items": (),
+    }
+    return NoticeRow(**{**base, **kw})
+
+
+async def _notices(h: Harness, **kw: Any) -> list[NoticeRow]:
+    kw.setdefault("limit", 5)
+    return await h.context.store.query_notices(child_id=h.context.child_id, **kw)
+
+
+async def 공지는_모든_칸을_그대로_돌려준다(h: Harness) -> None:
+    row = _notice_row(
+        "가을 운동회를 합니다. 11월 12일 오전 10시 운동장. 참가비 5천원, 11월 7일까지 회신.",
+        title="가을 운동회 안내",
+        issued_on=date(2026, 11, 1),
+        relation="correction",
+        items=(
+            _notice_item(
+                "가을 운동회",
+                handling="calendar",
+                label="행사",
+                target_scope="all",
+                starts_at=datetime(2026, 11, 12, 10, 0, tzinfo=KST),
+                ends_at=datetime(2026, 11, 12, 12, 0, tzinfo=KST),
+                details=(("장소", "운동장"), ("참가비", "5천원")),
+                supplies=("물병", "수건"),
+                source_quote="11월 12일 오전 10시 운동장",
+            ),
+            _notice_item(
+                "참가 회신",
+                handling="todo",
+                label="회신",
+                target_scope="child",
+                due_at=datetime(2026, 11, 7, 0, 0, tzinfo=KST),
+                due_all_day=True,
+                source_quote="11월 7일까지 회신해 주세요",
+                done_at=datetime(2026, 11, 3, 8, 30, tzinfo=KST),
+            ),
+        ),
+    )
+    await h.seed_notice(row)
+
+    assert await _notices(h) == [row]
+
+
+async def 공지_행에는_식별자_칸이_없다(h: Harness) -> None:
+    assert {f.name for f in fields(NoticeRow)} == _NOTICE_FIELDS
+    assert {f.name for f in fields(NoticeItemRow)} == _NOTICE_ITEM_FIELDS
+
+
+async def 항목은_일정_마감_제목_순으로_돌려준다(h: Harness) -> None:
+    await h.seed_notice(
+        _notice_row(
+            "여러 항목이 든 가정통신문입니다.",
+            items=(
+                _notice_item("나 안내"),
+                _notice_item("가 안내"),
+                _notice_item("마감 할 일", due_at=datetime(2026, 9, 5, 0, 0, tzinfo=KST)),
+                _notice_item("늦은 행사", starts_at=datetime(2026, 9, 20, 10, 0, tzinfo=KST)),
+                _notice_item("이른 행사", starts_at=datetime(2026, 9, 10, 10, 0, tzinfo=KST)),
+            ),
+        )
+    )
+
+    [notice] = await _notices(h)
+
+    assert [i.title for i in notice.items] == [
+        "이른 행사",
+        "늦은 행사",
+        "마감 할 일",
+        "가 안내",
+        "나 안내",
+    ]
+
+
+async def 항목_날짜로_공지를_찾는다(h: Harness) -> None:
+    await h.seed_notice(
+        _notice_row(
+            "9월 20일 체험학습 안내입니다.",
+            items=(_notice_item("체험학습", starts_at=datetime(2026, 9, 20, 10, 0, tzinfo=KST)),),
+        )
+    )
+
+    assert len(await _notices(h, date_from=date(2026, 9, 20), date_to=date(2026, 9, 20))) == 1
+    assert await _notices(h, date_from=date(2026, 9, 10), date_to=date(2026, 9, 10)) == []
+
+
+async def 받은_날은_KST_로_가른다(h: Harness) -> None:
+    # UTC 로는 같은 날 14:30 이다. 하루 단위는 한국 시간으로 센다
+    await h.seed_notice(
+        _notice_row(
+            "밤늦게 온 알림장입니다.", received_at=datetime(2026, 9, 14, 23, 30, tzinfo=KST)
+        )
+    )
+
+    assert len(await _notices(h, date_from=date(2026, 9, 14), date_to=date(2026, 9, 14))) == 1
+    assert await _notices(h, date_from=date(2026, 9, 15), date_to=date(2026, 9, 15)) == []
+
+
+async def 낱말은_항목_제목에서도_찾는다(h: Harness) -> None:
+    await h.seed_notice(
+        _notice_row(
+            "이번 달 안내문입니다.",
+            title="9월 안내",
+            items=(_notice_item("운동회"),),
+        )
+    )
+
+    assert len(await _notices(h, text_query="운동회")) == 1
+    assert await _notices(h, text_query="소풍") == []
+
+
+async def 종류를_말하면_같은_종류만_돌려준다(h: Harness) -> None:
+    await h.seed_notice(_notice_row("알림장입니다 첫째.", doc_kind="daily_note"))
+    await h.seed_notice(_notice_row("가정통신문입니다 둘째.", doc_kind="newsletter"))
+
+    [only] = await _notices(h, doc_kind="daily_note")
+
+    assert only.doc_kind == "daily_note"
+
+
+async def 최신순으로_limit_건만(h: Harness) -> None:
+    for day, text in ((1, "가장 오래된 공지"), (2, "가운데 공지입니다"), (3, "제일 최근 공지글")):
+        await h.seed_notice(_notice_row(text, received_at=datetime(2026, 9, day, 9, 0, tzinfo=KST)))
+
+    rows = await _notices(h, limit=2)
+
+    assert [r.raw_text for r in rows] == ["제일 최근 공지글", "가운데 공지입니다"]
+
+
 # ── 케이스 목록 ──────────────────────────────────────────────────
 def _case(scenario: Scenario, label: str = "", **params: Any) -> Any:
     case_id = f"{scenario.__name__}-{label}" if label else scenario.__name__
@@ -564,18 +749,21 @@ CASES = [
         _case(일정은_ends_at_말고는_비울_수_없다, n, name=n)
         for n in ("ends_time", "ends_on", "title")
     ),
-    *(_case(status_deleted_로_지우면_행은_남고_조회에서_빠진다, d, domain=d) for d in DOMAINS),
+    *(_case(store_로_지우면_행은_남고_조회에서_빠진다, d, domain=d) for d in DOMAINS),
     *(_case(지운_기록은_다시_지우거나_고칠_수_없다, d, domain=d) for d in DOMAINS),
     *(
-        _case(지우는_호출에_다른_수정을_섞으면_거절한다, f"{d}-{x}", domain=d, mixed=x)
-        for d in DOMAINS
-        for x in ("field", "observed_on", "clear")
-    ),
-    *(
-        _case(update_로는_deleted_말고_다른_status_를_쓸_수_없다, s, status=s)
-        for s in ("active", "stand_alone", "inactive")
+        _case(update_로는_status_를_쓸_수_없다, s, status=s)
+        for s in ("deleted", "active", "stand_alone", "inactive")
     ),
     _case(store_의_챙김_시각은_처음_체크한_때를_지킨다),
     _case(없는_준비물을_챙기면_None_이다),
     _case(tool_로_다시_체크해도_처음_시각을_지킨다),
+    _case(공지는_모든_칸을_그대로_돌려준다),
+    _case(공지_행에는_식별자_칸이_없다),
+    _case(항목은_일정_마감_제목_순으로_돌려준다),
+    _case(항목_날짜로_공지를_찾는다),
+    _case(받은_날은_KST_로_가른다),
+    _case(낱말은_항목_제목에서도_찾는다),
+    _case(종류를_말하면_같은_종류만_돌려준다),
+    _case(최신순으로_limit_건만),
 ]

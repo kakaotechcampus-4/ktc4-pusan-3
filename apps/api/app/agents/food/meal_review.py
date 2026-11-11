@@ -9,30 +9,45 @@
   5. 근거 대조       이번 run 에서 조회하지 않은 근거 id 를 인용하면 후보를 거절한다
   6. build()         6개월이 안 지난 아이 기록 근거 수로 `kind` 를 정한다.
                      이름 · 재료는 카탈로그 행에서 온다. 일반 추천이면 고른 메뉴(레시피 카탈로그
-                     행) 자체가 근거로 붙는다 — 문서 행이 없는 월령에도 근거 0행이 되지 않게(#442)
+                     행) 자체가 근거로 붙는다 — 문서 행이 없는 월령에도 근거 0행이 되지 않게(#442).
+                     이유식 식단 표 메뉴는 `food_doc` 식단 행이 근거다(#399)
+
+  7. 생성 후보      보호자가 재료 · 요리 종류를 정해 물었고 레시피북이 모자랄 때만 받는다(#740).
+                     모델이 이름 · 재료를 쓰므로 형식 · 재료 조건 · 최근 이름 · 풀 이름을 보고 같은
+                     안전 필터를 이름 + 재료로 건다. 근거가 없으면 요청 기반 일반 추천이다
 
 안전에 걸린 후보가 뒤 검사를 타면 엉뚱한 사유가 나간다. 걸린 후보는 고치지 않고 통째로 뺀다.
 사유는 코드로만 남긴다 — 메뉴 이름 · 근거 문장을 싣지 않는다(로그로 흘러간다).
 """
 
+import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, time
 from enum import StrEnum
 from uuid import UUID
 
 from app.agents.common.evidence import RankedEvidence, cite, unseen
+from app.agents.common.food_safety import filter_food_safety
+from app.agents.common.food_words import mentions_blocked_food
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionRejected, build
 from app.agents.food.context import MealPick
-from app.agents.food.food_check import mentions_blocked_food
+from app.agents.food.meal_request import condition_stems, names_mention
 from app.agents.food.nutrient_wording import wording_problem
-from app.agents.food.readouts import GENERAL_REASON_TODDLER, GENERAL_REASON_WEANING, READOUTS
+from app.agents.food.preparation_items import preparation_items
+from app.agents.food.readouts import (
+    GENERAL_REASON_REQUESTED,
+    GENERAL_REASON_TODDLER,
+    GENERAL_REASON_WEANING,
+    READOUTS,
+)
 from app.agents.food.result import ErrorCode
 from app.agents.food.schemas.common import EvidenceRef, MealSlot
-from app.agents.food.schemas.recommend import MealCandidate
+from app.agents.food.schemas.recommend import GeneratedMeal, MealCandidate
 from app.agents.food.store.ports import RECIPE_SOURCES, FoodDocRow, MenuCatalogRow, SafetyEntry
-from app.agents.food.tools.safety import filter_food_safety
+from app.agents.food.weaning_menu import WEANING_MENU_SOURCE, weaning_menu_citation
+from app.core.recipe_source import RECIPE_SOURCE_INFO
 from app.rules.age import Stage
 from app.rules.menu_evidence import menu_evidence_id
 from app.rules.menu_key import normalize_menu_key
@@ -44,10 +59,8 @@ Docs = Mapping[UUID, FoodDocRow]
 # 추천임을 표시하고 쌓인 기록 건수를 함께 보여 준다(루트 §2). 이유기 아이는 "이 시기 아기들" 문구다
 GENERAL_REASON = READOUTS.get(GENERAL_REASON_TODDLER).template
 GENERAL_REASON_INFANT = READOUTS.get(GENERAL_REASON_WEANING).template
-
-# 일반 추천에 붙는 메뉴 근거의 한 줄. 코드 문구다(모델이 쓰지 않는다). 05 화면에 그대로 나가서
-# 사실만 쓴다 — 후보 풀의 레시피는 재료 정리 표를 사람이 검수한 것만 들어온다(resolved)
-MENU_EVIDENCE_NOTE = "농식품정보원 공개 레시피 중 재료가 검수된 메뉴예요."
+# 보호자가 재료 · 요리 종류를 정해 물었고 아이 기록 근거가 없으면 이 문구다 — 레시피 · 생성 모두
+GENERAL_REASON_REQUEST = READOUTS.get(GENERAL_REASON_REQUESTED).template
 
 
 class RejectReason(StrEnum):
@@ -57,6 +70,12 @@ class RejectReason(StrEnum):
     FOOD_MENTION = "food_mention"
     UNKNOWN_EVIDENCE = "unknown_evidence"
     BUILD = "build_rejected"
+    REQUEST_MISMATCH = "request_mismatch"
+    GENERATED_NOT_ALLOWED = "generated_not_allowed"
+    GENERATED_TOO_MANY = "generated_too_many"
+    GENERATED_FORMAT = "generated_format"
+    GENERATED_RECENT = "generated_recent"
+    REQUEST_BLOCKED = "request_blocked"
 
 
 # 모델에게 돌려줄 설명 — 무엇을 고치면 되는지만. 모델이 쓴 값과 걸린 낱말은 싣지 않는다
@@ -80,6 +99,26 @@ GUIDANCE: dict[RejectReason, str] = {
         "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다. "
         "싫어하는 것을 근거로 썼으면 무엇을 피했는지 reason 에 쓴다."
     ),
+    RejectReason.REQUEST_MISMATCH: (
+        "보호자가 정한 재료가 이름이나 재료에 든 메뉴만 낸다. 모자라면 generated 로 채운다."
+    ),
+    RejectReason.GENERATED_NOT_ALLOWED: (
+        "generated 는 보호자가 재료나 요리 종류를 정해 물었고 requested_food 에 보호자 말 그대로 "
+        "적었을 때만, 돌 이후 아이에게 쓴다. 아니면 후보 목록에서 menu_key 로 고른다."
+    ),
+    RejectReason.GENERATED_TOO_MANY: (
+        "generated 는 후보 목록의 '요청과 맞음' 메뉴로 채우지 못하는 자리만큼 낸다. "
+        "후보 목록의 '요청과 맞음' 메뉴를 먼저 고른다."
+    ),
+    RejectReason.GENERATED_FORMAT: (
+        "메뉴 이름과 재료에 숫자 · 단위 · 괄호를 쓰지 않는다. 재료는 이름만 적고 8개 이하로 쓴다."
+    ),
+    RejectReason.GENERATED_RECENT: "최근에 추천한 메뉴는 다시 내지 않는다. 다른 메뉴로 바꾼다.",
+    # 왜 못 쓰는지(알레르기 · 연령)는 싣지 않는다 — 사유를 알면 낱말만 바꿔 같은 음식을 다시 낸다
+    RejectReason.REQUEST_BLOCKED: (
+        "이번 요청의 재료 · 요리 종류로는 generated 를 쓰지 않는다. "
+        "후보 목록에서 menu_key 로 고른다."
+    ),
 }
 
 
@@ -96,6 +135,45 @@ class Review:
     removed: tuple[str, ...] = ()  # 안전 필터로 빠진 menu_key. 로그 · 재샘플링용이다
 
 
+@dataclass(frozen=True)
+class RequestContext:
+    """보호자가 이번 요청에서 재료 · 요리 종류를 정해 물었는가, 그리고 검증에 필요한 풀 정보.
+
+    `food` 는 모델이 적은 `requested_food` 중 **보호자 말에 있다고 인정된 것**이다 — 비어 있으면
+    조건이 인정되지 않은 것이라 생성 후보를 받지 않고 이유 문구도 지금 그대로다.
+    """
+
+    food: str | None = None
+    kind: str | None = None  # ingredient · cuisine
+    # 샘플 안의 조건 맞는 레시피 수(요리 종류 조건이면 0). 생성 후보 자리는 3 - 이 수다
+    matched: int = 0
+    pool: Mapping[str, MenuCatalogRow] = field(default_factory=dict)  # 이번 run 후보 풀
+    recipe_keys: frozenset[str] = frozenset()  # 레시피북 전체(풀 밖 = 막힘 · 최근 추천)
+    recent_keys: frozenset[str] = frozenset()  # 최근 추천한 메뉴
+    # 보호자가 정한 조건이 아이에게 막힌 음식이다(알레르기 · 연령). 조건을 걸지 않고 생성도 받지
+    # 않는다 — 생성 메뉴는 전부 필터에 걸리고, 걸린 이름이 재호출로 모델에게 다시 간다(T49)
+    blocked: bool = False
+
+    @property
+    def accepted(self) -> bool:
+        return bool(self.food)
+
+
+NO_REQUEST = RequestContext()
+BLOCKED_REQUEST = RequestContext(blocked=True)
+
+# 생성 후보의 이름 · 재료에 쓰면 안 되는 것 — 정확한 레시피 · 양 금지(루트 §1)
+_FORMAT_BAD = re.compile(
+    r"\d|[()\[\]{}（）]|그램|킬로|밀리|리터|큰술|작은술|티스푼|스푼"
+    r"|(?:^|\s)[반한두세네]\s?(?:개|조각|줌|모|장|알|컵|병)(?:\s|$)"
+)
+# 생성 메뉴를 받는 단계 — 이유기는 질감 · 단계를 레시피 `stage_min` 으로만 봐서 생성에 걸 규칙이
+# 없다
+_GENERATION_STAGES: frozenset[str] = frozenset({"toddler", "preschool"})
+# 생성 후보의 안전 판정 행 — 출처 없는 임시 행이고 저장하지 않는다
+_MANUAL_SOURCE = "manual"
+
+
 def review_candidates(
     candidates: Sequence[MealCandidate],
     *,
@@ -106,6 +184,8 @@ def review_candidates(
     stage: Stage,
     months: int,
     today: date,
+    generated: Sequence[GeneratedMeal] = (),
+    request: RequestContext = NO_REQUEST,
 ) -> Review:
     """후보를 순서대로 검사해 통과한 것은 `MealPick` 으로, 걸린 것은 사유로 돌려준다.
 
@@ -116,8 +196,15 @@ def review_candidates(
     def mentions_blocked(reason: str, allow: Sequence[str]) -> bool:
         return mentions_blocked_food(reason, entries, stage=stage, months=months, allow=allow)
 
+    # 생성할 수 없는 단계(돌 이전)는 조건 검사 · 요청 기반 문구를 걸지 않는다 — 걸면 레시피북에
+    # 그 재료가 없을 때 모델이 빠져나갈 길이 없다(레시피는 조건 불일치, 생성은 단계로 막힌다).
+    # 지금처럼 레시피북 메뉴만 낸다
+    if stage not in _GENERATION_STAGES:
+        request = NO_REQUEST
+    stems = condition_stems(request.food) if request.food and request.kind == "ingredient" else []
     rejections: list[Rejection] = []
-    chosen: list[tuple[int, MealCandidate, MenuCatalogRow]] = []
+    # (후보 번호, 모델이 낸 후보, 카탈로그 행, 생성 메뉴인가)
+    chosen: list[tuple[int, MealCandidate | GeneratedMeal, MenuCatalogRow, bool]] = []
     taken: set[str] = set()
     for index, candidate in enumerate(candidates):
         # 띄어쓰기 · 대소문자만 다르게 옮겨 쓴 것은 같은 키로 본다 — 보여 준 후보 안에서만 찾는다
@@ -127,19 +214,42 @@ def review_candidates(
             rejections.append(Rejection(index, RejectReason.UNKNOWN_MENU))
         elif key in taken:
             rejections.append(Rejection(index, RejectReason.DUPLICATE_MENU))
+        elif stems and not names_mention((row.display_name, *row.ingredients), stems):
+            rejections.append(Rejection(index, RejectReason.REQUEST_MISMATCH))
         else:
             taken.add(key)
-            chosen.append((index, candidate, row))
+            chosen.append((index, candidate, row, False))
+
+    gone: list[str] = []  # 레시피북에 있는데 풀에 없는 이름으로 돌아온 생성 후보 — 막힌 것으로 본다
+    for offset, meal in enumerate(generated):
+        index = len(candidates) + offset
+        outcome = _review_generated(
+            meal,
+            position=offset,
+            request=request,
+            stems=stems,
+            stage=stage,
+            taken=taken,
+            today=today,
+        )
+        if isinstance(outcome, RejectReason):
+            rejections.append(Rejection(index, outcome))
+        elif outcome is None:
+            gone.append(normalize_menu_key(meal.name))
+        else:
+            taken.add(outcome.menu_key)
+            chosen.append((index, meal, outcome, outcome.source == _MANUAL_SOURCE))
     if rejections:
         return Review(picks=(), rejections=tuple(rejections))
 
-    # 2. 사후 안전 필터 — 모델이 고른 행 그대로 다시 건다. 막힌 것 · 확인 못 한 것은 모두 뺀다
-    verdict = filter_food_safety([row for _, _, row in chosen], entries, stage, months=months)
+    # 2. 사후 안전 필터 — 레시피는 고른 행 그대로, 생성은 이름 + 재료 임시 행으로 다시 건다.
+    #    막힌 것 · 확인 못 한 것은 모두 뺀다
+    verdict = filter_food_safety([row for _, _, row, _ in chosen], entries, stage, months=months)
     passed = {row.menu_key for row in verdict.passed}
-    removed = tuple(row.menu_key for _, _, row in chosen if row.menu_key not in passed)
+    removed = (*(row.menu_key for _, _, row, _ in chosen if row.menu_key not in passed), *gone)
 
     picks: list[MealPick] = []
-    for index, candidate, row in chosen:
+    for index, candidate, row, is_generated in chosen:
         if row.menu_key not in passed:
             continue
         reason = _check(candidate, seen=seen, docs=docs, mentions_blocked=mentions_blocked)
@@ -152,12 +262,13 @@ def review_candidates(
                 content=row.display_name,
                 reason=candidate.reason.strip(),
                 citations=reason,
-                general_reason=GENERAL_REASON_INFANT
-                if stage == "infant_weaning"
-                else GENERAL_REASON,
-                general_basis=_menu_basis(row),
+                general_reason=_general_reason(stage, request),
+                # 생성 메뉴는 메뉴 근거가 없다 — 그 요청이 기준이다(`requested`)
+                general_basis=() if is_generated else _menu_basis(row),
                 allergens=verdict.allergens.get(row.menu_key, ()),
-                items=row.ingredients,
+                # 준비물만 주재료로 줄인다. 안전 필터는 위에서 전체 재료 · 코드로 이미 걸렀다 (#474)
+                items=preparation_items(row.main_ingredients),
+                requested=request.accepted,
                 today=today,
             )
         except SuggestionRejected:
@@ -166,7 +277,62 @@ def review_candidates(
         picks.append(
             MealPick(draft=draft, menu_key=row.menu_key, meal_slot=MealSlot(candidate.meal_slot))
         )
-    return Review(picks=tuple(picks), rejections=tuple(rejections), removed=removed)
+    return Review(picks=tuple(picks), rejections=tuple(rejections), removed=tuple(removed))
+
+
+def _general_reason(stage: Stage, request: RequestContext) -> str:
+    """아이 기록 근거가 없을 때의 이유 문구. 보호자가 조건을 정해 물었으면 그 요청이 기준이다."""
+    if request.accepted:
+        return GENERAL_REASON_REQUEST
+    return GENERAL_REASON_INFANT if stage == "infant_weaning" else GENERAL_REASON
+
+
+def _review_generated(
+    meal: GeneratedMeal,
+    *,
+    position: int,
+    request: RequestContext,
+    stems: Sequence[str],
+    stage: Stage,
+    taken: set[str],
+    today: date,
+) -> MenuCatalogRow | RejectReason | None:
+    """생성 후보 하나의 앞 검사. 통과하면 안전 필터에 걸 행을, 거절이면 사유를 돌려준다.
+
+    레시피북에 있는 이름이면 그 레시피 행(검수된 재료 · 출처)을 쓰고, 풀 밖 레시피(막힘 · 최근
+    추천)와 같은 이름이면 `None` — 막힌 메뉴가 이름만 바꿔 돌아오지 않게 뺀다.
+    """
+    if request.blocked:
+        return RejectReason.REQUEST_BLOCKED
+    if not request.accepted or stage not in _GENERATION_STAGES:
+        return RejectReason.GENERATED_NOT_ALLOWED
+    allowed = 3 - request.matched
+    if position >= allowed:
+        return RejectReason.GENERATED_TOO_MANY
+    parts = (meal.name, *meal.main_ingredients, *meal.ingredients)
+    if any(_FORMAT_BAD.search(part) for part in parts):
+        return RejectReason.GENERATED_FORMAT
+    if stems and not names_mention(parts, stems):
+        return RejectReason.REQUEST_MISMATCH
+    key = normalize_menu_key(meal.name)
+    if key in request.pool:
+        return RejectReason.DUPLICATE_MENU if key in taken else request.pool[key]
+    if key in request.recipe_keys:
+        return None
+    if key in request.recent_keys:
+        return RejectReason.GENERATED_RECENT
+    if key in taken:
+        return RejectReason.DUPLICATE_MENU
+    return MenuCatalogRow(
+        menu_key=key,
+        display_name=meal.name,
+        source=_MANUAL_SOURCE,
+        resolved=True,
+        synced_at=datetime.combine(today, time.min, tzinfo=UTC),
+        # 주재료도 안전 필터에 건다 — 모델이 주재료만 쓰고 재료 목록에서 빠뜨려도 걸리게
+        ingredients=tuple(dict.fromkeys((*meal.ingredients, *meal.main_ingredients))),
+        main_ingredients=tuple(meal.main_ingredients),
+    )
 
 
 def error_code(rejections: Sequence[Rejection]) -> str:
@@ -186,7 +352,7 @@ def explain(rejections: Sequence[Rejection]) -> str:
 
 
 def _check(
-    candidate: MealCandidate,
+    candidate: MealCandidate | GeneratedMeal,
     *,
     seen: Seen,
     docs: Docs,
@@ -210,7 +376,7 @@ def _check(
     return tuple(_cite(item, note=pick.note) for pick, item in found)
 
 
-def _avoided(candidate: MealCandidate, seen: Seen) -> tuple[str, ...]:
+def _avoided(candidate: MealCandidate | GeneratedMeal, seen: Seen) -> tuple[str, ...]:
     """후보가 인용한 기피 근거의 대상. 기피를 인용하면 `build()` 가 이유에 피한 것을 쓰라고
     요구하므로, 그 음식은 막힌 음식이어도 이유에 써도 된다. 조회하지 않은 id 는 다음 검사가
     거른다."""
@@ -237,11 +403,27 @@ def _menu_basis(row: MenuCatalogRow) -> tuple[EvidenceCitation, ...]:
 
     레시피 카탈로그 행만 가리킬 수 있다(id 는 `rules/menu_evidence`). 레시피 번호가 없는 행은
     비운다 — 그때는 지금처럼 문서 행을 인용해야 일반 추천이다. 운영 후보 풀은 늘 레시피 행이다.
+
+    같은 이름을 합친 행은 합쳐진 레시피를 모두 단다(`merged_from`). 그 메뉴의 재료 · 알레르기가
+    모두에서 왔고, 대표만 달면 대표가 소스에서 내려간 뒤 다른 소스로 남은 메뉴를 05 가 숨긴다.
+    한 줄 문구는 소스 정보 표의 `note` 다(코드 문구, #510).
+
+    이유식 식단 표 메뉴(이유기, #399)는 레시피가 아니라 `food_doc` 식단 행을 가리킨다.
     """
+    if row.source == WEANING_MENU_SOURCE:
+        return (weaning_menu_citation(row),)
     if row.source not in RECIPE_SOURCES or not row.source_id:
         return ()
-    ref = Ref(kind="recipe_catalog", id=menu_evidence_id(row.source, row.source_id))
-    return (EvidenceCitation(ref=ref, note=MENU_EVIDENCE_NOTE, label=row.display_name),)
+    pairs = ((row.source, row.source_id), *row.merged_from)
+    return tuple(
+        EvidenceCitation(
+            ref=Ref(kind="recipe_catalog", id=menu_evidence_id(source, source_id)),
+            note=RECIPE_SOURCE_INFO[source].note,  # type: ignore[index] — RECIPE_SOURCES 와 같은 키다
+            label=row.display_name,
+        )
+        for source, source_id in pairs
+        if source in RECIPE_SOURCES
+    )
 
 
 def _cite(item: RankedEvidence | FoodDocRow, *, note: str) -> EvidenceCitation:

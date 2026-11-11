@@ -4,24 +4,36 @@ Supervisor 가 실패해도 입력 처리는 계속돼야 한다 — run() 은 �
 돌려주고, **재시도하지 않는다**. 강등 여부는 pipeline 이 정한다 (supervisor_plan S5).
 """
 
+import asyncio
 import json
 import logging
+import time
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from app.agents.common.llm_client import LLMBadRequestError, LLMResponse, LLMUnavailableError
+from app.agents.supervisor import agent as agent_module
 from app.agents.supervisor.agent import (
     _FORCE_ROUTE,
     BAD_JSON,
     LLM_UNAVAILABLE,
     NO_TOOL_CALL,
     SCHEMA,
+    SUPERVISOR_TIMEOUT_S,
+    TIMEOUT,
     _attempts,
     run,
 )
-from app.agents.supervisor.schemas import NOT_SUBSTRING
+from app.agents.supervisor.context import (
+    EMPTY_CONTEXT,
+    ConversationContext,
+    PriorResult,
+    PriorTurn,
+)
+from app.agents.supervisor.prompt import build_system_prompt
+from app.agents.supervisor.schemas import NOT_SUBSTRING, ROUTE_TOOL_SPEC, ROUTE_TOOL_SPEC_CONTEXT
 
 RAW = "오늘 사과를 먹었어. 저녁에는 뭘 먹이면 좋을까?"
 _GOOD = {
@@ -271,6 +283,60 @@ async def test_전부_거절되면_LLM_오류로_끝낸다() -> None:
     assert result.model_calls == 3  # tool_choice 3가지
 
 
+# ── 시간 상한 (#914) ────────────────────────────────────────────
+class HangingLLM(FakeLLM):
+    """답을 주지 않고 멈춘다. 상한이 끊어야 테스트가 끝난다."""
+
+    async def chat(self, **params: Any) -> LLMResponse:
+        self.calls.append(params)
+        await asyncio.sleep(3600)
+        raise AssertionError("상한이 끊지 못했다")
+
+
+async def test_모델이_멈추면_상한에서_예외_없이_실패로_끝낸다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(agent_module, "SUPERVISOR_TIMEOUT_S", 0.05)
+    llm = HangingLLM()
+
+    result = await asyncio.wait_for(run(RAW, client=llm), timeout=5)
+
+    assert result.error == TIMEOUT
+    assert result.detail == "TimeoutError"  # 예외 이름만 — 원문은 싣지 않는다
+    assert result.output is None
+    assert result.model_calls == 1
+    assert len(llm.calls) == 1  # 멈춘 호출을 다른 tool_choice 로 다시 부르지 않는다
+
+
+async def test_상한은_폴백_재시도까지_합친_시간이다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """첫 호출이 거절로 상한을 다 쓰고 돌아오면 다음 tool_choice 를 부르지 않는다."""
+    monkeypatch.setattr(agent_module, "SUPERVISOR_TIMEOUT_S", 0.05)
+
+    class SlowReject(FakeLLM):
+        async def chat(self, **params: Any) -> LLMResponse:
+            self.calls.append(params)
+            time.sleep(0.06)  # await 없이 상한을 넘긴다 — 취소가 아니라 남은 시간 검사가 막는다
+            raise LLMBadRequestError("tool_choice")
+
+    llm = SlowReject()
+    result = await run(RAW, client=llm)
+
+    assert result.error == TIMEOUT
+    assert result.model_calls == 1
+    assert len(llm.calls) == 1
+
+
+async def test_상한_안에서_답하면_그대로_쓴다() -> None:
+    result = await run(RAW, client=FakeLLM(_route(_GOOD)))
+
+    assert result.ok
+    assert result.error is None
+
+
+def test_상한은_20초다() -> None:
+    assert SUPERVISOR_TIMEOUT_S == 20.0
+
+
 # ── 로그 ────────────────────────────────────────────────────────
 async def test_로그에_조각_원문이_없다(caplog: pytest.LogCaptureFixture) -> None:
     # 루트 §2 — 로그에 원문 대신 개수·라벨만
@@ -288,3 +354,123 @@ async def test_실패도_코드만_남긴다(caplog: pytest.LogCaptureFixture) -
 
     assert f"error={NO_TOOL_CALL}" in caplog.text
     assert "사과" not in caplog.text
+
+
+# ── 앞 대화 · resolved_request ──────────────────────────────────
+CTX = ConversationContext(
+    (
+        PriorTurn(
+            "실내 놀이 추천해줘",
+            (PriorResult("activity", None, "completed", ("블록 쌓기",)),),
+        ),
+    )
+)
+FOLLOW_RAW = "더 쉬운 건 없어?"
+RESOLVED = "블록 쌓기보다 쉬운 실내 놀이 추천"
+FOLLOW = {
+    "segments": [
+        {
+            "text": FOLLOW_RAW,
+            "kind": "request",
+            "agent": "activity",
+            "resolved_request": RESOLVED,
+        }
+    ]
+}
+
+
+async def test_앞_대화는_이번_문장_앞_user_메시지_하나다() -> None:
+    llm = FakeLLM(_route(FOLLOW))
+
+    await run(FOLLOW_RAW, client=llm, context=CTX)
+
+    assert llm.calls[0]["messages"][1:] == [
+        {"role": "user", "content": CTX.render()},
+        {"role": "user", "content": FOLLOW_RAW},
+    ]
+
+
+async def test_맥락이_있으면_해석을_돌려준다() -> None:
+    result = await run(FOLLOW_RAW, client=FakeLLM(_route(FOLLOW)), context=CTX)
+
+    assert result.output is not None
+    (segment,) = result.output.segments
+    assert segment.text == FOLLOW_RAW  # 원문 조각은 그대로
+    assert segment.resolved_request == RESOLVED
+
+
+async def test_맥락_없이_온_해석은_지운다() -> None:
+    result = await run(FOLLOW_RAW, client=FakeLLM(_route(FOLLOW)), context=None)
+
+    assert result.output is not None
+    (segment,) = result.output.segments
+    assert segment.resolved_request is None and segment.agent == "activity"
+
+
+async def test_다시_나눌_때도_앞_대화를_싣는다() -> None:
+    llm = FakeLLM(_route(FOLLOW))
+
+    await run(FOLLOW_RAW, client=llm, context=CTX, feedback="[다시 나누기] x")
+
+    assert [m["content"] for m in llm.calls[0]["messages"][1:]] == [
+        CTX.render(),
+        FOLLOW_RAW,
+        "[다시 나누기] x",
+    ]
+
+
+async def test_빈_맥락도_메시지로_간다() -> None:
+    llm = FakeLLM(_route(FOLLOW))
+
+    await run(FOLLOW_RAW, client=llm, context=ConversationContext())
+
+    assert llm.calls[0]["messages"][1] == {"role": "user", "content": EMPTY_CONTEXT}
+
+
+async def test_맥락이_없으면_메시지_구성이_지금과_같다() -> None:
+    llm = FakeLLM(_route(FOLLOW))
+
+    await run(FOLLOW_RAW, client=llm)
+
+    params = llm.calls[0]
+    assert [m["role"] for m in params["messages"]] == ["system", "user"]
+    # 앞 대화가 없는 호출은 앞 대화 기능이 생기기 전과 같은 system 프롬프트 · tool spec 을 쓴다
+    assert params["messages"][0]["content"] == build_system_prompt()
+    assert "[앞 대화가 올 때]" not in params["messages"][0]["content"]
+    assert params["tools"] == [ROUTE_TOOL_SPEC]
+
+
+async def test_맥락이_있으면_앞_대화_절과_resolved_request_칸이_모델에_간다() -> None:
+    llm = FakeLLM(_route(FOLLOW))
+
+    await run(FOLLOW_RAW, client=llm, context=CTX)
+
+    params = llm.calls[0]
+    assert params["messages"][0]["content"] == build_system_prompt(with_context=True)
+    assert params["tools"] == [ROUTE_TOOL_SPEC_CONTEXT]
+
+
+async def test_빈_맥락도_앞_대화용_프롬프트와_spec_을_쓴다() -> None:
+    llm = FakeLLM(_route(FOLLOW))
+
+    await run(FOLLOW_RAW, client=llm, context=ConversationContext())
+
+    assert llm.calls[0]["tools"] == [ROUTE_TOOL_SPEC_CONTEXT]
+
+
+async def test_로그에_해석_문장과_앞_대화가_없다(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+
+    await run(FOLLOW_RAW, client=FakeLLM(_route(FOLLOW)), context=CTX)
+
+    assert "resolved=1" in caplog.text and "turns=1" in caplog.text
+    assert "블록 쌓기" not in caplog.text and "실내 놀이" not in caplog.text
+
+
+async def test_빈_맥락에서_온_해석은_지운다() -> None:
+    """이어 볼 앞 대화가 없으면 모델이 쓴 해석은 지어낸 문장이다 — 보호자 요청으로 넘기지 않는다."""
+    result = await run(FOLLOW_RAW, client=FakeLLM(_route(FOLLOW)), context=ConversationContext())
+
+    assert result.output is not None
+    (segment,) = result.output.segments
+    assert segment.resolved_request is None

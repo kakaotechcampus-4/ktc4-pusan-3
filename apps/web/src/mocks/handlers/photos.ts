@@ -6,13 +6,14 @@ import type {
   PhotoCommitResponse,
   PhotoEntry,
   PhotoLane,
+  PhotoUploadTicket,
 } from "@/lib/api/types";
 import { PHOTO_LANES } from "@/lib/api/types";
 
 import { CHILD_ID, daysAgo } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
-import { withIdempotency } from "./idempotency";
+import { forgetRun, withIdempotency } from "./idempotency";
 
 /**
  * 08 사진으로 적기 — 업로드 · 다시 읽기 · 저장.
@@ -46,15 +47,22 @@ interface PhotoRun {
    * ⚠️ commit 요청에는 날짜 필드가 없어서(계약서 §09) 서버가 run 에 들고 있어야 한다.
    */
   date: string | null;
-  /** 못 읽은 사진. `failed` 로 끝난다. */
-  unreadable: boolean;
+  /**
+   * `failed` 로 끝나는 사진. `unparsable` 은 글자를 못 찾은 것, `not_document` 는 글자는 읽었는데
+   * 공지 · 식단표가 아닌 것(영수증 · 게임 화면)이다. 실서버와 같은 값이다.
+   */
+  failure: "unparsable" | "not_document" | null;
 }
 
 const photoRuns = new Map<string, PhotoRun>();
 
+/** `photo_commit_failed` 에서 commit 을 이미 한 번 끊었는가 (#824). 🚨 한 번만 끊는다 — 다시 누르면 저장돼야 한다. */
+let commitCut = false;
+
 /** 🚨 목은 프로세스 수명만큼 산다. 테스트 사이에 비운다 (`src/test/setup.ts`). */
 export function resetPhotoRuns(): void {
   photoRuns.clear();
+  commitCut = false;
 }
 
 export function isPhotoRun(runId: string): boolean {
@@ -71,10 +79,13 @@ export function isPhotoRun(runId: string): boolean {
  */
 function readPhoto(declared: PhotoLane, date: string | null): PhotoRun {
   const scenario = currentScenario();
-  const base = { declared, guess: declared, confidence: 0.86, date, unreadable: false };
+  const base = { declared, guess: declared, confidence: 0.86, date, failure: null };
 
   if (scenario === "photo_unreadable") {
-    return { ...base, confidence: 0.3, raw_text: "", entries: [], tags: [], unreadable: true };
+    return { ...base, confidence: 0.3, raw_text: "", entries: [], tags: [], failure: "unparsable" };
+  }
+  if (scenario === "photo_not_document") {
+    return { ...base, raw_text: "", entries: [], tags: [], failure: "not_document" };
   }
 
   if (declared === "activity") {
@@ -106,27 +117,128 @@ function readPhoto(declared: PhotoLane, date: string | null): PhotoRun {
 function noticeText(): string {
   return [
     "9월 넷째 주 알림장",
-    "월요일 도서관 나들이가 있어요. 준비물은 없어요.",
+    "월요일 오전 9시 30분 도서관 나들이가 있어요. 준비물은 없어요.",
     "수요일 원복을 입고 등원해 주세요.",
+    "목요일까지 체험학습 동의서를 회신해 주세요.",
     "금요일 물놀이가 있어요. 준비물: 수건, 수영복, 여벌 옷",
+    "다음 주 월요일부터 금요일까지 독서 주간이에요.",
+    "부모 참여 수업은 오전 10시부터 12시까지예요. 신청은 수요일까지 받아요.",
+    "가정통신문은 화요일 오후 6시까지 회신해 주세요.",
+    "비가 오면 바깥 놀이는 실내 활동으로 바꿔요.",
+    "지난 금요일 가을 운동회에 와 주셔서 고맙습니다.",
+    "현장학습 신청서는 지난 화요일까지 받았어요.",
     "이달 말 생일잔치 날짜는 추후 공지합니다.",
   ].join("\n");
+}
+
+/** 서울 시각 ISO. 🚨 서버처럼 시간대를 달아 보낸다 — 화면이 기기 시간대로 읽지 않는지 보려고. */
+function seoulAt(day: string, time: string): string {
+  return `${day}T${time}:00+09:00`;
 }
 
 /**
  * 알림장 한 장에서 나온 항목들. 🚨 **일부러 못 읽은 것을 섞는다** — 화면이 두 무리로 가르는
  * 것이 이 목의 요점이고, 전부 잘 읽힌 상태만 있으면 "확인이 필요해요" 를 볼 수가 없다.
+ *
+ * 🚨 **서버가 보내는 날짜 칸을 그대로 흉내 낸다** (#723 · `photo_run.py` 의 `_item_entry`) —
+ *    `date` 는 `starts_at ?? due_at` 의 날짜고, 종일 일정의 끝은 그날 23:59 다. 그래서
+ *    시각을 읽은 일정, 여러 날 일정, 마감만 있는 할 일, 날짜 없는 안내가 한 장에 다 있다.
  */
 function noticeEntries(): PhotoEntry[] {
+  const library = daysAgo(-5);
+  const consentDue = daysAgo(-4);
+  const readingFrom = daysAgo(-8);
+  const readingTo = daysAgo(-12);
+  const classDay = daysAgo(-9);
+  const classDue = daysAgo(-3);
+  const letterDue = daysAgo(-2);
+  const sportsDay = daysAgo(3);
+  const tripDue = daysAgo(2);
   return [
     {
       id: "pe_1",
       kind: "event",
       title: "도서관 나들이",
-      date: daysAgo(-5),
+      date: library,
+      // 🚨 시각을 읽은 일정이다. 시트가 시각 칸을 9:30 으로 채워서 열어야 한다.
+      all_day: false,
+      items: [],
+      needs_review: false,
+      past: false,
+      starts_at: seoulAt(library, "09:30"),
+      ends_at: null,
+      due_at: null,
+    },
+    {
+      id: "pe_5",
+      kind: "event",
+      title: "독서 주간",
+      date: readingFrom,
+      // 🚨 여러 날 일정이다. 목록은 기간으로 쓰고, 넣을 때 끝날까지 함께 간다.
       all_day: true,
       items: [],
       needs_review: false,
+      past: false,
+      starts_at: seoulAt(readingFrom, "00:00"),
+      ends_at: seoulAt(readingTo, "23:59"),
+      due_at: null,
+    },
+    {
+      id: "pe_6",
+      kind: "todo",
+      title: "체험학습 동의서 회신",
+      // 🚨 마감만 있는 할 일이다. `date` 는 마감일이고, 일정으로 넣을 때 그 날을 시작으로 쓰지 않는다.
+      date: consentDue,
+      all_day: true,
+      items: [],
+      needs_review: false,
+      past: false,
+      starts_at: null,
+      ends_at: null,
+      due_at: seoulAt(consentDue, "23:59"),
+    },
+    {
+      id: "pe_8",
+      kind: "event",
+      title: "부모 참여 수업",
+      date: classDay,
+      // 🚨 시각을 읽은 시작에 하루 종일 마감이 붙은 모양이다 (#792 리뷰). `all_day` 는 위 칸(시작)의 것이라
+      //    거짓이다 — 서버가 둘을 합쳐 보내던 때는 하루 종일로 보여 10시가 사라지고 숨은 끝이 들어갔다.
+      all_day: false,
+      items: [],
+      needs_review: false,
+      past: false,
+      starts_at: seoulAt(classDay, "10:00"),
+      ends_at: seoulAt(classDay, "12:00"),
+      due_at: seoulAt(classDue, "23:59"),
+    },
+    {
+      id: "pe_9",
+      kind: "todo",
+      title: "가정통신문 회신",
+      date: letterDue,
+      // 🚨 시각을 읽은 마감이다. 목록은 "마감 … 오후 6:00" 이고, 일정으로 넣을 때 시작은 여전히 하루 종일에서 연다.
+      all_day: false,
+      items: [],
+      needs_review: false,
+      past: false,
+      starts_at: null,
+      ends_at: null,
+      due_at: seoulAt(letterDue, "18:00"),
+    },
+    {
+      id: "pe_7",
+      kind: "info",
+      title: "비 오는 날 실내 활동",
+      // 🚨 날짜가 없는 안내는 정상이다. "못 읽었어요" 로 보이면 안 된다.
+      date: null,
+      all_day: false,
+      items: [],
+      needs_review: false,
+      past: false,
+      starts_at: null,
+      ends_at: null,
+      due_at: null,
     },
     {
       id: "pe_2",
@@ -136,6 +248,7 @@ function noticeEntries(): PhotoEntry[] {
       all_day: true,
       items: ["원복"],
       needs_review: false,
+      past: false,
     },
     {
       id: "pe_3",
@@ -145,6 +258,37 @@ function noticeEntries(): PhotoEntry[] {
       all_day: true,
       items: ["수건", "수영복", "여벌 옷"],
       needs_review: false,
+      past: false,
+    },
+    {
+      id: "pe_10",
+      kind: "event",
+      title: "가을 운동회",
+      // 🚨 지난 일정이다 (#828 리뷰 · #854). 지난주 알림장을 늦게 올리면 이미 지난 일정도 읽힌다.
+      //    시작 날짜를 읽었어도 켜 두지 않는다 — 지났는지는 서버가 정해 보낸다(`past`).
+      date: sportsDay,
+      all_day: true,
+      items: [],
+      needs_review: false,
+      past: true,
+      starts_at: seoulAt(sportsDay, "00:00"),
+      ends_at: seoulAt(sportsDay, "23:59"),
+      due_at: null,
+    },
+    {
+      id: "pe_11",
+      kind: "todo",
+      title: "현장학습 신청서 회신",
+      // 🚨 마감이 지난 할 일이다. 서버는 이것도 `past` 로 보내지만, 할 일은 원래 켜지 않으니
+      //    "지난 일정이라 꺼 두었어요." 를 말하면 틀린 까닭이다 (`offBecausePast`).
+      date: tripDue,
+      all_day: true,
+      items: [],
+      needs_review: false,
+      past: true,
+      starts_at: null,
+      ends_at: null,
+      due_at: seoulAt(tripDue, "23:59"),
     },
     {
       id: "pe_4",
@@ -154,6 +298,7 @@ function noticeEntries(): PhotoEntry[] {
       date: null,
       items: [],
       needs_review: true,
+      past: false,
       review_reason: "날짜가 '추후 공지' 로 적혀 있어서 읽지 못했어요.",
     },
   ];
@@ -184,6 +329,7 @@ function mealPlanEntries(): PhotoEntry[] {
     all_day: true,
     items: [],
     needs_review: false,
+    past: false,
   }));
 
   // 한 칸은 접혀서 안 보이는 자리에도 못 읽은 것이 있을 수 있다는 것을 보여준다.
@@ -192,6 +338,7 @@ function mealPlanEntries(): PhotoEntry[] {
     title: "읽지 못한 칸",
     date: null,
     needs_review: true,
+    past: false,
     review_reason: "글자가 겹쳐 있어서 이 칸은 읽지 못했어요.",
   };
 
@@ -219,9 +366,12 @@ export async function* photoRunScript(runId: string): AsyncGenerator<Uint8Array>
   yield frame("step", { index: 1, total: 2, label: "사진에서 글자를 찾고 있어요" });
   await sleep(600);
 
-  if (run.unreadable) {
+  if (run.failure) {
     // 🚨 실패는 200 + 빈 배열이 아니다. 여기서 스트림이 끝나고 저장된 것은 없다.
-    yield frame("failed", { reason: "unparsable", raw_text: "" });
+    //    서버처럼 실패한 run 의 키는 잊는다 (photos.py 의 `ended_with != "failed"`) — 한 줄 입력 목과 같다.
+    //    `message`(#768)는 싣지 않는다 — 08 은 그 문구를 쓰지 않고 자기 카드를 그린다 (chat-run-v1.md §3)
+    forgetRun(runId);
+    yield frame("failed", { reason: run.failure, raw_text: "" });
     return;
   }
 
@@ -236,6 +386,8 @@ export async function* photoRunScript(runId: string): AsyncGenerator<Uint8Array>
     // 🚨 문서와 활동은 **다른 필드**다. 한 배열에 섞지 않는다 (types.ts 의 🚨).
     entries: run.entries,
     tags: run.tags,
+    // 서버가 사진을 받은 날이다 — 화면이 고친 날짜가 지났는지를 이 날과 견준다 (`pastOnConfirm`).
+    today: daysAgo(0),
   });
   await sleep(200);
 
@@ -293,6 +445,14 @@ function activityObservation(tags: string[], when: string | null): Observation {
 
 export const photoHandlers = [
   /**
+   * 목에는 S3 가 없다 — 로컬 개발과 같이 `direct` 로 답해 사진을 아래 `POST /photos` 로 받는다.
+   * S3 쪽(업로드 주소 · `upload_key`)은 서버 테스트(test_photos.py)가 건다.
+   */
+  http.post(url("/children/:cid/photos/uploads"), async () => {
+    await networkDelay();
+    return HttpResponse.json({ mode: "direct" } satisfies PhotoUploadTicket, { status: 201 });
+  }),
+  /**
    * 🚨 키가 없으면 400 이다 — 같은 사진이 두 번 읽히면 모델 호출이 두 배다 (NF-01).
    *    계약서 §01 의 5개 중 하나다.
    */
@@ -303,9 +463,13 @@ export const photoHandlers = [
 
       const form = await request.formData();
       const file = form.get("file");
+      // S3 로 올렸으면 사진 대신 열쇠가 온다 (`sendPhoto`). 둘 중 하나는 있어야 한다
+      const uploadKey = form.get("upload_key");
       // ⚠️ 필드 이름이 계약서에 없어서 화면과 목이 `file` 로 맞춰 뒀다 (operations.ts 의 ⚠️).
       //    목이 이걸 검사해야 이름이 어긋났을 때 조용히 통과하지 않는다.
-      if (!file || typeof file === "string") {
+      const hasFile = file !== null && typeof file !== "string";
+      const hasKey = typeof uploadKey === "string" && uploadKey.length > 0;
+      if (hasFile === hasKey) {
         return apiError(422, "validation_failed", "사진 파일이 없어요", { field: "file" });
       }
 
@@ -339,6 +503,17 @@ export const photoHandlers = [
     const run = photoRuns.get(String(params.rid));
     if (!run) return apiError(404, "not_found", "저장할 사진이 없어요");
 
+    // 🚨 일정을 넣은 뒤 commit 만 실패한 경우 (#824). 화면은 넣은 일정 수를 말하고, 다시 누르면 commit 만 보내야 한다.
+    const scenario = currentScenario();
+    if (scenario === "photo_commit_failed" && !commitCut) {
+      commitCut = true;
+      return apiError(500, "internal_error", "잠시 후 다시 시도해 주세요");
+    }
+    // 읽은 결과가 서버에서 사라진 경우 (30분 · `photo_run.py`). 다시 눌러도 같은 404 다.
+    if (scenario === "photo_commit_expired") {
+      return apiError(404, "not_found", "저장할 사진이 없어요");
+    }
+
     const body = (await request.json()) as PhotoCommitRequest;
     const entries = body.entries ?? [];
     const tags = body.selected_tags ?? [];
@@ -350,6 +525,14 @@ export const photoHandlers = [
       return apiError(422, "validation_failed", "확인하지 않은 항목이 있어요", {
         field: "entries",
         ids: unchecked.map((e) => e.id),
+      });
+    }
+
+    // 서버(`photos.py` 의 commit)와 같다 — 일정 하나는 항목 하나에만 잇는다 (#723).
+    const linked = entries.flatMap((e) => (e.event_id ? [e.event_id] : []));
+    if (linked.length !== new Set(linked).size) {
+      return apiError(422, "validation_failed", "한 일정을 두 항목에 이었어요", {
+        field: "entries",
       });
     }
 

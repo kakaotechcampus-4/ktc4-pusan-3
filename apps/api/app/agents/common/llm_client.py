@@ -8,6 +8,7 @@ from typing import Any
 from openai import (
     APIConnectionError,
     APIError,
+    APITimeoutError,
     AsyncOpenAI,
     AuthenticationError,
     BadRequestError,
@@ -21,34 +22,35 @@ from app.agents.common.config import (
     get_agent_settings,
 )
 
+# 실패 예외는 errors.py 에 있다. 원래 import 경로(`llm_client.LLMError` 등)를 지키려고
+# 다시 내보낸다 (#768)
+from app.agents.common.errors import (
+    LLMAuthError as LLMAuthError,
+)
+from app.agents.common.errors import (
+    LLMBadRequestError as LLMBadRequestError,
+)
+from app.agents.common.errors import (
+    LLMConfigError as LLMConfigError,
+)
+from app.agents.common.errors import (
+    LLMError as LLMError,
+)
+from app.agents.common.errors import (
+    LLMRateLimitError as LLMRateLimitError,
+)
+from app.agents.common.errors import (
+    LLMTimeoutError as LLMTimeoutError,
+)
+from app.agents.common.errors import (
+    LLMUnavailableError as LLMUnavailableError,
+)
+from app.agents.common.prompt_fingerprint import is_registered, logged_fingerprint
+from app.core import llm_usage
+
 logger = logging.getLogger(__name__)
 
 _REASONING_EFFORTS = frozenset({"none", "low", "medium", "high"})
-
-
-class LLMError(Exception):
-    """Agent 레이어가 다루는 LLM 호출 실패의 공통 타입."""
-
-
-class LLMConfigError(LLMError):
-    """역할의 API_KEY / BASE_URL / MODEL / REASONING_EFFORT 가 비었거나 잘못됨.
-    메시지에는 실제로 읽은 .env 키를 적는다 — 대체됐으면 MEMORY_* 이름이 나온다."""
-
-
-class LLMAuthError(LLMError):
-    """인증 실패. API_KEY 를 확인한다."""
-
-
-class LLMBadRequestError(LLMError):
-    """요청이 거절됨. 지원하지 않는 파라미터거나 tool schema 가 잘못됨."""
-
-
-class LLMRateLimitError(LLMError):
-    """rate limit 초과. 호출 측에서 backoff 한다."""
-
-
-class LLMUnavailableError(LLMError):
-    """네트워크·타임아웃 등 일시적 장애."""
 
 
 @dataclass(frozen=True)
@@ -109,6 +111,7 @@ class LLMClient:
             )
 
         self._profile = profile
+        self._provider = llm_usage.provider_of(profile.base_url)
         self._client = AsyncOpenAI(
             base_url=profile.base_url,
             api_key=profile.api_key,
@@ -131,10 +134,15 @@ class LLMClient:
         tool_choice: str | dict[str, Any] = "auto",
         max_completion_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
+        prompt_name: str | None = None,
     ) -> LLMResponse:
         """tool_choice 는 "auto"/"required" 같은 문자열이나
         {"type": "function", "function": {"name": ...}} 같은 강제 호출 dict를 그대로 보낸다.
         response_format 은 {"type": "json_schema", ...} 를 그대로 보낸다.
+        prompt_name 은 로그에 달 프롬프트 이름(`register_prompt` 에 등록한 이름)이다.
+        안 주면 역할 이름을 쓴다 —
+        역할 하나가 프롬프트 하나인 곳(supervisor · memory · food · growth · health · activity)은
+        그대로 맞고, 한 역할이 다른 프롬프트도 부르는 곳(activity 의 행사 일정)만 이름을 준다.
         """
         params: dict[str, Any] = {
             "model": self._profile.model,
@@ -166,31 +174,79 @@ class LLMClient:
             raise LLMBadRequestError(f"LLM 요청 거절: {exc}") from exc
         except RateLimitError as exc:
             raise LLMRateLimitError("LLM rate limit 초과.") from exc
+        except APITimeoutError as exc:
+            # APIConnectionError 의 하위라 먼저 잡는다
+            raise LLMTimeoutError("LLM 응답 시간 초과.") from exc
         except APIConnectionError as exc:
-            raise LLMUnavailableError("LLM 연결 실패 또는 타임아웃.") from exc
+            raise LLMUnavailableError("LLM 연결 실패.") from exc
         except APIError as exc:
             raise LLMError(f"LLM 호출 실패: {exc}") from exc
 
         latency_ms = int((time.perf_counter() - started) * 1000)
+        usage = _usage_dict(response.usage)
+        # 게이트웨이가 별칭을 실제 모델로 풀 수 있다 — 과금은 응답에 찍힌 모델 기준이다
+        served = getattr(response, "model", None)
+        model = served if isinstance(served, str) and served else self._profile.model
+        # 🚨 이상한 응답을 거절하기 전에 기록한다 — 거절해도 토큰은 이미 과금됐다
+        if usage:  # 셀 값이 없는 응답은 0 토큰 행을 만들지 않는다
+            llm_usage.record(
+                role=self._profile.role,
+                provider=self._provider,
+                model=model,
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                cached_prompt_tokens=usage.get("cached_prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                reasoning_tokens=usage.get("reasoning_tokens", 0),
+                latency_ms=latency_ms,
+            )
         # 콘텐츠 필터 등을 이유로 choices가 비거나 message가 null로 오는 provider의 경우
         choice = response.choices[0] if response.choices else None
         message = getattr(choice, "message", None)
         if message is None:
             raise LLMError("LLM 응답에 message가 없다.")
-        usage = _usage_dict(response.usage)
-        self._log_call(message, usage, latency_ms)
+        self._log_call(message, usage, latency_ms, model, prompt_name)
         return LLMResponse(message=message, usage=usage, latency_ms=latency_ms)
 
-    def _log_call(self, message: Any, usage: dict[str, int], latency_ms: int) -> None:
+    def _prompt_print(self, prompt_name: str | None) -> tuple[str, str]:
+        """로그에 달 (프롬프트 이름, 지문 12자).
+
+        모르는 이름이거나 지문을 못 만들면 대시다 — 호출은 막지 않는다.
+        """
+        name = prompt_name or self._profile.role
+        if not is_registered(name):
+            return "-", "-"
+        try:
+            return name, logged_fingerprint(name).short
+        except Exception as exc:  # 로그용 값이 호출을 깨뜨리면 안 된다
+            logger.warning("프롬프트 지문을 못 만들었다 name=%s error=%s", name, type(exc).__name__)
+            return name, "-"
+
+    def _log_call(
+        self,
+        message: Any,
+        usage: dict[str, int],
+        latency_ms: int,
+        model: str,
+        prompt_name: str | None = None,
+    ) -> None:
         tool_calls = getattr(message, "tool_calls", None) or []
+        attribution = llm_usage.current()
+        name, sha = self._prompt_print(prompt_name)
 
         # 발화 원문·프롬프트·응답 본문은 로그에 남기지 않는다
         logger.info(
-            "llm call role=%s model=%s prompt_tokens=%s completion_tokens=%s "
-            "reasoning_tokens=%s tool_calls=%d tools=%s latency_ms=%d",
+            "llm call role=%s model=%s run=%s source=%s prompt_name=%s prompt_sha256=%s "
+            "prompt_tokens=%s "
+            "cached_prompt_tokens=%s completion_tokens=%s reasoning_tokens=%s "
+            "tool_calls=%d tools=%s latency_ms=%d",
             self._profile.role,
-            self._profile.model,
+            model,
+            attribution.run_id if attribution else "-",
+            attribution.source if attribution else "-",
+            name,
+            sha,
             usage.get("prompt_tokens"),
+            usage.get("cached_prompt_tokens"),
             usage.get("completion_tokens"),
             usage.get("reasoning_tokens"),
             len(tool_calls),

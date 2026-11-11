@@ -30,12 +30,12 @@ from app.domains.schedule.models import Event, EventCategory, EventCreatedBy, Ev
 from app.domains.schedule.repository import (
     create_event,
     create_event_item,
-    create_reminder,
     delete_event,
     find_event,
     list_event_items,
     list_events,
     put_diary,
+    put_reminder,
     set_event_item_prepared,
     update_event,
 )
@@ -50,6 +50,7 @@ from app.domains.suggestion.repository import (
     list_suggestions_using_observation,
     set_feedback,
 )
+from app.rules.reminder import ReminderLead
 
 
 @pytest.fixture
@@ -147,6 +148,7 @@ async def test_schedule_event_and_item_are_child_scoped(session, family):
             ends_at=None,
             all_day=False,
             category=EventCategory.ACTIVITY,
+            now=start,
         )
         is None
     )
@@ -160,25 +162,26 @@ async def test_schedule_event_and_item_are_child_scoped(session, family):
         ends_at=None,
         all_day=False,
         category=EventCategory.ACTIVITY,
+        now=start,
     )
     assert updated.title == "물놀이 준비"
     assert (
-        await create_reminder(
+        await put_reminder(
             session,
             child_id=child.id,
             event_id=event.id,
             parent_id=stranger.id,
-            remind_at=start,
+            lead=ReminderLead.HOURS_1,
         )
         is None
     )
     assert (
-        await create_reminder(
+        await put_reminder(
             session,
             child_id=child.id,
             event_id=event.id,
             parent_id=owner.id,
-            remind_at=start,
+            lead=ReminderLead.HOURS_1,
         )
         is not None
     )
@@ -327,7 +330,7 @@ async def test_suggestion_feedback_and_correction_history_are_scoped(session, fa
         child_id=child.id,
         target_kind=CorrectionTargetKind.OBSERVATION_ACTIVITY,
         target_id=observation_id,
-        verdict=CorrectionVerdict.WRONG,
+        verdict=CorrectionVerdict.ONCE_ONLY,
         parent_id=owner.id,
     )
     with pytest.raises(ValueError, match="교정 대상"):
@@ -336,7 +339,7 @@ async def test_suggestion_feedback_and_correction_history_are_scoped(session, fa
             child_id=other.id,
             target_kind=CorrectionTargetKind.OBSERVATION_ACTIVITY,
             target_id=observation_id,
-            verdict=CorrectionVerdict.WRONG,
+            verdict=CorrectionVerdict.ONCE_ONLY,
             parent_id=owner.id,
         )
     assert [

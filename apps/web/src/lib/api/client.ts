@@ -105,7 +105,11 @@ async function requestRefresh(): Promise<RefreshedSession | null> {
   }
   if (response.status === 401) return null;
   if (!response.ok) {
-    throw new ApiError(response.status, "unknown", `세션을 확인하지 못했어요 (${response.status})`);
+    throw new ApiError(
+      response.status,
+      "unknown",
+      "로그인을 확인하지 못했어요. 잠시 뒤에 다시 시도해 주세요.",
+    );
   }
 
   const body = (await response.json()) as AuthRefreshResponse;
@@ -270,7 +274,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     throw new ApiError(
       response.status,
       error?.code ?? "unknown",
-      error?.message ?? `요청에 실패했어요 (${response.status})`,
+      error?.message ?? "처리하지 못했어요. 잠시 뒤에 다시 시도해 주세요.",
       error?.detail,
     );
   }

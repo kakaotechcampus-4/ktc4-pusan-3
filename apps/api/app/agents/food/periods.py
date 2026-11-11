@@ -23,3 +23,11 @@ def period_range(period: MealPeriod, today: date) -> tuple[date, date]:
         case MealPeriod.LAST_7_DAYS:
             return today - timedelta(days=6), today
     raise AssertionError(f"모르는 MealPeriod: {period}")  # pragma: no cover
+
+
+def week_end(today: date) -> date:
+    """오늘이 든 주의 일요일. 주는 월요일에 시작한다 — 공통 날짜 규칙의 "이번주" 와 같은 주다.
+
+    영양소 분석의 출현 창이 이번 주 남은 급식까지 보는 끝이다. 날짜 계산은 코드가 한다(루트 §2).
+    """
+    return today + timedelta(days=6 - today.weekday())

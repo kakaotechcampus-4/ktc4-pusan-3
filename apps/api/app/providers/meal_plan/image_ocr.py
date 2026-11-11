@@ -11,29 +11,39 @@
 import base64
 import json
 import logging
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import cache
 
 from openai import OpenAI
 from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from app.core import llm_usage
 from app.core.config import Settings
+from app.core.prompt_hash import canonical_json, fingerprint, short
 from app.providers.meal_plan.schema import (
     MealDay,
     MealPlanJSON,
     MealPlanSource,
     UnparsedCell,
 )
+from app.providers.streaming import collect
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-3.1-pro-preview"
+DEFAULT_MODEL = "gemini-4-argon"
 SUPPORTED_MIME = frozenset({"image/png", "image/jpeg", "image/webp"})
 
 # 게이트웨이가 응답을 6,000 토큰에서 자른다 (실측 2026-09-09). 한 달치 JSON 은 그보다 크므로
 # 날짜 범위를 나눠 부르고 합친다. 두 번째 호출부터는 프롬프트·스키마가 캐시에서 읽혀 입력이 싸다.
 DEFAULT_DAY_RANGES: tuple[tuple[int, int], ...] = ((1, 15), (16, 31))
+
+
+class ReadDeadlineExceeded(RuntimeError):
+    """읽기 기한(`deadline`)이 지나 멈췄다. 사진이 나빠서가 아니라 시간이 모자랐다."""
+
 
 SYSTEM_PROMPT = """\
 당신은 급식표 이미지를 정해진 JSON 으로 옮기는 전사 담당자입니다.
@@ -93,6 +103,19 @@ RESPONSE_FORMAT = {
         "strict": True,
     },
 }
+
+
+def prompt_parts() -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력 — system 프롬프트와 응답 스키마.
+
+    호출 로그와 평가 문서가 같은 값을 쓴다.
+    """
+    return (SYSTEM_PROMPT, canonical_json(RESPONSE_FORMAT))
+
+
+@cache
+def _prompt_sha() -> str:
+    return short(fingerprint(*prompt_parts()))
 
 
 @dataclass(frozen=True)
@@ -187,6 +210,18 @@ def merge_outputs(parts: Sequence[OcrOutput]) -> MealPlanJSON:
         raise RuntimeError(f"모델 응답이 급식표 규칙에 맞지 않음: {e.errors()[:3]}") from e
 
 
+def _until(stream, deadline: float):
+    try:
+        for chunk in stream:
+            if time.monotonic() >= deadline:
+                raise ReadDeadlineExceeded("읽기 기한이 지나 응답 받기를 멈춤")
+            yield chunk
+    finally:
+        close = getattr(stream, "close", None)
+        if close is not None:
+            close()
+
+
 class ImageOcrMealPlanReader:
     """`MealPlanReader` 구현체 — 사진. 비교용 모델은 `model` 만 바꿔 만든다."""
 
@@ -202,13 +237,18 @@ class ImageOcrMealPlanReader:
         timeout_s: float = 300.0,
         cache_write: str | None = None,
         day_ranges: Sequence[tuple[int, int]] | None = DEFAULT_DAY_RANGES,
+        deadline: float | None = None,
     ) -> None:
         self._client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout_s, max_retries=1)
         self.model = model
+        self._provider = llm_usage.provider_of(base_url)
         self._effort = reasoning_effort
         self._max_calls = max_calls
         self._cache_write = cache_write
         self._day_ranges = tuple(day_ranges) if day_ranges else None
+        # `time.monotonic()` 기준 시각. 지나면 새 호출을 시작하지 않고, 받던 응답도 끊는다.
+        # SDK 의 timeout 은 조각 사이의 간격이라 스트림 전체 시간을 막지 못한다 — 그래서 따로 둔다
+        self._deadline = deadline
         self.calls = 0
         self.last_usage: Usage | None = None
         self.total_usage = Usage(0, 0, 0)
@@ -242,45 +282,72 @@ class ImageOcrMealPlanReader:
     ) -> OcrOutput:
         if self.calls >= self._max_calls:
             raise RuntimeError(f"호출 상한 {self._max_calls}회 도달 — 예산 보호를 위해 중단")
+        if self._deadline is not None and time.monotonic() >= self._deadline:
+            raise ReadDeadlineExceeded("읽기 기한이 지나 호출을 시작하지 않음")
         self.calls += 1
 
         extra_body = {"cache_write": self._cache_write} if self._cache_write else None
-        response = self._client.chat.completions.create(
+        started = time.perf_counter()
+        stream = self._client.chat.completions.create(
             model=self.model,
             messages=build_messages(image_bytes, mime_type, day_range),  # type: ignore[arg-type]
             response_format=RESPONSE_FORMAT,  # type: ignore[arg-type]
             max_completion_tokens=16_000,
             reasoning_effort=self._effort,  # type: ignore[arg-type]  # MLAPI 는 xhigh·max 도 받는다
             extra_body=extra_body,
+            stream=True,
+            stream_options={"include_usage": True},
         )
+        reply = collect(self._within_deadline(stream))
 
-        if response.usage is not None:
+        if reply.prompt_tokens is not None and reply.completion_tokens is not None:
             self.last_usage = Usage(
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
-                cached_prompt_tokens=int(getattr(response.usage, "cached_prompt_tokens", 0) or 0),
+                prompt_tokens=reply.prompt_tokens,
+                completion_tokens=reply.completion_tokens,
+                cached_prompt_tokens=reply.cached_prompt_tokens,
             )
             self.total_usage = self.total_usage + self.last_usage
             log.info(
-                "meal_ocr call=%d range=%s model=%s prompt=%d completion=%d cached=%d",
+                "meal_ocr call=%d range=%s model=%s prompt_name=meal_ocr prompt_sha256=%s "
+                "prompt=%d completion=%d cached=%d",
                 self.calls,
                 day_range,
                 self.model,
+                _prompt_sha(),
                 self.last_usage.prompt_tokens,
                 self.last_usage.completion_tokens,
                 self.last_usage.cached_prompt_tokens,
             )
+            # 🚨 finish_reason · refusal 검사보다 앞이다 — 잘리거나 거절된 응답도 과금된다.
+            #    보호자는 라우트가 건 귀속(core/llm_usage)에서 온다. 호출은 asyncio.to_thread 로
+            llm_usage.record(
+                role="meal_ocr",
+                provider=self._provider,
+                model=reply.model or self.model,
+                prompt_tokens=self.last_usage.prompt_tokens,
+                cached_prompt_tokens=self.last_usage.cached_prompt_tokens,
+                completion_tokens=self.last_usage.completion_tokens,
+                reasoning_tokens=reply.reasoning_tokens,
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
 
-        choice = response.choices[0]
-        if choice.finish_reason == "length":
+        if reply.finish_reason == "length":
             raise RuntimeError(
                 "응답이 출력 상한에서 잘림 — day_ranges 를 더 잘게 나누거나 effort 를 낮출 것"
             )
-        if choice.message.refusal:
-            raise RuntimeError(f"모델이 응답을 거절했습니다: {choice.message.refusal}")
-        if not choice.message.content:
+        if not reply.content:
             raise RuntimeError("모델 응답이 비어 있습니다")
-        return parse_output(choice.message.content)
+        return parse_output(reply.content)
+
+    def _within_deadline(self, stream):
+        """기한이 없으면 그대로, 있으면 조각을 받을 때마다 기한을 본다.
+
+        🚨 기한이 지나면 연결을 닫는다 — 닫지 않으면 모델 호출이 스레드에서 끝까지 돈다.
+           끊긴 호출의 사용량은 마지막 조각으로 오므로 기록되지 않는다.
+        """
+        if self._deadline is None:
+            return stream
+        return _until(stream, self._deadline)
 
     def list_models(self) -> list[str]:
         """접속·키 확인용. 과금 없음."""

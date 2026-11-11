@@ -85,6 +85,7 @@ def _context(
     catalog_rows: list[MenuCatalogRow] = (),
     menu_source: InMemoryMenuSource | None = None,
     birth_date: date = BIRTH_DATE,
+    now: datetime = NOW,
 ) -> FoodContext:
     ports_kwargs: dict[str, object] = {
         "profile": InMemoryProfile({CHILD: birth_date}),
@@ -95,7 +96,7 @@ def _context(
     if menu_source is not None:
         ports_kwargs["menu_source"] = menu_source
     return FoodContext(
-        child_id=CHILD, run_id="run-1", now=NOW, timezone=KST, ports=in_memory_ports(**ports_kwargs)
+        child_id=CHILD, run_id="run-1", now=now, timezone=KST, ports=in_memory_ports(**ports_kwargs)
     )
 
 
@@ -810,12 +811,13 @@ async def test_우유_중량이_비어_구간을_막아도_식품군_출현은_�
 
 
 async def test_기록_행_수가_모자라면_출현을_말할_수_없다() -> None:
-    # 7일 중 5행 — N-1(10행) 미만이다. "7일 중 1일" 같은 말을 하지 않는다
-    context = _appearance_context(veg_offsets=(0,), days=4, rice=1)
+    # 출현 창에 2행 — 출현 임계(3행)에 못 미친다. "기록된 2일 중 1일" 같은 말을 하지 않는다
+    context = _appearance_context(veg_offsets=(), days=2, rice=1)
 
     verdict = await evaluate_nutrient_bands(context, months=40)
 
-    assert verdict.records == 5
+    assert verdict.records == 2
+    assert verdict.appearance_records == 2
     assert verdict.appearance_ready is False
     assert verdict.insufficient is True
 
@@ -941,3 +943,344 @@ async def test_다시_판정하는_앞_7일에_중량이_빈_몫이_크면_EAR_�
 
     assert verdict.bands.get("calcium") != "low"
     assert "calcium" in verdict.unscored
+
+
+# ── 모르는 날 (#739) ─────────────────────────────────────────────────────
+# 식품군을 모르는 메뉴(카탈로그에 없음 · 식품군 빈 행)가 낀 날은 "그 식품군이 안 나왔다" 를
+# 단정할 수 없다. 안내 줄(`meal.nutrient_basis`)은 이런 날을 다 나왔다고 쳐도 결론이 같을 때만 낸다.
+def _unknown_days_context(
+    *, veg_offsets: tuple[int, ...] = (), unknown_offsets: tuple[int, ...] = (), days: int = 7
+) -> FoodContext:
+    """매일 쌀밥 2번(식품군을 앎) + `veg_offsets` 의 시금치나물 + `unknown_offsets` 의 낯선 메뉴."""
+    observations = (
+        [
+            _observation(
+                subject="쌀밥", amount_text="한 그릇", day=_WINDOW_END - timedelta(days=offset)
+            )
+            for offset in range(days)
+            for _ in range(2)
+        ]
+        + [
+            _observation(
+                subject="시금치나물",
+                amount_text="한 그릇",
+                day=_WINDOW_END - timedelta(days=offset),
+            )
+            for offset in veg_offsets
+        ]
+        + [
+            _observation(
+                subject="처음보는음식",
+                amount_text="한 그릇",
+                day=_WINDOW_END - timedelta(days=offset),
+            )
+            for offset in unknown_offsets
+        ]
+    )
+    return _context(
+        observations=observations,
+        catalog_rows=_appearance_catalog(),
+        birth_date=BIRTH_DATE_3Y,
+    )
+
+
+async def test_모르는_메뉴가_낀_날은_안_나온_식품군의_모르는_날로_센다() -> None:
+    context = _unknown_days_context(unknown_offsets=(0, 1))
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.group_unknown_days["vegetables"] == 2
+    assert verdict.group_unknown_days["fruits"] == 2
+
+
+async def test_그_식품군이_나온_날은_모르는_날로_세지_않는다() -> None:
+    # 채소는 어제(0)에 나왔다 — 같은 날 모르는 메뉴가 있어도 어제는 채소의 모르는 날이 아니다
+    context = _unknown_days_context(veg_offsets=(0,), unknown_offsets=(0, 1))
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.group_unknown_days["vegetables"] == 1
+    assert verdict.group_unknown_days["fruits"] == 2
+    assert "grains" not in verdict.group_unknown_days  # 쌀밥은 매일 나왔다
+
+
+async def test_모르는_메뉴가_없으면_모르는_날도_없다() -> None:
+    context = _unknown_days_context(veg_offsets=(0,))
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.group_unknown_days == {}
+
+
+async def test_기록이_없는_날은_모르는_날로_세지_않는다() -> None:
+    # 4일치만 기록했다(하루 3행 = 12행). 모르는 메뉴는 어제 하루뿐이다
+    context = _unknown_days_context(unknown_offsets=(0,), days=4)
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.recorded_days == 4
+    assert verdict.group_unknown_days["vegetables"] == 1
+
+
+async def test_기록이_모자라_구간이_막혀도_모르는_날은_센다() -> None:
+    # 7일 중 2일 · 3행 — 구간(insufficient)이 막힌 반환 경로에서도 같은 칸이 채워진다
+    context = _unknown_days_context(unknown_offsets=(0,), days=2)
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.insufficient is True
+    assert verdict.group_unknown_days["vegetables"] == 1
+
+
+# ── 출현 창 — 이번 주 급식 · 적은 기록 ────────────────────────────────────────
+# 출현은 오늘 - 7일 ~ 이번 주 일요일이다. 앞날은 급식만 들어오고,
+# 구간 창(오늘 - 7일 ~ 어제)은 그대로다.
+# NOW 는 금요일(2026-10-02)이라 이번 주 일요일은 10-04 다.
+WED = datetime(2026, 10, 7, 9, 0, tzinfo=KST)
+SAT = datetime(2026, 10, 3, 9, 0, tzinfo=KST)
+MON = datetime(2026, 10, 5, 9, 0, tzinfo=KST)
+
+
+def _lunch(
+    day: date, *menus: str, slot: str = "lunch", amount_known: bool = False
+) -> DaycareMealRow:
+    return DaycareMealRow(
+        id=uuid4(),
+        child_id=CHILD,
+        serve_date=day,
+        meal_slot=slot,  # type: ignore[arg-type]
+        menu_keys=menus,
+        amount_known=amount_known,
+    )
+
+
+def _home(day: date, subject: str = "쌀밥", *, count: int = 1) -> list[FoodObservation]:
+    return [_observation(subject=subject, amount_text="한 그릇", day=day) for _ in range(count)]
+
+
+def _week_context(
+    *,
+    now: datetime = NOW,
+    observations: list[FoodObservation] = (),
+    daycare: list[DaycareMealRow] = (),
+) -> FoodContext:
+    return _context(
+        observations=list(observations),
+        daycare_rows=list(daycare),
+        catalog_rows=_appearance_catalog(),
+        birth_date=BIRTH_DATE_3Y,
+        now=now,
+    )
+
+
+async def test_지난_급식과_오늘부터_이번_주_급식을_같이_센다() -> None:
+    # 수요일, 지난 급식 2일(월 · 화) + 오늘 ~ 금요일 급식 3일(채소는 목요일). 집 기록은 없다
+    today = WED.date()
+    rows = [_lunch(today + timedelta(days=d), "쌀밥") for d in (-2, -1, 0, 2)]
+    rows.append(_lunch(today + timedelta(days=1), "쌀밥", "시금치나물"))
+    context = _week_context(now=WED, daycare=rows)
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.appearance_records == 5
+    assert verdict.recorded_days == 5
+    assert verdict.daycare_days == 5
+    assert verdict.upcoming_daycare_days == 3
+    assert verdict.food_group_days == {"grains": 5, "vegetables": 1}
+    assert verdict.appearance_ready is True
+    assert verdict.few_records is True
+
+
+async def test_구간_창은_그대로라_앞날_급식이_구간_판정에_들어가지_않는다() -> None:
+    # 지난 7일 집 기록 14행 + 오늘 ~ 일요일 급식. 급식을 더해도 구간 쪽 값은 같아야 한다
+    home = [row for d in range(7) for row in _home(_WINDOW_END - timedelta(days=d), count=2)]
+    future = [_lunch(NOW.date() + timedelta(days=d), "쌀밥", "시금치나물") for d in (0, 1, 2)]
+
+    without = await evaluate_nutrient_bands(_week_context(observations=home), months=40)
+    with_future = await evaluate_nutrient_bands(
+        _week_context(observations=home, daycare=future), months=40
+    )
+
+    assert with_future.records == without.records == 14
+    assert with_future.insufficient == without.insufficient
+    assert with_future.bands == without.bands
+    assert with_future.unscored == without.unscored
+    assert with_future.resolved_ratio == without.resolved_ratio
+    # 출현은 늘었다
+    assert with_future.appearance_records == 17
+    assert with_future.food_group_days["vegetables"] == 3
+
+
+async def test_다음_주_월요일_급식은_이번_주_출현에_들어가지_않는다() -> None:
+    rows = [
+        _lunch(date(2026, 10, 1), "쌀밥"),
+        _lunch(date(2026, 10, 2), "쌀밥"),
+        _lunch(date(2026, 10, 4), "쌀밥"),  # 일요일 — 이번 주 마지막 날
+        _lunch(date(2026, 10, 5), "쌀밥", "시금치나물"),  # 다음 주 월요일
+    ]
+
+    verdict = await evaluate_nutrient_bands(_week_context(daycare=rows), months=40)
+
+    assert verdict.appearance_records == 3
+    assert "vegetables" not in verdict.food_group_days
+
+
+async def test_앞날_집_기록은_출현에_들어가지_않는다() -> None:
+    # 관찰은 먹은 것이라 앞날 행이 없다. 있어도(잘못 들어와도) 출현을 늘리지 않는다
+    home = [
+        *_home(date(2026, 10, 1)),
+        *_home(date(2026, 9, 30)),
+        *_home(date(2026, 10, 3), "시금치나물", count=2),  # 내일
+    ]
+
+    verdict = await evaluate_nutrient_bands(_week_context(observations=home), months=40)
+
+    assert verdict.appearance_records == 2
+    assert "vegetables" not in verdict.food_group_days
+
+
+async def test_오늘_집_기록도_출현에_들어간다() -> None:
+    home = [*_home(date(2026, 10, 1)), *_home(NOW.date()), *_home(NOW.date(), "시금치나물")]
+
+    verdict = await evaluate_nutrient_bands(_week_context(observations=home), months=40)
+
+    assert verdict.appearance_records == 3
+    assert verdict.food_group_days["vegetables"] == 1
+
+
+async def test_토요일에_다음_주_급식만_있으면_이번_주_급식_줄이_없다() -> None:
+    rows = [
+        _lunch(date(2026, 10, 1), "쌀밥"),
+        _lunch(date(2026, 10, 2), "쌀밥"),
+        _lunch(date(2026, 10, 5), "쌀밥"),  # 다음 주 월요일
+    ]
+
+    verdict = await evaluate_nutrient_bands(_week_context(now=SAT, daycare=rows), months=40)
+
+    assert verdict.upcoming_daycare_days == 0
+    assert verdict.daycare_days == 2
+    assert verdict.appearance_records == 2
+
+
+async def test_월요일_창은_지난주_월요일부터_이번_주_일요일까지다() -> None:
+    rows = [
+        _lunch(date(2026, 9, 27), "쌀밥"),  # 오늘 - 8일 — 밖
+        _lunch(date(2026, 9, 28), "쌀밥"),  # 오늘 - 7일 — 안
+        _lunch(date(2026, 10, 11), "쌀밥"),  # 이번 주 일요일 — 안
+        _lunch(date(2026, 10, 12), "쌀밥"),  # 다음 주 월요일 — 밖
+    ]
+
+    verdict = await evaluate_nutrient_bands(_week_context(now=MON, daycare=rows), months=40)
+
+    assert verdict.appearance_records == 2
+    assert verdict.recorded_days == 2
+    assert verdict.upcoming_daycare_days == 1
+
+
+@pytest.mark.parametrize(
+    ("per_day", "ready", "few"),
+    [
+        ((1, 1), False, False),  # 2행
+        ((3,), False, False),  # 하루 3행 — 하루치로 일반화하지 않는다
+        ((2, 1), True, True),  # 3행 2일
+        ((5, 4), True, True),  # 9행
+        ((5, 5), True, False),  # 10행
+    ],
+)
+async def test_출현_임계는_3행_2일이고_10행_미만이면_적은_기록이다(
+    per_day: tuple[int, ...], ready: bool, few: bool
+) -> None:
+    home = [
+        row
+        for index, count in enumerate(per_day)
+        for row in _home(_WINDOW_END - timedelta(days=index), count=count)
+    ]
+
+    verdict = await evaluate_nutrient_bands(_week_context(observations=home), months=40)
+
+    assert verdict.appearance_records == sum(per_day)
+    assert verdict.appearance_ready is ready
+    assert verdict.few_records is few
+    assert verdict.records == sum(per_day)  # 구간 창 행 수는 그대로
+    assert verdict.insufficient is (sum(per_day) < 10)  # 구간은 10행 임계 그대로
+
+
+async def test_같은_날_기관_공지_관찰과_급식은_한_번만_센다() -> None:
+    today = NOW.date()
+    home = [
+        *_home(date(2026, 10, 1)),
+        replace(_observation(subject="쌀밥", day=today), confidence_source="institution_notice"),
+    ]
+
+    verdict = await evaluate_nutrient_bands(
+        _week_context(observations=home, daycare=[_lunch(today, "쌀밥")]), months=40
+    )
+
+    assert verdict.appearance_records == 2
+    assert verdict.recorded_days == 2
+
+
+async def test_구간이_막힌_반환에서도_출현_칸이_채워진다() -> None:
+    rows = [_lunch(NOW.date() + timedelta(days=d), "쌀밥") for d in (-1, 0, 1)]
+
+    verdict = await evaluate_nutrient_bands(_week_context(daycare=rows), months=40)
+
+    assert verdict.insufficient is True
+    assert (verdict.appearance_records, verdict.upcoming_daycare_days) == (3, 2)
+    assert verdict.appearance_ready is True
+
+
+async def test_하루_합계는_그날_급식_행_수를_센다() -> None:
+    rows = [
+        _lunch(date(2026, 10, 1), "쌀밥"),
+        _lunch(date(2026, 10, 1), "쌀밥", slot="snack_pm"),
+    ]
+
+    totals = await daily_totals(
+        _week_context(daycare=rows), date_from=date(2026, 10, 1), date_to=date(2026, 10, 1)
+    )
+
+    assert (totals[0].records, totals[0].daycare_rows) == (2, 2)
+
+
+async def test_이번_주_급식이_많아도_먹은_기록이_적으면_적은_기록이다() -> None:
+    # 월요일, 집 기록 0, 하루 2끼 급식 — 지난 1일 2행 + 오늘 ~ 금요일 10행 = 출현 창 12행이지만
+    # 오늘부터는 아직 안 먹은 급식이라 먹은 기록은 2행이다
+    rows = [
+        _lunch(MON.date() + timedelta(days=d), "쌀밥", slot=slot)
+        for d in (-1, 0, 1, 2, 3, 4)
+        for slot in ("lunch", "snack_pm")
+    ]
+
+    verdict = await evaluate_nutrient_bands(_week_context(now=MON, daycare=rows), months=40)
+
+    assert verdict.appearance_records == 12
+    assert verdict.appearance_ready is True
+    assert verdict.few_records is True
+
+
+async def test_오늘_집_기록은_먹은_기록으로_센다() -> None:
+    today = NOW.date()
+    home = [row for d in range(1, 5) for row in _home(today - timedelta(days=d), count=2)]
+    home += _home(today, count=2)  # 먹은 기록 10행
+
+    verdict = await evaluate_nutrient_bands(_week_context(observations=home), months=40)
+
+    assert verdict.few_records is False
+
+
+async def test_양을_아는_급식뿐이면_양을_모르는_급식_일수가_0이다() -> None:
+    rows = [_lunch(date(2026, 10, 1), "쌀밥", amount_known=True), _lunch(date(2026, 9, 30), "쌀밥")]
+
+    verdict = await evaluate_nutrient_bands(_week_context(daycare=rows), months=40)
+
+    assert verdict.daycare_days == 2
+    assert verdict.daycare_unknown_amount_days == 1
+
+
+async def test_앞날_급식은_늘_양을_모르는_급식이다() -> None:
+    rows = [_lunch(NOW.date() + timedelta(days=1), "쌀밥"), _lunch(date(2026, 10, 1), "쌀밥")]
+
+    verdict = await evaluate_nutrient_bands(_week_context(daycare=rows), months=40)
+
+    assert verdict.daycare_unknown_amount_days == 2

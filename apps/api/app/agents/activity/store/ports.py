@@ -20,16 +20,19 @@ Activity는 쓰기 포트가 없다 — 기록은 Memory가, 추천 저장은 �
 | ActivityDocReader | activity_doc — 월령 슬라이스 + 의미 검색 |
 | WeatherSource | 기상청 단기예보 · 에어코리아 · 생활기상지수 · 기상특보 |
 | PlaceSource | 적재한 place 테이블 — 공원 · 어린이놀이시설 · 도서관. 외부 API 없음 (D9) |
+| EventSource | TourAPI 축제공연행사 — 전국 목록 · 소개정보 · 개요. 위치를 받지 않는다 |
+| EventScheduleSource | 행사가 열리는 날 — run 안에서 일정 원문을 읽는다(`event_schedule.py`) |
 """
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Literal, Protocol, get_args
+from typing import TYPE_CHECKING, Literal, Protocol, get_args, runtime_checkable
 from uuid import UUID
 
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
+    EventKind,
     Intensity,
     PlaceCategory,
 )
@@ -39,6 +42,8 @@ from app.agents.common.ports import (
     ConsentReader,
     SafetyLookupError,
 )
+from app.core.culture_raw import RawSite
+from app.core.event_raw import RawEvent, RawEventIntro
 from app.core.weather_raw import RawAdvisories, RawAir, RawForecast, WeatherGrid
 from app.core.weather_raw import RawAdvisoryRow as RawAdvisoryRow  # 다시 내보낸다
 
@@ -52,6 +57,10 @@ from app.rules.kma_grid import latlon_to_grid
 SafetyKind = Literal["allergy", "environmental"]
 # 10/4 확정안의 status. 행이 없는 항목이 unknown 이라 이 값으로는 오지 않는다
 SafetyStatus = Literal["active", "retracted", "none"]
+
+if TYPE_CHECKING:
+    # events.py 가 이 파일을 import 한다 — 행사 모양은 타입으로만 본다
+    from app.agents.activity.events import Event
 
 
 @dataclass(frozen=True)
@@ -182,6 +191,9 @@ PLACE_TOP_K = 5
 # 바꾸면 마이그레이션의 CHECK 도 같이 고친다(테스트가 둘을 대조한다)
 PlaceSourceName = Literal["city_park", "kids_play_facility", "library"]
 PLACE_SOURCES: tuple[str, ...] = get_args(PlaceSourceName)
+# 적재하지 않고 바로 묻는 출처 — TourAPI 문화시설(박물관 · 과학관 · 체험관, `activity/culture.py`).
+# place 표에 없어서 위 CHECK 와 무관하다
+LiveSourceName = Literal["tour_culture"]
 
 
 @dataclass(frozen=True)
@@ -195,10 +207,53 @@ class PlaceRow:
     name: str
     category: PlaceCategory
     distance_m: int
-    source: PlaceSourceName
-    # 데이터기준일자 — 화면의 "공공데이터 기준 YYYY-MM" 용이다 (D9). 🚨 모델에는 주지 않는다 —
-    # tool 결과는 이름 · 종류뿐이다(`tools/outing.py`)
+    source: PlaceSourceName | LiveSourceName
+    # 데이터기준일자 — 확인 문구 "공공데이터 기준 2026년 6월이에요" 의 달이다 (D9 · #516).
+    # 🚨 모델에는 주지 않는다 — tool 결과는 이름 · 종류뿐이다(`tools/outing.py`)
     data_date: date | None
+
+
+# 행사도 장소와 같은 반경에서 가까운 순으로 몇 건만 준다 (잠정 — eval 로 조정한다). 관람 연령을
+# 보려고 소개정보를 묻는 것은 가까운 것부터 `EVENT_INTRO_LIMIT` 건까지다 — 연령으로 빠지는 행사가
+# 있어도 몇 건은 남게 넉넉히 묻고, 한 번에 수십 건을 부르지 않게 끊는다
+EVENT_MAX_RADIUS_M = PLACE_MAX_RADIUS_M
+EVENT_TOP_K = 5
+EVENT_INTRO_LIMIT = EVENT_TOP_K * 2
+# 행사가 열리는 날을 읽는 창 — 오늘부터 이만큼. 날 라벨(오늘 · 내일 · 이번 주말)이 다 들어간다
+EVENT_SCHEDULE_DAYS = 7
+
+
+@dataclass(frozen=True)
+class EventSchedule:
+    """행사가 열리는 날 · 날마다 다른 장소. `EventScheduleSource` 가 일정 원문에서 읽는다.
+
+    TourAPI 의 시작일 · 종료일은 전체 기간이다 — "매주 토요일" · "월요일 휴무" 는 일정 원문에만
+    있다. 🚨 `open_days` 는 오늘부터 `EVENT_SCHEDULE_DAYS` 일 안에서 열린다고 읽은 날뿐이다. 기간
+    안이어도 요일 · 날짜가 맞지 않거나 원문으로 알 수 없는 날은 없다 — 모르는 날에 행사를 내지
+    않는다.
+    """
+
+    open_days: frozenset[date]
+    # 장소가 날마다 다른 행사의 (날, 장소), 날짜순. 기간 전체다 — 다른 날 장소를 쓴 후보를 출력
+    # 검증이 거른다. 비어 있으면 행사 장소(`EventRow.place`) 하나다
+    day_places: tuple[tuple[date, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class EventRow:
+    """행사 한 건. 화이트리스트 필드만 — 요금 · 연락처 · 링크 · 이미지는 싣지 않는다.
+
+    `distance_m` 은 행사 좌표와 기준점 사이를 서버가 계산한 값이다. 🚨 모델에는 주지 않는다 —
+    tool 결과는 이름 · 종류 · 기간 · 열리는 날 · 그날 장소뿐이다(`tools/outing.py`).
+    """
+
+    name: str
+    kind: EventKind
+    starts_on: date
+    ends_on: date
+    place: str  # 행사 장소 원문(eventplace). 비어 있을 수 있다
+    distance_m: int
+    schedule: EventSchedule  # 열리는 날 — 그날 열리는지는 기간이 아니라 이것으로 본다(`open_on`)
 
 
 class SafetyReader(Protocol):
@@ -298,6 +353,45 @@ class PlaceSource(Protocol):
         ...
 
 
+@runtime_checkable
+class CultureSource(Protocol):
+    async def sites(self, *, province: str) -> list[RawSite]:
+        """그 시 · 도의 문화시설 · 관광지 원문(TourAPI). 좌표를 받지 않는다 — 거리는 Activity 가
+        계산한다(`activity/culture.py`). 모르는 시 · 도 · 조회 실패는 UpstreamUnavailable."""
+        ...
+
+
+class EventSource(Protocol):
+    """TourAPI 축제공연행사. 어댑터는 호출 · 캐시까지만 하고 값은 원문 그대로 넘긴다.
+
+    🚨 위치를 받지 않는다. 전국 목록을 넘기고 거리 계산 · 거르기는 Activity(`events.py`)가 한다 —
+    보호자 위치가 외부 API 로 나가지 않는다 (4-3). 실패는 각자 UpstreamUnavailable.
+    """
+
+    async def events(self, *, ending_on_or_after: date) -> list[RawEvent]:
+        """그날 이후에 끝나는 전국 행사(진행 중인 것 포함)."""
+        ...
+
+    async def intro(self, *, content_id: str) -> RawEventIntro:
+        """행사 하나의 관람 연령 · 장소 · 일정 칸(운영 시간 · 프로그램)."""
+        ...
+
+    async def overview(self, *, content_id: str) -> str:
+        """행사 하나의 개요 원문 — 일정을 개요에만 적은 행사가 있다."""
+        ...
+
+
+class EventScheduleSource(Protocol):
+    """행사가 열리는 날(`EventSchedule`). 지금은 run 안에서 일정 원문을 읽고 모델 답을 원문째
+    캐시한다(`event_schedule.ReadEventSchedules`). 매일 미리 읽어 두는 표로 옮겨도 이 모양은
+    그대로다.
+
+    🚨 실패를 예외로 올리지 않는다 — 읽지 못한 행사는 열리는 날이 없는 일정이다(그날 내지 않는다).
+    """
+
+    async def schedule_of(self, event: "Event", *, today: date) -> EventSchedule: ...
+
+
 @dataclass(frozen=True)
 class ActivityPorts:
     """Activity Agent 가 요청 하나를 처리하는 동안 쥐는 포트 묶음."""
@@ -310,3 +404,6 @@ class ActivityPorts:
     docs: ActivityDocReader
     weather: WeatherSource | None = None  # None 이면 조회 실패와 같다 — 실내만
     places: PlaceSource | None = None  # None 이면 장소가 필요 없는 활동만
+    events: EventSource | None = None  # None 이면 행사를 찾지 않는다
+    # 행사 어댑터와 같이 온다. None 이면 열리는 날을 모르니 행사를 찾지 않는다
+    event_schedules: EventScheduleSource | None = None

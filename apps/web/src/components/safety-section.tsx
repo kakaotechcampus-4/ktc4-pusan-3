@@ -11,7 +11,9 @@ import {
   HealthSafetyListSkeleton,
   HealthSafetySheet,
 } from "@/components/health-safety-list";
+import { ToleratedFoodsRow } from "@/components/tolerated-foods";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
+import { Button } from "@/components/ui/button";
 import { EmptyState, EmptyStateSkeleton } from "@/components/ui/empty-state";
 import { Section, SectionAction, SectionError } from "@/components/ui/section";
 import { useSheetTarget } from "@/hooks/use-sheet-target";
@@ -82,11 +84,14 @@ export function SafetySection({
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const items = query.data?.items ?? [];
+  /** 괜찮았던 식품 (#825). 🚨 알레르기 목록과 다른 필드다 — 건수에도 세지 않는다. */
+  const tolerated = query.data?.tolerated ?? [];
 
   return (
     <Section
-      title="알레르기 · 건강"
-      description="보호자가 직접 확인한 것만 저장돼요. AI 는 이 목록을 만들지도 고치지도 못해요."
+      data-tour="safety"
+      title="알레르기·건강"
+      description="보호자가 직접 확인한 것만 저장돼요. AI는 이 목록을 만들지도 고치지도 못해요."
       // 받는 동안은 건수 자리만 잡는다 — 빈 상태를 기다리는 자리면 건수가 설 일이 없어 잡지 않는다.
       count={
         query.isPending
@@ -99,6 +104,7 @@ export function SafetySection({
       }
       action={
         <SectionAction
+          data-tour="safety-add"
           label="알레르기·건강 기록 추가"
           // 🚨 검사지 길이 닫혀 있으면(`lib/features.ts` · #409) 고를 것이 직접 적기 하나뿐이라,
           //    고르는 시트를 건너뛰고 바로 연다 — 한 줄짜리 선택지를 한 번 더 누르게 하지 않는다.
@@ -106,11 +112,14 @@ export function SafetySection({
         />
       }
     >
+      {/* 🚨 **알레르기 목록 위의 한 줄이다** (#825). 알레르기가 몇 개든 스크롤 없이 보이고, 없으면 서지 않는다. */}
+      <ToleratedFoodsRow childId={childId} items={tolerated} />
+
       {/* 🚨 **교체 페이드를 걸지 않는다** (디자인 시스템 §8 "하지 않는 것"). 이 목록은 게이트 ㉡ 의 결과라
           불러온 순간이라도 투명도로 흘려보내지 않는다. */}
       {query.isPending ? (
         expectEmpty ? (
-          <EmptyStateSkeleton label="안전 정보를 불러오는 중" descriptionLines={2} />
+          <EmptyStateSkeleton label="알레르기·건강 기록을 불러오는 중" descriptionLines={2} />
         ) : (
           <HealthSafetyListSkeleton />
         )
@@ -119,15 +128,18 @@ export function SafetySection({
         <ConsentRequiredCard
           childId={childId}
           error={query.error}
-          what="안전 정보를 불러올 수 없고"
+          what="알레르기·건강 기록을 보여 드릴 수 없어요."
         />
       ) : query.isError ? (
-        <SectionError what="안전 정보를 불러오지 못했어요" onRetry={() => void query.refetch()} />
+        <SectionError
+          what="알레르기·건강 기록을 불러오지 못했어요"
+          onRetry={() => void query.refetch()}
+        />
       ) : items.length === 0 ? (
         <EmptyState
           icon={Shield}
           title="등록된 것이 아직 없어요"
-          description="알레르기나 지병이 확인되면 여기에 적어 두세요. 식사 제안이 이 목록을 보고 걸러요."
+          description="알레르기나 지병이 확인되면 여기에 적어 두세요. 식사를 추천할 때 이 목록에 있는 것을 먼저 빼요."
           count={0}
           countLabel="등록된 항목"
         />
@@ -202,7 +214,18 @@ function AddSafetySheet({
   onPhoto: () => void;
 }) {
   return (
-    <BottomSheet open={open} onClose={onClose} title="알레르기 · 건강 기록 추가">
+    <BottomSheet
+      open={open}
+      onClose={onClose}
+      title="알레르기·건강 기록 추가"
+      // 🚨 **닫는 버튼을 세운다** (#868 · 디자인 시스템 §7 — 웹뷰에는 ESC 가 없다). 스크림 탭 하나만 남으면 닫는 길이
+      //    화면에 안 보인다. 다른 고르기 시트(`photo-source-sheet.tsx`)와 같은 "닫기" 다.
+      footer={
+        <Button variant="secondary" block onClick={onClose}>
+          닫기
+        </Button>
+      }
+    >
       <div className="flex flex-col gap-2">
         <AddSafetyOption
           title="직접 적기"

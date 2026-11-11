@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.rules.evaluative import EVALUATIVE_PHRASES, find_evaluative
+from app.rules.evaluative import EVALUATIVE_PHRASES, find_evaluative, find_level_judgement
 
 
 @pytest.mark.parametrize(
@@ -32,6 +32,17 @@ from app.rules.evaluative import EVALUATIVE_PHRASES, find_evaluative
         "성장곡선 아래쪽이에요",
         "성장이 정체됐어요",
         "체중이 부족해요",
+        # 배움 요청(test_expected T34 · T37)에서 아니라고 안심시키는 말도 빠르기 판정이다
+        "한글이 늦지 않아요",
+        "읽기가 조금 느려요",
+        "쓰기가 더뎌요",
+        "늦은 게 아니에요",
+        "느린 건 아니에요",
+        # #452 리뷰 — 주어 없이 안심시키는 말 · 또래도 못 한다는 비교
+        "늦은 편이 아니니 걱정하지 않으셔도 돼요",
+        "느린 편은 아니에요",
+        "아직 늦지 않았어요",
+        "또래 아이들도 아직 많이 못 읽어요",
     ],
 )
 def test_평가_표현을_잡는다(text):
@@ -58,6 +69,14 @@ def test_평가_표현을_잡는다(text):
         "끝까지 해냈어요",
         "오래 집중해서 탑을 쌓았어요",
         "편의점 놀이",
+        "늦지 않게 등원 준비해요",
+        "늦지 않게 준비해요",
+        "또래 친구들도 좋아하는 공놀이",
+        "늦지 않도록 시계를 봐요",
+        "숫자는 빨리 세 보기",
+        "느린 노래에 맞춰 걷기",
+        "한글 자석으로 이름 만들기",
+        "빠른 박자에 맞춰 손뼉 치기",
     ],
 )
 def test_같은_글자가_든_평범한_문장은_통과한다(text):
@@ -79,3 +98,63 @@ def test_칭찬은_막지_않고_능력_꼬리표만_막는다():
 def test_목록에_중복이_없다():
     dense = ["".join(p.split()) for p in EVALUATIVE_PHRASES]
     assert len(dense) == len(set(dense))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "나이에 비해 어려운 문제도 풀어요",
+        "나이보다 앞서 있어요",
+        "학년보다 높은 문제를 풀어요",
+        "월령에 비하면 빨라요",
+        "나이치고 잘해요",
+    ],
+)
+def test_나이_학년과_견주는_말을_잡는다(text):
+    assert find_evaluative(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "이 나이에 맞는 형태의 책 중에서 골랐어요.",
+        "이 나이 아이들에게 많이 권하는 활동으로 골랐어요.",
+        "중학교 1학년 수준의 수학 문제 풀이 기록을 이어요",
+        "월령에 맞춰 준비물을 골랐어요",
+    ],
+)
+def test_나이를_말해도_견주지_않으면_통과한다(text):
+    assert find_evaluative(text) == ()
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["블록을 쌓거나 이보다 쉬운 방법으로 해 봐요", "하나 이에 비해 둘은 많아요"],
+)
+def test_다른_낱말_끝의_나_는_나이로_읽지_않는다(text):
+    assert find_evaluative(text) == ()
+
+
+def test_숫자_뒤_학년도_견주는_말이다():
+    assert find_evaluative("1학년보다 어려운 문제를 풀어요")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "수학 수준이 높아요",
+        "덧셈 수준이 낮은 편이라",
+        "수준급이에요",
+        "나이에 맞지 않게 어려운 문제도 풀어요",
+    ],
+)
+def test_수준_판정을_잡는다(text):
+    assert find_level_judgement(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["중학교 1학년 수준의 수학 문제 풀이 기록을 이어요", "난이도를 한 단계 올려요", "나트륨 수준"],
+)
+def test_수준을_말해도_판정이_아니면_통과한다(text):
+    assert find_level_judgement(text) == ()

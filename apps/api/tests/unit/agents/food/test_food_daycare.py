@@ -151,6 +151,51 @@ async def test_넣을_메뉴만_있으면_어떤_메뉴_대신인지_되묻고_�
     assert (await rows_on(meals))[0].menu_keys == ("밥", "우유")
 
 
+@pytest.mark.parametrize(
+    "utterance",
+    ["오늘 우유 말고 두유 받았대", "오늘 급식이 두유로 바뀌었대", "오늘 두유로 바꿔 줬대"],
+)
+async def test_교체_말이_있는데_뺄_메뉴를_모르면_되묻는다(utterance: str) -> None:
+    meals = InMemoryDaycareMeals([lunch("밥", "우유")])
+    ctx = context(daycare=meals, utterance=utterance)
+
+    await update_daycare_meal(ctx, UpdateDaycareMealArgs(date_span="오늘", added_spans=["두유"]))
+
+    assert texts(ctx) == [code("daycare.replaced_unknown")]
+    assert (await rows_on(meals))[0].menu_keys == ("밥", "우유")
+
+
+async def test_교체_말_없이_먹은_메뉴만_말하면_그날_급식에_더한다() -> None:
+    # "새우볶음밥 먹었대" — 무엇 대신인지 말하지 않았다. 빼지 않고 더하기만 한다(T48).
+    # 두 번 해도 한 번만 들어간다
+    meals = InMemoryDaycareMeals([lunch("밥", "우유")])
+    ctx = context(daycare=meals, utterance="오늘 어린이집에서 새우볶음밥 먹었대")
+    args = UpdateDaycareMealArgs(date_span="오늘", added_spans=["새우볶음밥"])
+
+    first = await update_daycare_meal(ctx, args)
+    second = await update_daycare_meal(ctx, args)
+
+    assert first.success and second.success
+    [row] = await rows_on(meals)
+    assert row.menu_keys == ("밥", "우유", "새우볶음밥")
+    assert row.caregiver_checked is True
+
+
+async def test_더한_메뉴가_알레르기와_겹치면_저장하고_경고한다() -> None:
+    meals = InMemoryDaycareMeals([lunch("밥", "우유")])
+    ctx = context(daycare=meals, utterance="오늘 어린이집에서 새우볶음밥 먹었대", safety=SHRIMP)
+
+    await update_daycare_meal(
+        ctx, UpdateDaycareMealArgs(date_span="오늘", added_spans=["새우볶음밥"])
+    )
+
+    assert (await rows_on(meals))[0].menu_keys == ("밥", "우유", "새우볶음밥")
+    assert texts(ctx) == [
+        code("daycare.updated", date=label_of(0), slot="점심", menu="새우볶음밥"),
+        code("daycare.allergy_conflict", label="새우"),
+    ]
+
+
 async def test_뺄_메뉴가_그날_급식에_없으면_되묻고_바꾸지_않는다() -> None:
     meals = InMemoryDaycareMeals([lunch("밥", "국")])
     ctx = context(daycare=meals, utterance="오늘 우유 대신 두유 받았대")
@@ -230,6 +275,37 @@ async def test_급식이_없는_날은_새로_만들지_않고_못_찾았다고_
 
     assert texts(ctx) == [code("daycare.not_found")]
     assert await rows_on(meals, -1) == []  # INSERT 0건
+
+
+async def test_평일에_급식이_없는데_먹은_양만_말하면_그날_먹은_끼니를_알려_달라고_안내한다() -> (
+    None
+):
+    """급식표가 없는 평일의 "점심은 반만 먹었대" — 양을 붙일 행이 없다. 못 찾았다로 끝내지 않고
+    무엇을 먹었는지 알려 달라고 안내한다. 되묻기 tool 이 아니라 문구 하나다 (#798)."""
+    meals = InMemoryDaycareMeals([])
+    ctx = context(daycare=meals, utterance="선생님이 오늘 점심은 반만 먹었대")
+
+    await update_daycare_meal(
+        ctx, UpdateDaycareMealArgs(date_span="오늘", slot="lunch", amount_span="반만")
+    )
+
+    assert texts(ctx) == [code("daycare.amount_no_meal", date="오늘", slot="점심")]
+    assert texts(ctx) == ["오늘 점심 급식을 확인하지 못했어요. 오늘 먹은 점심을 알려주세요."]
+    assert await rows_on(meals, 0) == []  # INSERT 0건
+
+
+async def test_주말에는_급식이_없어도_그대로_못_찾았다고_한다() -> None:
+    meals = InMemoryDaycareMeals([])
+    saturday = day(4)  # TODAY 2026-10-14 수 → 10-10 토
+    span = f"{saturday.month}월 {saturday.day}일"
+    ctx = context(daycare=meals, utterance=f"{span} 점심은 반만 먹었대")
+
+    await update_daycare_meal(
+        ctx, UpdateDaycareMealArgs(date_span=span, slot="lunch", amount_span="반만")
+    )
+
+    assert saturday.weekday() == 5
+    assert texts(ctx) == [code("daycare.not_found")]
 
 
 async def test_그날_행이_여럿이면_끼니를_되묻고_하나면_바로_고친다() -> None:
@@ -372,6 +448,8 @@ async def test_안전_정보를_못_읽었어도_급식은_고치고_확인_못_
     assert result.success
     assert result.data["allergy_checked"] is False
     assert (await rows_on(meals))[0].menu_keys == ("밥", "두유")
+    # allergy_checked 는 모델에게만 간다 — 보호자 화면에도 확인 못 했다는 줄이 있어야 한다
+    assert texts(ctx)[-1] == code("daycare.allergy_unchecked")
 
 
 async def test_카탈로그에_없는_메뉴도_키로_저장한다() -> None:

@@ -37,13 +37,7 @@ export default function GlobalError({
     <html lang="ko">
       <body className="antialiased">
         <ErrorView
-          title={
-            <>
-              앱을 불러오지
-              <br />
-              못했어요
-            </>
-          }
+          title="앱을 불러오지 못했어요"
           description="지금까지 저장한 기록은 그대로 있어요. 다시 불러오면 대부분 해결돼요."
           digest={error.digest}
           action={

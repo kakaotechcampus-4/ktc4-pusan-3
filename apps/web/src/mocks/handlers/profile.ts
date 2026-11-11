@@ -13,6 +13,8 @@ import { isMeasurementInRange } from "@/lib/measurement";
 import { childProfile, growthLogs, measuredLabel, newGrowthLog } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
+import { withIdempotency } from "./idempotency";
+import { currentMe, deleteChild } from "./membership";
 
 /**
  * 11 아이 프로필 — 별명·생일·성별과 키·몸무게 측정 로그.
@@ -38,7 +40,7 @@ export function resetProfileState(): void {
 }
 
 /**
- * 서버 `Measurement`(0 보다 크고 300 이하, 반올림해 0.1 이상)와 `_check_measured_on`
+ * 서버 `HeightCm` · `WeightKg` 의 칸별 범위(`lib/measurement.ts` · #628)와 `_check_measured_on`
  * (아이 생일부터 오늘까지) 를 흉내 낸다. 걸리면 서버와 같은 400 응답, 없으면 `null`.
  */
 function rejectGrowthBody(body: {
@@ -48,7 +50,10 @@ function rejectGrowthBody(body: {
 }) {
   const outOfRange = (["height_cm", "weight_kg"] as const).filter((name) => {
     const value = body[name];
-    return typeof value === "number" && !isMeasurementInRange(value);
+    return (
+      typeof value === "number" &&
+      !isMeasurementInRange(name === "height_cm" ? "height" : "weight", value)
+    );
   });
   if (outOfRange.length > 0) {
     // 스키마 검증이라 서버 공통 문구다 (`app/api/errors.py`).
@@ -96,17 +101,34 @@ function currentLogs(): GrowthLog[] {
   return currentScenario() === "empty" ? [] : logs;
 }
 
+/**
+ * 지금 보호자에게 보이는 프로필. 🚨 **`role` 은 이 보호자와 아이의 연결에서 읽는다** — 서버도 `parent_child` 행의
+ * 값을 싣는다. 픽스처의 `owner` 를 그대로 돌려주면 초대로 들어온 보호자에게도 등록 보호자만의 길(아이 삭제)이
+ * 서서, 화면이 role 로 길을 가리는지 목으로 확인할 수 없다 (`e2e/delete-child.spec.ts` · #865 에서 발견).
+ * 연결이 없으면(실서버라면 403) 픽스처 값을 둔다.
+ */
+function seenBy(childId: string): ChildProfile {
+  const link = currentMe().children.find((c) => c.child_id === childId);
+  return link ? { ...profile, role: link.role } : profile;
+}
+
+const deleteOwnedChild = withIdempotency(async ({ params }) => {
+  await networkDelay(320);
+  deleteChild(String(params.cid));
+  return new HttpResponse(null, { status: 204 });
+});
+
 export const profileHandlers = [
-  http.get(url("/children/:cid"), async () => {
+  http.get(url("/children/:cid"), async ({ params }) => {
     await networkDelay();
-    return HttpResponse.json(profile);
+    return HttpResponse.json(seenBy(String(params.cid)));
   }),
 
   /**
    * 🚨 **세 값 다 선택이다.** 화면은 고친 것만 보낸다 — 안 고친 필드를 함께 올리면
    *    두 보호자가 같은 화면을 열어 뒀을 때 나중 저장이 남의 수정을 덮는다.
    */
-  http.patch(url("/children/:cid"), async ({ request }) => {
+  http.patch(url("/children/:cid"), async ({ request, params }) => {
     await networkDelay(320);
     const body = (await request.json()) as UpdateChildRequest;
 
@@ -126,7 +148,26 @@ export const profileHandlers = [
       ...(body.gender !== undefined ? { gender: body.gender } : {}),
     };
 
-    return HttpResponse.json({ child: profile });
+    return HttpResponse.json({ child: seenBy(String(params.cid)) });
+  }),
+
+  /**
+   * 아이 삭제 (#751). 서버 `DELETE /children/{cid}` 와 같다 — 판정 순서도 같다.
+   *
+   * - 연결된 아이가 아니면(이미 지운 아이 포함) 403 `child_access_denied`
+   * - 함께 보는 보호자면 403 `owner_only` — 키를 보기 전에 막는다
+   * - 키가 필수다(`withIdempotency`). 🚨 끝난 뒤 같은 키로 다시 오면 재생이 아니라 위의 403 이다 —
+   *   서버도 아이 접근 확인이 재생보다 먼저다 (`docs/api/idempotency-v1.md` §3-1)
+   * 🚨 지운 아이는 `/me` 에서 빠진다(`deleteChild`). 다른 목 상태(기록 · 일정)는 그 아이 주소로 다시
+   *   열 수 없어서 따로 비우지 않는다.
+   */
+  http.delete(url("/children/:cid"), async (info) => {
+    const link = currentMe().children.find((c) => c.child_id === info.params.cid);
+    if (!link) return apiError(403, "child_access_denied", "이 아이에 접근할 수 없어요");
+    if (link.role !== "owner") {
+      return apiError(403, "owner_only", "아이를 등록한 보호자만 아이를 삭제할 수 있어요");
+    }
+    return deleteOwnedChild(info);
   }),
 
   http.get(url("/children/:cid/growth"), async () => {

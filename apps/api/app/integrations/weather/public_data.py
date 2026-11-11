@@ -16,13 +16,15 @@ from app.core.weather_raw import UpstreamUnavailable
 
 log = logging.getLogger(__name__)
 
-# 연결 1.0s · 읽기 2.0s · 전체 2.5s, 재시도 0회 (설계 D8). 네 조회가 병렬이라 하나가 실패해도
-# 나머지는 온다. 재시도는 예산을 두 배로 쓴다
+# 연결 1.0s · 읽기 2.0s, 재시도 0회 (설계 D8). 네 조회가 병렬이라 하나가 실패해도 나머지는 온다.
+# 재시도는 예산을 두 배로 쓴다. 단기예보 · 특보는 따로 더 기다린다 (`forecast.py` · `advisories.py`)
+# 🚨 httpx 에는 요청 전체 상한이 없다. 읽기 제한은 바이트를 받는 사이마다 따로 세고, 첫 값(2.5s)은
+#    쓰기 · 연결 풀 대기 제한이다 — 조회 하나가 2.5s 를 넘을 수 있다 (#959)
 CONNECT_TIMEOUT_S = 1.0
 READ_TIMEOUT_S = 2.0
-TOTAL_TIMEOUT_S = 2.5
+WRITE_POOL_TIMEOUT_S = 2.5
 
-TIMEOUT = httpx.Timeout(TOTAL_TIMEOUT_S, connect=CONNECT_TIMEOUT_S, read=READ_TIMEOUT_S)
+TIMEOUT = httpx.Timeout(WRITE_POOL_TIMEOUT_S, connect=CONNECT_TIMEOUT_S, read=READ_TIMEOUT_S)
 
 
 def service_key() -> str:
@@ -38,7 +40,12 @@ def service_key() -> str:
 
 
 async def get_json(
-    client: httpx.AsyncClient, url: str, params: dict[str, Any], *, what: str
+    client: httpx.AsyncClient,
+    url: str,
+    params: dict[str, Any],
+    *,
+    what: str,
+    timeout: httpx.Timeout = TIMEOUT,
 ) -> dict[str, Any]:
     """GET 한 번. HTTP 오류 · 타임아웃 · JSON 아님은 전부 `UpstreamUnavailable(what)` 이다.
 
@@ -46,7 +53,7 @@ async def get_json(
     """
     try:
         response = await client.get(
-            url, params={**params, "serviceKey": service_key()}, timeout=TIMEOUT
+            url, params={**params, "serviceKey": service_key()}, timeout=timeout
         )
         response.raise_for_status()
         payload = response.json()

@@ -42,13 +42,10 @@ export interface IdempotencyKeyHolder {
    * 지금 동작의 키. 같은 인자로 여러 번 불러도 같은 값이다 — 그게 재시도다.
    *
    * @param payload 이 키로 보낼 본문. **본문이 달라지면 새 키**를 돌려준다.
-   *   서버는 같은 키에 다른 본문이 오면 `422 idempotency_key_reuse` 로 거절하는데
-   *   (idempotency-v1 §0 서버 보장 ③), 거기 걸리는 경로가 실제로 있다 — 서버는 처리했는데
-   *   **응답만 유실되면** 화면은 실패로 보이고, 보호자가 한 줄을 고쳐서 다시 보낸다.
-   *   그때 본문만 바뀌고 키는 그대로라 계속 422 다 (PR #71 리뷰).
-   *   ⚠️ 422 는 목과 idempotency-v1 의 목표 동작이고, **지금 서버는 본문을 비교하지 않고 처음 응답을
-   *   재생한다** (`apps/api/app/api/idempotency.py` · "422 는 다음 이슈"). 그쪽이 더 나쁘다 — 고친
-   *   본문이 저장되지 않는데 화면은 성공으로 그린다. 어느 쪽이든 본문을 넘기면 새 키가 나간다.
+   *   서버는 같은 키면 본문을 비교하지 않고 처음 응답을 재생한다 (`apps/api/app/api/idempotency.py`).
+   *   그래서 서버가 처리했는데 **응답만 유실되고**, 보호자가 한 줄을 고쳐 같은 키로 다시 보내면 고친 본문은
+   *   저장되지 않는데 화면은 성공으로 그린다 (PR #71 리뷰). 본문을 넘기면 새 키가 나가서 그 일이 없다.
+   *   🚨 같은 키 · 다른 본문을 422 로 거절하는 것은 만들지 않기로 했다 (#438 · 11-09 PM) — 이 장치가 그 몫을 한다.
    *   본문이 하나뿐인 동작(확정 · 승인)은 넘기지 않는다.
    */
   current: (payload?: string) => IdempotencyKey;
@@ -82,10 +79,12 @@ export function createIdempotencyKeyHolder(): IdempotencyKeyHolder {
 /* ── 되돌릴 수 없는 엔드포인트 ────────────────────────────────────────── */
 
 /**
- * 계약서 §01 의 5곳. 승인 게이트 2곳(㉠ 초안 제출 · ㉡ healthSafety)이 여기 포함된다.
- * 🚨 초안 제출은 create(`submitEvent`)와 update(`updateEvent`) **두 줄**이다 — 한 곳의 두 갈래라
- *    게이트가 늘어난 것이 아니다 (9/21 에 op 별로 엔드포인트를 갈랐다).
+ * 계약서 §01 의 5곳과 대화의 삭제 확정(#535), 기록 탭의 기록 지우기(#736), 아이 삭제(#751). 승인 게이트 2곳(㉠ 초안 제출 · ㉡ healthSafety · 복약 제출)이 여기 포함된다.
+ * 🚨 초안 제출은 create(`submitEvent`)와 update(`updateEvent`), 반복 묶음 고치기(`updateEventSeries` · #738)
+ *    **세 줄**이다 — 한 곳의 갈래라 게이트가 늘어난 것이 아니다 (9/21 에 op 별로 엔드포인트를 갈랐다).
  *    알레르기 · 건강 기록도 같다 — 등록(`healthSafety`)과 고치기(`updateHealthSafety`) 두 줄이 게이트 ㉡ 하나다.
+ *    🚨 **복약 제출(`submitMedication` · `updateMedication`)도 게이트 ㉡ 안의 메서드다** (#537) — 건강 기록을
+ *    확정하는 같은 게이트에 메서드가 는 것이지 세 번째 게이트가 아니다 (최상위 §2 — 딱 2곳).
  * 여기에 줄을 더하면 아래 정규식과 operations.ts 가 자동으로 따라온다.
  * 🚨 줄을 더하면 `idempotentMethod` 에도 더한다 — 타입이 빠진 줄을 잡는다.
  */
@@ -120,6 +119,55 @@ export const idempotentPath = {
    *    다시 보내면 서버는 이미 들어간 것인지 알 수 없어서 준비물이 두 줄 들어간다.
    */
   updateEvent: (childId: string, eventId: string) => `/children/${childId}/events/${eventId}`,
+  /**
+   * 🚨 승인 게이트 ㉠ — 반복 묶음 고치기 반영 (#738). 아직 시작하지 않은 회차 전부를 한 번에 고친다 — 같은 게이트의
+   *    세 번째 메서드지 게이트가 는 것이 아니다. 새 준비물 이름이 회차마다 행으로 들어가서 `updateEvent` 와 같은
+   *    이유로 키를 단다.
+   * 경로는 서버(#761)와 같다. 일정 수정과 같이 아이 스코프 아래다 — `series_id` 하나로는 남의 아이 묶음인지
+   *    가릴 수 없다 (#284 · #316). 다른 아이의 묶음이면 404 다. 서버도 키를 필수로 받는다.
+   */
+  updateEventSeries: (childId: string, seriesId: string) =>
+    `/children/${childId}/event-series/${seriesId}`,
+  /**
+   * 🚨 승인 게이트 ㉡ — 복약 초안 **제출** (#537). 코스 한 건과 기간만큼의 회차 행을 한 번에 만든다 —
+   *    두 번 나가면 같은 약이 두 코스가 되고 알림이 두 번 울린다.
+   * 경로는 서버의 `POST /children/{cid}/medications` 와 같다 (Idempotency-Key 를 받는다).
+   */
+  submitMedication: (childId: string) => `/children/${childId}/medications`,
+  /**
+   * 🚨 승인 게이트 ㉡ — 복약 수정 초안 반영 (#537). 서버는 아직 오지 않은 미체크 회차를 지우고 다시 만든다
+   *    (`docs/medication/medication-tables-v1.md` §5) — 응답만 잃고 다시 보내도 결과는 같지만, 화면이 그걸
+   *    믿고 키를 빼면 서버 규칙이 바뀌는 날 조용히 두 번 쓴다. 일정 수정(`updateEvent`)과 같이 키를 단다.
+   * 경로는 서버의 `PATCH /children/{cid}/medications/{sid}` 와 같다.
+   */
+  updateMedication: (childId: string, scheduleId: string) =>
+    `/children/${childId}/medications/${scheduleId}`,
+  /**
+   * 🚨 대화의 삭제 확정 (#535) — 체크한 기록 · 일정을 **지운다.** 지운 기록은 되살릴 수 없다.
+   *    AI 가 남긴 제안을 보호자가 버튼으로 확정하는 자리라, 채팅 "응" 을 모델이 해석하던 빈 게이트를 채운 것이다
+   *    (11-03 팀 회의 · 최상위 §2 의 게이트 ㉢ · #754). 서버도 키가 필수다(없으면 400) — 응답만 잃고 다시
+   *    누르면 처음 응답이 재생돼서 두 번 지우지 않는다.
+   *    취소(`…/cancel`)는 아무것도 지우지 않고 다시 보내도 같은 응답이라 표에 없다.
+   */
+  confirmDeleteProposal: (childId: string, proposalId: string) =>
+    `/children/${childId}/delete-proposals/${proposalId}/confirm`,
+  /**
+   * 07 기록 상세의 "기록 지우기" (#736 · #779). 보호자가 직접 누르는 삭제라 **승인 게이트가 아니라 확인 창**이다
+   *    (최상위 §2 — 게이트 ㉢ 은 AI 가 고른 삭제다). 그래도 지운 기록은 되살릴 수 없고 서버도 키가 필수다(없으면 400).
+   *    서버는 이미 지운 기록을 다시 지우면 404 라서, 응답만 잃고 다시 누를 때 처음 204 를 재생하려면 키가 있어야 한다.
+   *    본문이 없어 키는 기록(`kind/id`)에 묶는다 — 다른 기록을 지우면 새 키다.
+   */
+  deleteObservation: (childId: string, kind: string, observationId: string) =>
+    `/children/${childId}/observations/${kind}/${observationId}`,
+  /**
+   * 아이 삭제 (#751) — 아이 기본정보 · 건강정보 동의를 거두는 것과 같아서 아이와 기록을 통째로 지운다.
+   *    보호자가 직접 누르는 삭제라 **승인 게이트가 아니라 확인 화면**이다 (기록 지우기와 같은 판단).
+   *    서버도 키가 필수다(없으면 400). 같은 키가 동시에 두 번 가도 지우는 것은 한 번이다.
+   *    🚨 끝난 뒤 같은 키로 다시 보내면 재생이 아니라 403 이다 — 아이가 없어 아이 접근 확인에서 막힌다
+   *    (`docs/api/idempotency-v1.md` §3-1). 그래서 화면은 그 403 을 지워진 것으로 보고, 응답을 못 받으면
+   *    `/me` 로 지워졌는지 본다.
+   */
+  deleteChild: (childId: string) => `/children/${childId}`,
 } as const satisfies Record<string, (...ids: string[]) => string>;
 
 export type IdempotentOperation = keyof typeof idempotentPath;
@@ -138,7 +186,13 @@ export const idempotentMethod = {
   updateHealthSafety: "PATCH",
   submitEvent: "POST",
   updateEvent: "PATCH",
-} as const satisfies Record<IdempotentOperation, "POST" | "PATCH">;
+  updateEventSeries: "PATCH",
+  submitMedication: "POST",
+  updateMedication: "PATCH",
+  confirmDeleteProposal: "POST",
+  deleteObservation: "DELETE",
+  deleteChild: "DELETE",
+} as const satisfies Record<IdempotentOperation, "POST" | "PATCH" | "DELETE">;
 
 const ID_SLOT = "__ID__";
 

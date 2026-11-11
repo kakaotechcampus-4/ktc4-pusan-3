@@ -6,25 +6,26 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from app.api.schema_base import ApiSchema
 from app.api.v1.schemas.common import Ref
 from app.rules.home_prompts import PromptKey
 
 
-class TodayEventOut(BaseModel):
+class TodayEventOut(ApiSchema):
     kind: Literal["event"] = "event"
     event_id: str
     title: str
 
 
-class HighlightOut(BaseModel):
+class HighlightOut(ApiSchema):
     text: str = Field(description="눈여겨볼 기억의 이름(merge_key)")
     state_reason: str = Field(description="서버 문구. 기억 목록의 state_reason 과 같다")
     ref: Ref
 
 
-class AgentPromptOut(BaseModel):
+class AgentPromptOut(ApiSchema):
     agent: Literal["food", "activity"]
     text: str = Field(description='버튼에 보이는 문구. 예) "민준이가 먹을 저녁 추천해드릴까요?"')
     prompt_key: PromptKey = Field(
@@ -35,9 +36,9 @@ class AgentPromptOut(BaseModel):
     )
 
 
-class HomeResponse(BaseModel):
+class HomeResponse(ApiSchema):
     observation_count: int = Field(
-        description="기록 수. 기록 탭처럼 deleted 만 빼고 센다. 건강 기록은 세지 않는다"
+        description="기록 수. 기록 탭처럼 deleted 만 빼고 센다. 건강 기록도 센다"
     )
     week_count: int = Field(description="이번 주(월요일 시작, 한국 시각)에 일어난 기록 수")
     upcoming_count: int = Field(description="지금부터 7일 안에 있는 일정 수")

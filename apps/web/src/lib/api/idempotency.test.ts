@@ -36,10 +36,10 @@ const DRAFT_BODY: SubmitEventBody = {
 describe("되돌릴 수 없는 경로 판정", () => {
   const operations = Object.keys(idempotentPath) as IdempotentOperation[];
 
-  it("표의 줄을 전부 그 메서드로 요구한다 — 5곳 · 초안 제출과 알레르기 기록은 각각 두 줄", () => {
-    expect(operations).toHaveLength(7);
+  it("표의 줄을 전부 그 메서드로 요구한다 — 5곳 · 초안 제출은 세 줄 · 알레르기 기록 · 복약 제출은 각각 두 줄 · 대화의 삭제 확정 (#535) · 기록 지우기 (#736) · 아이 삭제 (#751)", () => {
+    expect(operations).toHaveLength(13);
     for (const operation of operations) {
-      const path = idempotentPath[operation]("x1", "x2");
+      const path = idempotentPath[operation]("x1", "x2", "x3");
       expect(requiresIdempotencyKey(idempotentMethod[operation], path), operation).toBe(true);
     }
   });
@@ -49,12 +49,44 @@ describe("되돌릴 수 없는 경로 판정", () => {
     expect(requiresIdempotencyKey("patch", "/children/c1/events/e1")).toBe(true);
   });
 
+  it("🚨 반복 묶음 고치기(PATCH)도 게이트 ㉠ 이라 키가 필요하다 (#738)", () => {
+    expect(requiresIdempotencyKey("PATCH", "/children/c1/event-series/series_1")).toBe(true);
+    // 아이 스코프 밖의 경로는 표에 없다 — 남의 아이 묶음을 가릴 수 없어서 쓰지 않는다.
+    expect(requiresIdempotencyKey("PATCH", "/event-series/series_1")).toBe(false);
+  });
+
   it("🚨 알레르기 고치기(PATCH)도 키가 필요하다 — 고치면 새 기록이라 재시도가 404 가 된다 (#375)", () => {
     expect(requiresIdempotencyKey("PATCH", "/children/c1/health-safety/hs_1")).toBe(true);
     // 같은 경로의 내리기는 같은 결과라 키를 받지 않는다.
     expect(requiresIdempotencyKey("DELETE", "/children/c1/health-safety/hs_1")).toBe(false);
     // 목록 경로를 PATCH 로 부르는 것은 표에 없다.
     expect(requiresIdempotencyKey("PATCH", "/children/c1/health-safety")).toBe(false);
+  });
+
+  it("🚨 복약 제출은 게이트 ㉡ 의 두 메서드다 — 등록 POST · 수정 PATCH 둘 다 키가 필요하다 (#537)", () => {
+    expect(requiresIdempotencyKey("POST", "/children/c1/medications")).toBe(true);
+    expect(requiresIdempotencyKey("PATCH", "/children/c1/medications/ms_1")).toBe(true);
+    // 읽기와 회차 체크는 되돌릴 수 있다 — 키를 걸지 않는다.
+    expect(requiresIdempotencyKey("GET", "/children/c1/medications")).toBe(false);
+    expect(requiresIdempotencyKey("PUT", "/children/c1/medication-doses/d1/check")).toBe(false);
+  });
+
+  it("🚨 기록 지우기(DELETE)는 키가 필요하고, 같은 경로의 상세 읽기는 걸지 않는다 (#736)", () => {
+    const path = "/children/c1/observations/observation_food/o_1";
+    expect(requiresIdempotencyKey("DELETE", path)).toBe(true);
+    expect(requiresIdempotencyKey("GET", path)).toBe(false);
+    // 목록 경로는 지우는 자리가 아니다.
+    expect(requiresIdempotencyKey("DELETE", "/children/c1/observations")).toBe(false);
+  });
+
+  it("🚨 아이 삭제(DELETE)는 키가 필요하고, 같은 경로의 읽기 · 고치기는 걸지 않는다 (#751)", () => {
+    expect(requiresIdempotencyKey("DELETE", "/children/c1")).toBe(true);
+    expect(requiresIdempotencyKey("GET", "/children/c1")).toBe(false);
+    expect(requiresIdempotencyKey("PATCH", "/children/c1")).toBe(false);
+    // 아이 아래의 다른 삭제를 잘못 걸지 않는다 — [^/]+ 가 / 를 넘지 않는지 본다.
+    expect(requiresIdempotencyKey("DELETE", "/children/c1/health-safety/hs_1")).toBe(false);
+    expect(requiresIdempotencyKey("DELETE", "/children/c1/parents/p1")).toBe(false);
+    expect(requiresIdempotencyKey("DELETE", "/children")).toBe(false);
   });
 
   it("같은 경로라도 다른 메서드는 걸지 않는다", () => {
@@ -150,7 +182,9 @@ describe("전용 함수", () => {
  *
  * 멘토 리뷰(#71): "최초 POST 를 서버가 처리했지만 응답만 유실되면 (…) 사용자가 내용을 고쳐
  * 다시 전송하면 기존 키에 다른 본문이 묶여 422 `idempotency_key_reuse` 가 계속 발생하고,
- * 키를 바꾸는 경로에도 진입하지 못합니다."
+ * 키를 바꾸는 경로에도 진입하지 못합니다." *
+ * ⚠️ 422 는 만들지 않기로 했다 (#438 · 11-09). 지금 서버는 같은 키면 처음 응답을 재생해서, 고친 본문이
+ *    조용히 버려진다 — 멘토님이 짚은 문제(본문이 바뀌어도 키가 그대로)는 그대로라 이 장치가 계속 필요하다.
  */
 describe("키 수명 — 본문에 묶인 키", () => {
   it("같은 본문이면 같은 키다 — 그게 재시도다", () => {
@@ -180,14 +214,15 @@ describe("키 수명 — 본문에 묶인 키", () => {
 describe("응답 유실 → 본문 수정 → 재전송", () => {
   const body = (text: string) => ({ text, source: "home_input" }) as const;
 
-  it("같은 키에 다른 본문을 보내면 422 다 — 고쳐야 하는 이유", async () => {
+  it("같은 키에 다른 본문을 보내면 처음 응답이 재생되고 고친 본문은 처리되지 않는다 — 고쳐야 하는 이유", async () => {
     const key = newIdempotencyKey();
     // 서버는 처리했고(여기까지는 성공) 화면만 응답을 못 받은 상태를 흉내 낸다.
-    await submitInput("c1", body("지어낸 한 줄"), key);
+    const first = await submitInput("c1", body("지어낸 한 줄"), key);
 
-    await expect(submitInput("c1", body("지어낸 다른 한 줄"), key)).rejects.toMatchObject({
-      code: "idempotency_key_reuse",
-    });
+    // 🚨 서버는 본문을 비교하지 않는다(422 를 만들지 않기로 함 · #438). 실패로 알리지도 않아서
+    //    화면은 고친 한 줄이 저장된 줄 안다 — 그래서 본문이 바뀌면 새 키여야 한다.
+    const second = await submitInput("c1", body("지어낸 다른 한 줄"), key);
+    expect(second.run_id).toBe(first.run_id);
   });
 
   it("holder 를 거치면 고쳐 쓴 본문이 새 키로 나가 통과한다", async () => {
@@ -201,5 +236,12 @@ describe("응답 유실 → 본문 수정 → 재전송", () => {
     await expect(submitInput("c1", edited, holder.current(edited.text))).resolves.toHaveProperty(
       "run_id",
     );
+  });
+});
+
+describe("대화의 삭제 확정 (#535)", () => {
+  it("🚨 확정은 키가 필요하고, 취소는 아무것도 지우지 않아 키가 없다", () => {
+    expect(requiresIdempotencyKey("POST", "/children/c1/delete-proposals/dp_1/confirm")).toBe(true);
+    expect(requiresIdempotencyKey("POST", "/children/c1/delete-proposals/dp_1/cancel")).toBe(false);
   });
 });

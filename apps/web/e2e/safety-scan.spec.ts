@@ -58,7 +58,7 @@ test("게이트 화면 — 네비 없이, 아무것도 저장되지 않았다고
 test("이름을 못 읽은 줄은 사람이 채우기 전에는 고를 수 없다", async ({ page }) => {
   await openScan(page);
   const unread = page.getByRole("checkbox", { name: /^이름을 읽지 못했어요/ });
-  await expect(page.getByText("이름을 읽지 못했어요. 검사지를 보고 채워주세요.")).toBeVisible();
+  await expect(page.getByText("이름을 읽지 못했어요. 검사지를 보고 채워 주세요.")).toBeVisible();
   await unread.click({ force: true });
   await expect(unread).not.toBeChecked();
   await expect(page.getByRole("button", { name: "확인했어요, 7건 등록할게요" })).toBeVisible();
@@ -90,7 +90,7 @@ test("원문을 못 읽은 줄은 고치기에서 보고 확인하면 그때 승
     .click();
   const sheet = page.getByRole("dialog", { name: "옮겨 적은 것 고치기" });
   await expect(
-    sheet.getByText("이 줄은 검사지 원문을 읽지 못했어요. 검사지를 직접 보고 적어주세요."),
+    sheet.getByText("이 줄은 검사지 원문을 읽지 못했어요. 검사지를 직접 보고 적어 주세요."),
   ).toBeVisible();
   await sheet.getByRole("button", { name: "이 내용으로 확인" }).click();
 
@@ -110,7 +110,7 @@ test("고치기 시트의 검사 등급에도 설명이 붙는다", async ({ pag
     .click();
   const sheet = page.getByRole("dialog", { name: "옮겨 적은 것 고치기" });
   await expect(sheet.getByRole("combobox", { name: "검사 등급" })).toHaveAccessibleDescription(
-    "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식단 추천에서는 똑같이 빼요.",
+    "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식사 추천에서는 똑같이 빼요.",
   );
 });
 

@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Pencil, Ruler } from "lucide-react";
+import { ChevronRight, Pencil, Pill, Ruler, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
@@ -15,15 +16,31 @@ import { ChildNav } from "@/components/child-nav";
 import { GrowthLatestCard, GrowthLatestCardSkeleton } from "@/components/growth-log-list";
 import { GrowthSheet } from "@/components/growth-sheet";
 import { SafetySection } from "@/components/safety-section";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
+import { SettingsGroup, SettingsLinkRow } from "@/components/settings-row";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import { IconTile } from "@/components/ui/icon-tile";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Section, SectionAction, SectionError } from "@/components/ui/section";
+import { SkeletonBlock } from "@/components/ui/skeleton";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import { useSheetTarget } from "@/hooks/use-sheet-target";
 import { EARLIEST_BIRTH_DATE } from "@/lib/date-bounds";
-import { api, qk, type ChildProfile, type GrowthLog, type GrowthLogsResponse } from "@/lib/api";
+import {
+  api,
+  qk,
+  type ChildProfile,
+  type GrowthLog,
+  type GrowthLogsResponse,
+  type MedicationsResponse,
+} from "@/lib/api";
+import { timesLabel } from "@/lib/medication";
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
+import { FORWARD } from "@/lib/view-transition";
+import { profileTour } from "@/lib/tour/screens/profile";
 
 export default function ChildProfilePage() {
   return (
@@ -53,19 +70,64 @@ function ChildProfileScreen() {
       {/* 🚨 **머리에 아이 이름·나이를 다시 세우지 않는다.** 바로 아래 "기본 정보" 구역의
           별명 입력과 생일 입력이 같은 값을 들고 있어서, 머리에 또 쓰면 한 화면에서 같은 사실이
           두 번 선다. 제목은 화면을 가리키고, 아이가 누구인지는 그 구역이 진다. */}
-      <header>
-        <PageTitle>아이 프로필</PageTitle>
-        <p className="text-body-sm text-ink-muted mt-2">
-          기본 정보와 키·몸무게, 알레르기를 여기서 관리해요.
-        </p>
+      <header className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <PageTitle>아이 프로필</PageTitle>
+          <p className="text-body-sm text-ink-muted mt-2">
+            {MEDICATION_ENABLED
+              ? "기본 정보와 키·몸무게, 복약, 알레르기를 여기서 관리해요."
+              : "기본 정보와 키·몸무게, 알레르기를 여기서 관리해요."}
+          </p>
+        </div>
+        <TourHelpButton tour={profileTour} />
       </header>
 
       <IdentitySection childId={childId} query={profile} />
 
       <GrowthSection childId={childId} query={growth} />
 
+      {/* 🚨 스토어 선언 때문에 꺼 둔 동안은 칸도 조회도 없다 (`lib/store-policy.ts`). 투어의 복약 단계는 비출 칸이 없어 저절로 빠진다. */}
+      {MEDICATION_ENABLED ? <MedicationSection childId={childId} /> : null}
+
       <SafetySection childId={childId} />
+
+      {profile.data?.role === "owner" ? <DeleteChildSection childId={childId} /> : null}
+
+      <ScreenTour tour={profileTour} ready={profile.isSuccess && growth.isSuccess} />
     </Screen>
+  );
+}
+
+/* ── 아이 삭제 (#751) ─────────────────────────────────────────────────── */
+
+/**
+ * 아이 기본정보 · 건강정보 동의를 앱 안에서 거두는 길 (#751 · 개인정보 보호법 제38조 ④).
+ *
+ * 🚨 **여기서 지우지 않는다.** 줄을 누르면 무엇이 지워지는지 읽고 확인하는 화면으로 간다 — 설정의
+ *    탈퇴 줄과 같다. 그래서 줄에 빨강(`danger`)을 쓰지 않는다. `danger` 는 파괴적 **확정**의 색이고 그
+ *    자리는 다음 화면의 확인 시트다.
+ * 🚨 **등록 보호자에게만 그린다.** 서버는 함께 보는 보호자를 403 `owner_only` 로 막는다 — 버튼을 그렸다가
+ *    눌러야 실패를 알려주는 길을 만들지 않는다 (설정의 초대 버튼과 같은 원칙). role 을 모르는 동안에도
+ *    그리지 않는다.
+ * 🚨 **화면 맨 아래다.** 손대는 구역(기본 정보 · 키·몸무게 · 알레르기) 뒤에 나가는 길이 선다 — 설정이
+ *    탈퇴를 맨 아래에 두는 것과 같은 순서다. 맨 아래라 프로필을 받은 뒤에 서도 위 구역을 밀지 않는다.
+ * 🚨 **아이 프로필에 둔다.** 아이 자체에 대한 것은 네비의 "아이" 칸이 소유한다 — 설정에 두면 같은 아이를
+ *    다루는 문이 둘이 된다 (설정 화면 머리말).
+ */
+function DeleteChildSection({ childId }: { childId: string }) {
+  return (
+    <section aria-label="아이 삭제">
+      <SettingsGroup>
+        <SettingsLinkRow
+          href={`/child/${childId}/profile/delete`}
+          icon={Trash2}
+          title="이 아이 삭제하기"
+          status="아이와 쌓인 기록이 모두 지워져요"
+          note="무엇이 어떻게 되는지 다음 화면에서 알려 드려요"
+          {...FORWARD}
+        />
+      </SettingsGroup>
+    </section>
   );
 }
 
@@ -85,6 +147,7 @@ function IdentitySection({
 
   return (
     <Section
+      data-tour="identity"
       title="기본 정보"
       // 🚨 **설명 줄을 두지 않는다.** "아이를 부르는 말과 생일이에요" 는 바로 아래 카드가
       //    별명 · 생일 · 성별을 글자로 다 보여주는 것을 한 번 더 말할 뿐이었다 —
@@ -165,7 +228,8 @@ function GrowthSection({
 
   return (
     <Section
-      title="키 · 몸무게"
+      data-tour="growth"
+      title="키·몸무게"
       description="가장 최근에 잰 것만 보여줘요. 눌러서 지난 기록과 변화를 볼 수 있어요."
       // 🚨 불러오기 전에는 숫자 대신 자리만(`"pending"`), 0 건이면 넘기지 않는다 — 앞은 "아직 모름" 이라
       //    0 을 그리면 거짓말이고, 뒤는 바로 아래 `EmptyState` 가 같은 숫자를 이미 말한다.
@@ -196,6 +260,72 @@ function GrowthSection({
       </Swap>
 
       <GrowthSheet open={adding} onClose={() => setAdding(false)} childId={childId} />
+    </Section>
+  );
+}
+
+/* ── 복약 (#537) ─────────────────────────────────────────────────────── */
+
+/**
+ * 진행 중인 복약의 입구. 🚨 **여기서 등록하지 않는다** — 복약은 대화가 만든 초안을 보호자가 확인해 넣는다
+ * (승인 게이트 ㉡ · 04 "찾은 복약" 시트). 그래서 머리줄에 더하기 버튼이 없다.
+ * 🚨 **회차 체크도 여기서 하지 않는다** — 11-3 상세가 진다. 이 구역은 무엇을 먹이는 중인지 한 줄씩만 세운다
+ * (`GrowthSection` 이 가장 최근 한 줄만 세우는 것과 같은 이유 · 한 구역이 다른 구역을 밀지 않게).
+ */
+function MedicationSection({ childId }: { childId: string }) {
+  const query = useQuery({
+    queryKey: qk.medications(childId),
+    queryFn: () => api.get<MedicationsResponse>(`/children/${childId}/medications`),
+  });
+  const courses = query.data?.courses ?? [];
+
+  return (
+    <Section
+      data-tour="medications"
+      title="복약"
+      description="지금 먹이는 약이에요. 눌러서 먹인 회차를 체크할 수 있어요."
+      count={courses.length > 0 ? courses.length : undefined}
+    >
+      <Swap id={phaseOf(query)}>
+        {query.isPending ? (
+          <SkeletonBlock label="복약을 불러오는 중" />
+        ) : query.isError ? (
+          <SectionError what="복약을 불러오지 못했어요" onRetry={() => void query.refetch()} />
+        ) : courses.length === 0 ? (
+          <EmptyState
+            icon={Pill}
+            title="지금 먹이는 약이 없어요"
+            description="대화에 약 이름, 먹일 시각, 먹일 기간을 적으면 복약 일정을 준비해요. 확인하고 넣은 약만 여기에 보여요."
+            count={0}
+            countLabel="진행 중인 복약"
+          />
+        ) : (
+          <Link
+            href={`/child/${childId}/profile/medications`}
+            {...FORWARD}
+            className="rounded-card border-line bg-surface ease-standard active:bg-surface-muted hover:bg-surface-muted min-h-touch flex items-start gap-3 border px-4 py-3.5 transition-colors duration-120"
+          >
+            <IconTile icon={Pill} tone="neutral" />
+            <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+              {courses.map((course) => (
+                <span key={course.id} className="flex flex-col">
+                  <span className="text-body text-ink">{course.title}</span>
+                  <span className="text-caption text-ink-subtle">
+                    매일 {timesLabel(course.notice_times)}
+                  </span>
+                </span>
+              ))}
+            </span>
+            <span className="sr-only">회차 체크하러 가기</span>
+            <ChevronRight
+              aria-hidden
+              size={ICON_SIZE.md}
+              strokeWidth={ICON_STROKE}
+              className="text-ink-subtle mt-1.5 shrink-0"
+            />
+          </Link>
+        )}
+      </Swap>
     </Section>
   );
 }

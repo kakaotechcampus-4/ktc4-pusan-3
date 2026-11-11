@@ -41,11 +41,26 @@ BASE = (
     "lookup_schedule",
     "propose_activity_candidates",
 )
+NO_LOCATION = (
+    "search_activity_memory",
+    "lookup_schedule",
+    "search_nearby_places",
+    "propose_activity_candidates",
+)
 WITH_PLACES = (
     "search_activity_memory",
     "lookup_weather",
     "lookup_schedule",
     "search_nearby_places",
+    "propose_activity_candidates",
+)
+
+WITH_EVENTS = (
+    "search_activity_memory",
+    "lookup_weather",
+    "lookup_schedule",
+    "search_nearby_places",
+    "search_events",
     "propose_activity_candidates",
 )
 
@@ -81,9 +96,20 @@ class TestToolsFor:
         """공원 · 놀이터는 보호자와 같이 간다. 위치가 있으면 어느 월령에서도 열린다."""
         assert tools_for(TASK, gate(months)) == WITH_PLACES
 
-    def test_위치가_없으면_장소_조회가_닫힌다(self):
-        """기본 좌표로 대체하지 않는다. 실내 전용으로 정상 동작한다 (4-3). 날씨도 조회할 수 없다."""
-        assert tools_for(TASK, gate(40, has_location=False)) == BASE
+    def test_위치가_없어도_장소_조회는_열린다(self):
+        """보호자가 말한 지역("해운대 가서")으로 찾는다 — 기본 좌표로 대체하지 않는다 (4-3).
+        지역도 없으면 tool 이 INVALID_ARGS 로 돌려보낸다. 날씨 tool 은 닫힌다."""
+        assert tools_for(TASK, gate(40, has_location=False)) == NO_LOCATION
+
+    def test_위치도_장소_어댑터도_없으면_장소_조회가_닫힌다(self):
+        assert tools_for(TASK, gate(40, has_location=False, data=DataReady())) == BASE
+
+    def test_행사_조회는_행사_어댑터가_있을_때만_열린다(self):
+        """위치가 없어도 열린다 — 보호자가 말한 지역으로 찾는다. 월령으로는 닫지 않는다."""
+        ready = DataReady(places=True, weather=True, events=True)
+        assert "search_events" not in tools_for(TASK, gate(40))
+        assert tools_for(TASK, gate(0, data=ready)) == WITH_EVENTS
+        assert "search_events" in tools_for(TASK, gate(40, has_location=False, data=ready))
 
     def test_좌표가_있어도_어댑터가_없으면_그_tool_은_닫힌다(self):
         """부르면 늘 실패만 돌려주고 왕복 하나를 쓴다 (#359 리뷰)."""
@@ -144,8 +170,8 @@ class TestCodeTools:
         assert spec_names.isdisjoint(CODE_TOOLS)
         assert set(TOOL_HANDLERS).isdisjoint(CODE_TOOLS)
 
-    def test_모델_tool_은_다섯_개다(self):
-        assert [spec["function"]["name"] for spec in TOOL_SPECS] == list(WITH_PLACES)
+    def test_모델_tool_은_여섯_개다(self):
+        assert [spec["function"]["name"] for spec in TOOL_SPECS] == list(WITH_EVENTS)
 
 
 class TestExecuteTool:

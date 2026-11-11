@@ -27,6 +27,7 @@ from app.agents.activity.weather import (
     HEAT_ADVISORY,
     OUTDOOR_BLOCKED,
     OZONE_ADVISORY,
+    POP_CAUTION_PERCENT,
     RAIN_LIKELY,
     UV_UNCHECKED,
     UV_VERY_HIGH,
@@ -48,7 +49,7 @@ CALM = Advisories(heat="none", cold="none", severe=False)
 
 
 def judge(**kwargs):
-    base = dict(forecast=CLEAR, air=CLEAN_AIR, uv_index=4, advisories=CALM, after_sunset=False)
+    base = dict(forecast=CLEAR, air=CLEAN_AIR, uv_index=4, advisories=CALM)
     return judge_weather(**{**base, **kwargs})
 
 
@@ -172,21 +173,64 @@ class TestUv:
 
 
 class TestFailures:
-    """조회 실패를 기본값으로 메우지 않는다."""
+    """조회 실패를 기본값으로 메우지 않는다 — "맑음" 이라고 하지 않고 확인 못 했다고 알린다.
 
-    def test_예보가_실패하면_실내만(self):
+    못 읽었다고 바깥을 막지는 않는다. 위치를 켠 보호자가 우리 조회 실패로 바깥 놀이를 못 받으면
+    위치를 안 켠 보호자(묻지 않은 날)보다 손해다 — 확인은 보호자에게 맡긴다 (#612 멘토 리뷰).
+    """
+
+    def test_예보가_실패해도_바깥은_열고_확인_못_했다고_알린다(self):
         brief = judge(forecast=None)
-        assert brief.outdoor_ok is False
+        assert brief.outdoor_ok is True
         assert brief.notices == (WEATHER_UNCHECKED,)
+        assert brief.unread is True
+        assert "rain" not in brief.labels  # "비 없음"으로 채우지 않는다
+
+    def test_다_읽었으면_못_읽은_날이_아니다(self):
+        """미세먼지 · 자외선 실패는 무엇을 못 봤는지 알릴 뿐 예보 · 특보 실패와 다르다."""
+        assert judge().unread is False
+        assert judge(air=None, uv_index=None).unread is False
+
+    @pytest.mark.parametrize(
+        ("pop", "notices"),
+        [
+            (POP_CAUTION_PERCENT, (WEATHER_UNCHECKED, RAIN_LIKELY)),
+            (POP_CAUTION_PERCENT - 1, (WEATHER_UNCHECKED,)),
+        ],
+    )
+    def test_강수량을_못_읽어도_강수확률은_본다(self, pop, notices):
+        """비 오는 날의 강수량 형식은 아직 실호출로 못 봤다 — 못 읽는 날이 비 오는 날일 수 있다.
+        읽은 강수확률은 버리지 않는다 (#645 리뷰)."""
+        brief = judge(forecast=Forecast("흐림", None, pop))
+        assert brief.outdoor_ok is True
+        assert brief.notices == notices
+        assert "sky" not in brief.labels  # 양을 모르니 하늘 라벨도 싣지 않는다
 
     def test_강수량을_못_읽었으면_예보_실패와_같다(self):
         brief = judge(forecast=Forecast("맑음", None, 0))
-        assert brief.outdoor_ok is False
+        assert brief.outdoor_ok is True
         assert brief.notices == (WEATHER_UNCHECKED,)
 
-    def test_특보가_실패하면_실내만(self):
-        """특보는 차단 신호라 모르면 야외를 내지 않는다."""
-        assert judge(advisories=None).outdoor_ok is False
+    def test_특보가_실패해도_바깥은_열고_확인_못_했다고_알린다(self):
+        brief = judge(advisories=None)
+        assert brief.outdoor_ok is True
+        assert brief.notices == (WEATHER_UNCHECKED,)
+
+    @pytest.mark.parametrize(
+        "known",
+        [
+            dict(forecast=None, advisories=Advisories(heat="warning", cold="none", severe=False)),
+            dict(advisories=None, forecast=Forecast("흐림", 20.0, 90)),
+            dict(forecast=None, air=AirQuality(pm10=160, pm25=None, ozone_ppm=None)),
+        ],
+    )
+    def test_못_읽은_것이_있어도_읽은_신호가_나쁘면_막는다(self, known):
+        """막혔으니 "바깥 놀이라면 날씨를 봐 주세요" 는 붙이지 않는다. 그래도 못 읽은 건 남긴다 —
+        문구를 뺐다고 실패가 없던 일이 되지 않는다 (#645 리뷰)."""
+        brief = judge(**known)
+        assert brief.outdoor_ok is False
+        assert brief.notices == (OUTDOOR_BLOCKED,)
+        assert brief.unread is True
 
     def test_미세먼지만_실패하면_야외는_허용하고_알린다(self):
         brief = judge(air=None)
@@ -207,10 +251,11 @@ class TestFailures:
 
 
 class TestBlocked:
-    def test_해가_지면_실내만(self):
-        brief = judge(after_sunset=True)
-        assert brief.outdoor_ok is False
-        assert brief.notices[-1] == AFTER_SUNSET
+    def test_해가_진_것은_날씨_판정이_아니다(self):
+        """해가 지면 오늘 놀이터만 뺀다 — 바깥 활동 전체를 막지 않는다 (#800, `outing.dark_now`)."""
+        brief = judge()
+        assert brief.outdoor_ok is True
+        assert AFTER_SUNSET not in brief.notices
 
     def test_막히면_주의_안내는_빼고_확인_못_한_것만_남긴다(self):
         """야외를 막았는데 "우산 챙기세요"가 붙으면 이상하다."""
@@ -333,9 +378,12 @@ class TestReadForecast:
         """하늘상태는 라벨일 뿐 판정에 쓰지 않는다. 지어내지 않고 비운다."""
         assert read_forecast(RawForecast(sky="9", pcp="강수없음", pop="0")).sky is None
 
-    def test_강수량을_못_읽으면_실내만(self):
+    def test_강수량을_못_읽으면_확인_못_함이다(self):
+        """읽은 강수확률(90%)의 비 안내는 남긴다 (#645 리뷰)."""
         forecast = read_forecast(RawForecast(sky="1", pcp="비 많이", pop="90"))
-        assert judge(forecast=forecast).notices == (WEATHER_UNCHECKED,)
+        brief = judge(forecast=forecast)
+        assert brief.unread is True
+        assert brief.notices == (WEATHER_UNCHECKED, RAIN_LIKELY)
 
 
 class TestReadAir:
@@ -429,21 +477,48 @@ class TestReadAdvisories:
         assert judge(advisories=result).outdoor_ok is True
 
     @pytest.mark.parametrize("warn_var", ["999", "13", "10", ""])
-    def test_처음_보는_특보_종류가_발효_중이면_모른다고_한다(self, warn_var):
-        """모르는 종류를 "없음"으로 넘기면 다른 조건이 좋을 때 야외가 열린다 (#194 리뷰)."""
+    def test_처음_보는_특보_종류가_발효_중이면_차단_신호다(self, warn_var):
+        """모르는 종류를 "없음"으로 넘기면 다른 조건이 좋을 때 야외가 열린다 (#194 리뷰).
+        조회 실패(None)와도 다르다 — 목록은 읽었고 무언가 발효 중이다. 실패는 바깥을 열고 알리지만
+        이건 막는다."""
         result = advisories(row(warn_var=warn_var, command="1", stress="1"))
-        assert result is None
-        assert judge(advisories=result).outdoor_ok is False
+        assert result == Advisories(heat="none", cold="none", severe=True)
+        brief = judge(advisories=result)
+        assert (brief.outdoor_ok, brief.notices) == (False, (OUTDOOR_BLOCKED,))
 
     def test_처음_보는_종류라도_해제된_행은_넘긴다(self):
         assert advisories(row(warn_var="999", command="2")) == CLEAR_SKY
 
     @pytest.mark.parametrize(("command", "stress"), [("5", "0"), ("1", "9")])
-    def test_모르는_코드가_섞이면_모른다고_한다(self, command, stress):
-        """모르는 특보를 "없음"으로 넘기지 않는다 — 실내만으로 간다."""
+    def test_모르는_코드가_섞이면_차단_신호다(self, command, stress):
+        """모르는 특보를 "없음"으로 넘기지 않는다 — 해제가 아닌 행은 발효 중으로 보고 막는다."""
         result = advisories(row(command=command, stress=stress))
-        assert result is None
+        assert result is not None and result.severe is True
         assert judge(advisories=result).outdoor_ok is False
 
     def test_정상인데_행이_없으면_특보_없음(self):
         assert advisories() == CLEAR_SKY
+
+
+class TestMidForecast:
+    """단기예보 범위 밖의 날(월요일에 묻는 주말)은 중기 육상예보의 하늘 문장 · 강수확률로 본다."""
+
+    def test_맑은_날은_확인된_날이다(self):
+        from app.agents.activity.weather import read_forecast
+        from app.core.weather_raw import RawForecast
+
+        forecast = read_forecast(RawForecast(sky=None, pcp=None, pop="20", wf="구름많음"))
+        brief = judge_weather(forecast=forecast, air=None, uv_index=None, advisories=CALM)
+        assert forecast.sky == "구름많음" and forecast.precip_mm_per_h == 0.0
+        assert brief.outdoor_ok is True
+        assert WEATHER_UNCHECKED not in brief.notices
+
+    def test_비_소식은_안내하고_막지_않는다(self):
+        from app.agents.activity.weather import read_forecast
+        from app.core.weather_raw import RawForecast
+
+        forecast = read_forecast(RawForecast(sky=None, pcp=None, pop="70", wf="흐리고 비"))
+        brief = judge_weather(forecast=forecast, air=None, uv_index=None, advisories=CALM)
+        assert forecast.sky == "흐림"
+        assert brief.outdoor_ok is True
+        assert RAIN_LIKELY in brief.notices

@@ -1,6 +1,6 @@
 # apps/web 배포 이미지. 빌드 컨텍스트는 이 폴더다 (deploy/docker/docker-compose.deploy.yml).
 #
-#   make web-image        굽기
+#   make web-image        굽기 (로컬. 서버에서는 거부된다 — deploy/scripts/deploy.sh 가 굽는다)
 #   make web-up / web-down / web-logs
 #
 # 🚨 이 파일의 전제 두 개
@@ -51,10 +51,24 @@ ARG NEXT_PUBLIC_API_BASE_URL
 RUN [ -n "$NEXT_PUBLIC_API_BASE_URL" ] || { \
       echo ""; \
       echo "NEXT_PUBLIC_API_BASE_URL 이 비어 있다."; \
-      echo "deploy/docker/.env 에 값을 넣고 make web-image 로 굽는다."; \
+      echo "deploy/docker/.env 에 값을 넣고 다시 굽는다 (로컬 make web-image · 서버 deploy.sh)."; \
       echo ""; exit 1; }
 
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+
+# 웹 푸시 (#609). 공개 식별자라 번들에 들어가도 된다. 🚨 **비워 두면 웹 푸시가 꺼진 이미지다** —
+# 기기 토큰 수집 동의가 나가기 전에는 운영에서 비워 둔다 (#605). 다섯 개를 다 넣거나 다 비운다.
+# 일부만 넣으면 lib/env.ts 가 빌드 중에 멈춘다.
+ARG NEXT_PUBLIC_FIREBASE_API_KEY
+ARG NEXT_PUBLIC_FIREBASE_PROJECT_ID
+ARG NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+ARG NEXT_PUBLIC_FIREBASE_APP_ID
+ARG NEXT_PUBLIC_FIREBASE_VAPID_KEY
+ENV NEXT_PUBLIC_FIREBASE_API_KEY=$NEXT_PUBLIC_FIREBASE_API_KEY \
+    NEXT_PUBLIC_FIREBASE_PROJECT_ID=$NEXT_PUBLIC_FIREBASE_PROJECT_ID \
+    NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID \
+    NEXT_PUBLIC_FIREBASE_APP_ID=$NEXT_PUBLIC_FIREBASE_APP_ID \
+    NEXT_PUBLIC_FIREBASE_VAPID_KEY=$NEXT_PUBLIC_FIREBASE_VAPID_KEY
 
 # 🚨 목 서버는 ARG 로 열지 않는다. NODE_ENV=production 빌드에는 msw 가 통째로 빠지고
 #    (apps/web/CLAUDE.md §7) 이 이미지로는 켤 방법이 없다 — 켤 수 있는 척하면

@@ -3,7 +3,9 @@ import { afterAll, afterEach, beforeAll } from "vitest";
 import { resetAuthState } from "@/mocks/handlers/auth";
 import { resetCalendarState } from "@/mocks/handlers/calendar";
 import { resetChatState } from "@/mocks/handlers/chat";
+import { resetDeleteProposals } from "@/mocks/handlers/delete-proposals";
 import { resetInviteState } from "@/mocks/handlers/invites";
+import { resetMedicationState } from "@/mocks/handlers/medications";
 import { resetMembership } from "@/mocks/handlers/membership";
 import { resetSafetyState } from "@/mocks/handlers/children";
 import { resetMemoryState } from "@/mocks/handlers/memories";
@@ -13,8 +15,13 @@ import { resetPhotoRuns } from "@/mocks/handlers/photos";
 import { resetPolicyState } from "@/mocks/handlers/policies";
 import { resetReportState } from "@/mocks/handlers/reports";
 import { resetSubmittedInputs } from "@/mocks/handlers/runs";
-import { resetConsentState, resetParentState } from "@/mocks/handlers/settings";
+import {
+  resetConsentState,
+  resetNotificationSettings,
+  resetParentState,
+} from "@/mocks/handlers/settings";
 import { resetSubmittedEvents } from "@/mocks/handlers/suggestions";
+import { resetTourState } from "@/mocks/handlers/tours";
 import { resetDiaries } from "@/mocks/fixtures";
 import { server } from "@/mocks/server";
 
@@ -34,7 +41,9 @@ afterEach(() => {
   resetSafetyState();
   resetMemoryState();
   resetCalendarState();
+  resetMedicationState();
   resetChatState();
+  resetDeleteProposals();
   resetPhotoRuns();
   resetSubmittedInputs();
   resetProfileState();
@@ -42,10 +51,12 @@ afterEach(() => {
   resetConsentState();
   resetPolicyState();
   resetParentState();
+  resetNotificationSettings();
   resetInviteState();
   resetMembership();
   resetAuthState();
   resetReportState();
+  resetTourState();
 });
 
 afterAll(() => {

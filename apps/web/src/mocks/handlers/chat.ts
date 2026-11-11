@@ -5,6 +5,7 @@ import type { ChatDayResponse, ChatReply, ChatTurnOut } from "@/lib/api/types";
 import { daysAgo, healthObservation, observations, runEventDrafts, suggestions } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
+import { currentProposalCard } from "./delete-proposals";
 import { pendingReplies } from "./pending-replies";
 
 /**
@@ -95,15 +96,29 @@ function toReply(event: string, data: Record<string, unknown>): ChatReply | null
     case "agent_result": {
       // 서버는 조회할 때 추천의 지금 상태를 채운다. 목의 추천은 고르기 전이라 draft 다.
       const ids = (data.suggestion_ids as string[] | undefined) ?? [];
+      const result = data as Omit<
+        Extract<ChatReply, { type: "agent_result" }>,
+        "type" | "suggestions"
+      >;
       return {
         type: "agent_result",
-        ...(data as Omit<Extract<ChatReply, { type: "agent_result" }>, "type" | "suggestions">),
+        ...result,
+        // 🚨 서버는 지난 대화에 readout 근거를 싣지 않는다 (#713 · SSE 에만 온다). 목도 떼고 남긴다.
+        readouts: result.readouts.map((readout) => {
+          const stored = { ...readout };
+          delete stored.source_refs;
+          return stored;
+        }),
         suggestions: ids.map((id) => ({ id, status: "draft" as const })),
       };
     }
     case "guidance":
     case "unavailable":
     case "partial":
+    // 조회 · 삭제 카드 (#535). 서버는 (종류, id) 와 제안 id 만 남기고 조회 때 지금 상태로 다시 읽는다 —
+    // 목은 행을 그대로 두고, 삭제 카드만 조회 때 지금 상태로 바꾼다 (아래 GET).
+    case "found_tabs":
+    case "delete_proposal":
       return { type: event, ...data } as ChatReply;
     default:
       return null;
@@ -166,7 +181,7 @@ const done: ChatReply = { type: "done", completed: true };
  * 오늘 · 어제 · 사흘 전. 🚨 **화면이 지켜야 하는 지난 턴의 경우를 하나씩 담는다** — 지운 기록, 답한 질문,
  * 답하지 않은 질문(닫힘), 아직 답할 수 있는 질문(오늘 · `reply_open`), 지난 일정 초안, 다시 준비할 수 있던
  * 부분 실패(다시 준비하기 없음), 고를 수 있는 추천이 남은 결과(후보 보기가 선다)와 다 지난 결과(안 선다),
- * 건강 기록(건강 모양), 잘못된 기록으로 고친 기록.
+ * 건강 기록(건강 모양), 이번만 그랬어요로 고친 기록.
  * 🚨 실제 발화가 아니다 (최상위 §9).
  */
 function historyTurns(childId: string): StoredTurn[] {
@@ -318,8 +333,8 @@ function historyTurns(childId: string): StoredTurn[] {
         replies: [
           {
             type: "saved",
-            // 하나는 보호자가 "잘못된 기록" 으로 고쳤다 — 지우지 않고 상태만 바뀌어서 지금 모습으로 온다.
-            observations: [observations[0], { ...observations[1], status: "inactive" }],
+            // 하나는 보호자가 "이번만 그랬어요" 로 고쳤다 — 지우지 않고 상태만 바뀌어서 지금 모습으로 온다.
+            observations: [observations[0], { ...observations[1], status: "stand_alone" }],
             deleted: [],
           },
           done,
@@ -341,6 +356,29 @@ function historyTurns(childId: string): StoredTurn[] {
   ];
 }
 
+/**
+ * `chat_history_long` — 오늘부터 열흘 전까지 날마다 한 줄 (#707). 🚨 실제 발화가 아니다 (최상위 §9).
+ * 높이가 화면 두 장을 못 채워야 미리 받기의 상한이 보인다 — 답 묶음을 크게 키우지 않는다.
+ */
+const LONG_HISTORY_DAYS = 10;
+
+function longHistoryTurns(childId: string): StoredTurn[] {
+  return Array.from({ length: LONG_HISTORY_DAYS }, (_, n) => {
+    const day = daysAgo(n);
+    return {
+      childId,
+      day,
+      turn: {
+        run_id: `r_long_${n}`,
+        raw_text: n === 0 ? "오늘 이야기" : `${n}일 전 이야기`,
+        reply_to: null,
+        created_at: `${day}T19:00:00+09:00`,
+        replies: [{ type: "saved", observations: [observations[0]], deleted: [] }, done],
+      },
+    };
+  });
+}
+
 /** `chat_history` 에서 아직 답할 수 있는 질문. */
 const OPEN_QUESTION_RUN = "r_hist_nap";
 
@@ -358,7 +396,9 @@ function turnsOf(childId: string): StoredTurn[] {
       : // 오늘 대화가 없는 날 — 캘린더에서 지난 날로 들어올 때 첫 장이 비어 온다.
         scenario === "chat_history_past"
         ? historyTurns(childId).filter((t) => t.day !== daysAgo(0))
-        : [];
+        : scenario === "chat_history_long"
+          ? longHistoryTurns(childId)
+          : [];
   return [
     ...base,
     ...recorded.filter((t) => t.childId === childId && !hiddenRuns.has(t.turn.run_id)),
@@ -416,6 +456,12 @@ export const chatHandlers = [
       date: day,
       turns: ofDay.slice(start, end).map((turn) => ({
         ...turn,
+        // 🚨 삭제 카드는 지금 상태다 — 끝났으면 후보 없이 상태 · 건수만 (서버 `chat_replies`).
+        replies: turn.replies.map((reply) =>
+          reply.type === "delete_proposal"
+            ? { type: "delete_proposal" as const, ...currentProposalCard(reply) }
+            : reply,
+        ),
         // 그 run 의 되묻기에 아직 답할 수 있는가 — 맥락이 남아 있고 그 아이 것이다.
         reply_open:
           turn.replies.some((r) => r.type === "note" && r.kind === "question") &&

@@ -176,6 +176,19 @@
 
 **삭제 순서**: 증빙 복사 → 운영 `consent` 삭제 → 대상 hard delete. 호출자의 단일 트랜잭션 안에서 수행해 중간 실패 시 모두 롤백한다. 만료된 보관 행은 worker가 `purge_at` 기준으로 삭제한다.
 
+### location_use_log
+
+위치를 쓴 사실 1건. 위치정보법 제16조 ② 의 확인자료다 (#693). 🚨 좌표 칸을 두지 않는다.
+
+| **필드** | **타입** | **비고** |
+| --- | --- | --- |
+| id | uuid | PK |
+| parent_id | uuid | FK → `parent.id`, NOT NULL, `ON DELETE CASCADE`. 위치 동의는 계정 동의라 아이를 적지 않는다 |
+| purpose | enum | `location_purpose`, NOT NULL. 값이 가리키는 취득경로 · 방법 · 제공받는 자는 [`retention-v1.md`](../safety/retention-v1.md) |
+| used_at | timestamptz | NOT NULL, default `now()` |
+
+러너가 좌표를 Agent 에 넘기기 직전에 남긴다. 위치 동의를 철회하면 그 보호자의 행을 지우고, 6개월이 지난 행은 worker가 지운다. 남기기와 철회는 `parent` 행 잠금(FOR KEY SHARE / FOR UPDATE)으로 줄을 선다 — 철회 뒤에 행이 남지 않게.
+
 ## Memory/Observation
 
 ### observation 계층 테이블 5개(food/health/education/activity/routine)
@@ -190,19 +203,21 @@
 | subject | text | NOT NULL (임베딩·병합 판정 입력이라 값이 항상 있어야 함). 정규화 대상 문자열 |
 | embedding | vector(1536) | nullable, `subject`를 임베딩한 벡터 |
 | affinity_id | uuid | nullable. FK → `profile_affinity.id`, `ON DELETE SET NULL`. 소속 프로필 및 집계 키 |
-| polarity | smallint | NOT NULL, DEFAULT `0`, `-1 / 0 / 1`만 허용 |
+| polarity | smallint | NOT NULL, DEFAULT `0`, `-1 / 0 / 1`만 허용. `0` 은 좋다·싫다가 없는 기록이다 — Curator 가 Profile 에 연결하지 않는다 (#287) |
 | strong_signals | text[] | NOT NULL, DEFAULT `'{}'`. 허용값: `resistance_to_redirect`, `self_initiated`, `comparative_choice`, `asks_questions`, `role_extension` |
 | confidence_source | text | NOT NULL. `institution_notice / parent_direct / parent_hedged / parent_hearsay` |
-| status | enum | NOT NULL, DEFAULT `active`. `active / stand_alone / inactive / deleted`  |
+| status | enum | NOT NULL, DEFAULT `active`. `active / stand_alone / deleted` (`inactive` 는 더 쓰지 않는다 — 아래) |
 | observed_range | daterange | NOT NULL, 빈 범위 불가, 상한이 무한대인 범위 불가 |
 | source_writer | uuid  |  FK → `parent.id`  set null  |
 | source_notice_id | uuid | FK → `notice.id`, nullable. 값이 존재하면 기관 공지 기반 |
 | created_at | timestamptz | NOT NULL, DEFAULT `now()` |
 | updated_at | timestamptz | NOT NULL, DEFAULT `now()` |
 - `health` 에서는 다음 필드 제외: `subject` · `embedding` · `affinity_id` · `polarity` · `strong_signals` (승격 파이프라인 밖이라 profile 행 자체가 없음)
-- `status` 는 값마다 빠지는 곳이 다르다. `stand_alone` 은 Curator 집계에서만, `inactive` 는 검색과 집계에서 빠진다. `deleted` 는 목록·상세까지 모든 조회에서 빠진다.
+- `status` 는 값마다 빠지는 곳이 다르다. `stand_alone` 은 Curator 집계에서만 빠지고, `deleted` 는 목록·상세까지 모든 조회에서 빠진다.
+- `inactive` 는 기록의 Correction `wrong`("잘못된 기록")이 만들던 값이다. 그 버튼을 기록 지우기로 바꾸면서 남은 행을 `deleted` 로 옮겼고(#736 · revision `90ac5aae7ad1`), 지금은 만드는 길이 없다. 값은 DB CHECK 에 남겨 둔다. 배포 틈 · 롤백 중에 새로 생긴 행은 읽는 쪽(기록 탭 · Memory Agent 기록 조회 · 고치기 · 추천 카드의 사용한 기록)이 `deleted` 처럼 거른다(`GONE_STATUSES`).
 - 보호자의 삭제 요청은 행을 지우지 않고 `status = deleted` 로 바꾼다. `raw_text` 는 남고 `embedding` 은 비운다(`health` 에는 `embedding` 칸이 없다). 그 관찰의 연결 보류(`observation_link_hold`) 행도 지우고, 연결돼 있던 Profile 의 `last_observed_on` · 상태를 다시 계산한다. 되살리는 경로는 없다.
 - 관찰을 고쳐 `subject` · `polarity` 가 바뀌면 `embedding` · `affinity_id` 를 비워 Curator 가 다시 연결하게 하고, 그 칸들이나 `observed_range` · `strong_signals` 가 바뀌면 원래 Profile 을 다시 계산한다(#257, `memory-agent-v1.md` "고친 관찰은 Curator 집계에 다시 들어간다").
+- `polarity = 0` 인 관찰은 Curator 가 임베딩하지도, Profile 에 연결하지도 않는다(#287). 성향 집계 대상이 아니라서다 — 관찰은 그대로 남아 최근 14일 근거(티어 3)로 쓰인다. 지금은 관찰의 `polarity` 를 고치는 경로가 없어서(Memory 고치기 도구에 칸이 없다), `0` 으로 잘못 저장된 관찰은 지우고 다시 기록해야 한다.
 
 ### 1. observation_food (섭취·영양)
 
@@ -213,16 +228,33 @@
 | amount | text | "반 그릇" / "다 먹음" — 값 집합 미확정이라 enum 대신 text로 구현 |
 | reaction | text | "좋아함" / "싫어함" / "무반응" — 값 집합 미확정이라 enum 대신 text로 구현 |
 
-### 2. observation_health (증상·컨디션)
+### 2. observation_health (증상·컨디션 · 먹인 약)
+
+**한 행 = 한 사건이다** — 증상 행이거나 먹인 약 행이다 (2026-10-22, #551). 칸별 결정은 아래
+["observation_health — 체온 세 칸 · 먹인 약 두 칸"](#observation_health--체온-세-칸--먹인-약-두-칸) 에 있다.
 
 | **필드** | **타입** | **비고** |
 | --- | --- | --- |
-| symptom | text[] | "발열" / "콧물" / "두드러기", NOT NULL |
+| symptom | text[] | "발열" / "콧물" / "두드러기", NOT NULL, DEFAULT `'{}'`. 약 행은 빈 배열 |
 | severity | enum | mild / moderate / severe / emergency |
 | body_part | text | "얼굴" / "팔" |
 | suspected_trigger | text | "우유 먹은 뒤"/”쌓기놀이 직후” |
-| action_taken | text | "병원" / "해열제" / "관찰" |
-| observed_time | timestamptz | 관찰 시점, nullable |
+| action_taken | text | "병원" / "찜질" / "관찰". 먹인 약은 `medication_given` 행으로 따로 남긴다 |
+| observed_time | timestamptz | 관찰 시점, nullable. **약 행이면 먹인 시각** |
+| temperature | numeric(3,1) | nullable. ℃, 보호자가 말한 숫자 그대로. CHECK 30.0 ~ 45.0 |
+| measured_at | timestamptz | nullable. 체온을 잰 시각 |
+| measure_site | varchar(16) | nullable. `ear` / `forehead` / `armpit` / `oral` / `rectal` (CHECK) |
+| medication_given | text | nullable. 보호자가 말한 약 이름 그대로 |
+| linked_symptom_id | uuid | nullable. FK → `observation_health.id`, `ON DELETE SET NULL`. 같은 말에서 함께 기록된 증상 행 |
+
+**제약** (이름은 마이그레이션 `e5b1d7c3a9f2` 와 같다)
+
+- `observation_health_symptom_not_with_medication` — `cardinality(symptom) = 0 OR medication_given IS NULL`. 증상과 약이 한 행에 같이 있지 않다.
+  "증상도 약도 없다" 는 DB 가 아니라 Memory 스키마가 막는다 — 아래 **배포 안전**
+- `observation_health_link_needs_medication` — `linked_symptom_id IS NULL OR medication_given IS NOT NULL`. 연결은 약 행에만
+- `observation_health_medication_no_temperature` — `medication_given IS NULL OR (temperature IS NULL AND measured_at IS NULL AND measure_site IS NULL)`. 약 행에는 체온 세 칸이 없다 (열 타임라인이 그 행을 체온 줄과 먹인 약 줄로 두 번 내지 않게)
+- `observation_health_temperature_range` — `temperature IS NULL OR temperature BETWEEN 30.0 AND 45.0`
+- `observation_health_measure_site` — 위 다섯 값만
 
 ### 3. observation_education (학습 세션)
 
@@ -294,7 +326,7 @@
 | embedding | vector(1536) | nullable, `merge_key`를 임베딩한 벡터. 병합 후보 검색용 |
 | domain | text | NOT NULL. `food` / `activity` / `education`. **`routine` 은 없다** — 승격 대상이 아니다 (2026-09-23) |
 | state | text | NOT NULL, DEFAULT `candidate`. `candidate / confirmed / archived` |
-| polarity | smallint | nullable, `-1 / 1`만 허용. 단, `confirmed` 상태에서는 NOT NULL |
+| polarity | smallint | nullable, `-1 / 1`만 허용. 단, `confirmed` 상태에서는 NOT NULL — `recompute_profile` 이 `NULL` 인 Profile 을 `confirmed` 로 올리지 않는다. `NULL` 은 아직 모름(미상·동수·상충)이다 — `0` 이 아니다 (#287) |
 | strength | real | NOT NULL, DEFAULT `0.3`. 프로필 강도 |
 | last_observed_on | date | NOT NULL, 마지막 관찰 날짜 |
 | created_at | timestamptz | NOT NULL, DEFAULT `now()` |
@@ -330,7 +362,7 @@
 제약:
 
 - **`unknown` 은 저장하지 않는다. 매칭되는 행이 없는 것이 곧 `unknown` 이다** (2026-10-04). 아이를 만들 때 알레르기 19행을 미리 깔지 않는다.
-- `active` 는 고려 대상, `retracted` 는 과거에 `active` 였고 지금은 아님, `none` 은 확인했고 없음. 필터에서 `retracted` 와 `none` 은 같다 — 구분은 이력을 위한 것이다.
+- `active` 는 고려 대상, `retracted` 는 내린 기록(과거에 `active` 였거나 괜찮았던 식품이었고 지금은 아님 — 아래 `none` 줄), `none` 은 확인했고 없음(괜찮았던 식품). **Agent 필터(막기)에서는 `retracted` 와 `none` 이 같다** — 둘 다 거르지 않는다. **05 사전검사(묻기)에서는 다르다** — `none` 은 정규화한 이름이 같은 항목만 묻지 않게 하고(이름 사전은 동의어와 하위 식품을 가르지 않아서 넓게 맞추면 덜 묻게 된다), `retracted` 는 행이 없는 것과 같아 다시 묻는다(내린 기록은 "지금은 아니다" 일 뿐 "먹어봤고 괜찮았다" 가 아니다).
 - **거르는 것은 `status='active'` 뿐이다.** 행이 없는(`unknown`) 알레르기는 필터에서 거르지 않고, 추천을 승인할 때
   "이 음식에는 땅콩이 들어가요. 땅콩 알레르기가 있는지 확인해주세요" 로 안내한다. 그래서 추천에 무엇이 들어 있는지를
   `suggestion.allergens` 에 남긴다. 모르는 항목 때문에 추천을 통째로 닫으면 답을 미룬 보호자가 서비스를 못 쓴다.
@@ -341,6 +373,7 @@
 - **`kind` 마다 0행의 뜻이 다르다.** 알레르기는 위와 같고(행 없음 = `unknown`), 나머지 `kind`(만성질환·행동·환경·기타)는 **0행이 곧 해당 없음**이다.
 - 🚨 **안전 필터는 active 알레르기를 전부 읽는다.** Agent 별 matcher 가 자기 후보(Food 는 메뉴명 · 재료, Activity 는 놀이 문장 · 준비물)와 실제로 매칭되는 것만 거른다.
 - **active 끼리만** `UNIQUE(child_id, kind, label)` — 부분 고유 인덱스 `uq_health_safety_active_item` (`WHERE status = 'active'`, 2026-10-13). 10/4 표의 전체 UNIQUE 와 다르다. 내린(`retracted`) 줄은 이력으로 남고, 같은 항목을 내린 뒤 다시 등록하면 같은 (child_id, kind, label) 로 새 줄이 생겨서, 전체에 걸면 다시 등록이 막힌다. 등록 API 는 코드로 먼저 보고(409), 동시에 온 두 번째 요청은 이 인덱스가 막는다
+- **`none` 을 쓰는 길은 "괜찮았던 식품" 하나다** — 05 알레르기 확인 시트에서 보호자가 "먹어봤어요 · 괜찮았어요" 로 답한 식품(등록 API 의 `tolerated: true`). `kind='allergy'` 만이고 `severity` 는 null, `reactions` 는 비어 있다. 알레르기가 아니라 조회 API 는 `items` 와 따로 `tolerated` 로 내려준다. 같은 식품이 알레르기(`active`)로 있으면 받지 않고(409 `allergy_exists`), 알레르기를 등록하면 그것이 덮는 괜찮았던 식품을 `retracted` 로 내린다 — "같은 식품" 은 05 사전검사와 같은 이름 사전으로 본다. 내리기(`DELETE`)도 같은 길이다. 같은 이름은 한 줄만 — 부분 고유 인덱스 `uq_health_safety_none_item` (`WHERE status = 'none'`). 그래서 `retracted` 는 "과거에 `active` 였던 것" 보다 넓다 — 내린 괜찮았던 식품, 알레르기가 덮은 괜찮았던 식품도 `retracted` 다
 - **보호자가 고치면(`PATCH`) 제자리에서 바꾸지 않는다** — 지금 줄을 `retracted`(`updated_by` = 고친 보호자)로 내리고, 바뀐 값으로 새 줄을 넣는다(`created_by` = 고친 보호자). #87 첫 질문의 답이다 (2026-10-13 PM 결정). 종류 · 이름은 고칠 수 없어서 같은 (child_id, kind, label) 의 줄을 시간순으로 놓으면 그 항목이 바뀌어 온 길이다. 바뀐 값이 없으면 새 줄을 만들지 않는다. 고치기는 한 트랜잭션이라 옛 줄의 `updated_at` 과 새 줄의 `created_at` 이 같다 — 보호자가 따로 "내리고 다시 등록" 한 것과 가르는 근거가 이것이다
 - 안전 조회는 항상 `status='active'` 필터
 - DB 계층: Agent/Curator role 에는 이 테이블 write 권한 비부여 (권한 분리로 LLM 쓰기 원천 차단)
@@ -375,8 +408,8 @@
 | content | text | NOT NULL. 실제로 추천하는 내용 |
 | reason | text | nullable. 근거 문구 |
 | allergens | text[] | NOT NULL, default `'{}'`. 그 추천에 들어 있는 알레르기 항목의 정식 명칭(`allergen_terms.yaml`, 예: `새우` · `난류`). 19종 밖(예: Activity 의 `쑥`)도 이름으로 담는다. 상태(없음/모름)는 담지 않는다 — 승인할 때 `health_safety` 를 다시 읽는다 |
-| items | text[] | NOT NULL, default `'{}'`. 일정으로 만들 때 준비물(`event_item.item_name`) 하나씩. Food: `된장` · `두부`, Activity: `수영복`. 알레르기 판단에는 쓰지 않는다 |
-| status | enum | `draft` / `approved` / `rejected` / `expired`, NOT NULL, default `draft` |
+| items | text[] | NOT NULL, default `'{}'`. 일정으로 만들 때 준비물(`event_item.item_name`) 하나씩. Food: `두부` · `시금치` — 레시피 주재료(`recipe_catalog.main_ingredients`)에서 물 · 소금 · 설탕 · 기름 · 향신 가루를 뺀 것이고, 비면 `'{}'` 다(#474), Activity: `수영복`. 알레르기 판단에는 쓰지 않는다 — Food 의 안전 판정은 전체 `ingredients` · `allergen_codes` 로 한다 |
+| status | enum | `draft` / `approved` / `rejected` / `expired`, NOT NULL, default `draft`. 앱이 쓰는 값은 `draft` · `approved` 둘 — `expired` 는 조회할 때 `expires_at` 으로 판정하고(`docs/api/chat-v1.md`), `rejected` 는 쓰는 길이 없다 |
 | expires_at | timestamptz | 생성 +24h, NOT NULL |
 | run_id | text | nullable. 추천을 만든 입력 run(`RunChannel.run_id`). 05 가 그 run 의 추천을 찾는다. 인덱스 `(child_id, run_id)` |
 | created_at | timestamptz | NOT NULL, default now() |
@@ -387,7 +420,7 @@
 | **필드** | **타입** | **비고** |
 | --- | --- | --- |
 | suggestion_id | uuid | FK → `suggestion.id`, NOT NULL, `ON DELETE CASCADE` |
-| source_kind | text | NOT NULL. 아래 세 무리 중 하나 |
+| source_kind | text | NOT NULL. 아래 네 무리 중 하나 |
 | source_id | uuid | NOT NULL. **다형 참조라 FK가 아니다** — `correction.target_id`와 같은 패턴이고, 대상 존재 여부와 같은 `child_id`인지는 서버가 검증한다 |
 | note | text | NOT NULL. 그 행에서 추천 근거로 채택한 내용. Agent 가 쓰고 **보호자 화면에 그대로 나간다**. 비면 그 후보를 거절한다 |
 | created_at | timestamptz | NOT NULL, default `now()` |
@@ -396,13 +429,14 @@
 - `source_kind` 인덱스를 따로 둔다 — 품질 지표가 kind로 거르기 때문
 - **이름이 `memory_*`가 아니라 `source_*`인 이유** — 가리키는 대상이 Memory 소유 테이블만이 아니다. 문서 행(`*_doc`)과 Food 소유인 `daycare_meal`도 들어온다 (2026-09-23 회의 확정).
 
-**`source_kind`는 세 무리다.**
+**`source_kind`는 네 무리다.**
 
 | 무리 | 값 | 개인화 근거로 셈 |
 | --- | --- | --- |
 | 아이 기록 | `observation_food` · `observation_health` · `observation_education` · `observation_activity` · `observation_routine` · `profile_affinity` · `child_growth_log` · `notice` · `daycare_meal` | ✅ |
 | 문서 행 | `food_doc` · `growth_doc` · `activity_doc` | ❌ 참고만 (Health는 문서 행을 쓰지 않는다 — 상수 파일이다) |
 | 메뉴 행 | `recipe_catalog` | ❌ **Food 일반 추천만** — 고른 메뉴(레시피 카탈로그 행) 자체다(#442). 문서 행이 없는 월령(36개월부터 Food 문서 시드 0행)에도 일반 추천에 근거가 붙게. `source_id` 는 (source, source_id) 로 만드는 uuid5(`rules/menu_evidence.py`)이고, 저장할 때 후보 풀(resolved)의 레시피인지 본다 |
+| 책 행 | `book_catalog` | ❌ **Growth 일반 도서 추천만** — 고른 책의 서지 행(도서관 정보나루)이다. 메뉴 행(#442)과 같은 방식이다(#506): 코드가 `general_basis` 로만 달고 개인화면 버린다. 책 정보 표가 없어 `source_id` 는 ISBN 의 uuid5(`rules/book_evidence.py`)이고 종류만 본다 |
 
 🚨 **품질 지표는 아이 기록만 센다.** `kind='personalized'`인데 아이 기록 행이 0이면 버그다 — 문서 행만 달고 나가면 COUNT는 통과하지만 근거 없는 추천이다.
 
@@ -425,7 +459,7 @@
 | child_id | uuid | FK → `child.id`, NOT NULL, `ON DELETE CASCADE`. 아이별 이력 조회와 대상 검증에 사용 |
 | target_kind | enum | `observation_food / observation_health / observation_education / observation_activity / observation_routine / profile_affinity` |
 | target_id | uuid | NOT NULL. 다형 참조라 FK가 아니며, 대상 존재 여부와 같은 `child_id`인지는 서버가 검증 |
-| verdict | enum | 관찰: `once_only / wrong`
+| verdict | enum | 관찰: `once_only` (`wrong` 은 예전 이력에만 있다 — 아래)
 프로필: `need_more_observation / outdated / wrong` |
 | created_by | uuid | 작성자 감사 정보. FK → `parent.id`, nullable, `ON DELETE SET NULL` |
 | created_at | timestamptz | NOT NULL, default `now()` |
@@ -435,9 +469,32 @@
 - DB CHECK가 대상 종류와 verdict의 허용 조합을 강제한다.
 - `confirm`은 저장하지 않는다. “맞아요”는 상태를 바꾸지 않으므로 이력 값에서도 제외했다.
 - 관찰의 `once_only`는 `status = stand_alone`으로 바꿔 검색에는 남기고 Curator 집계에서만 제외한다.
-- 관찰의 `wrong`은 `status = inactive`로 바꾸고 같은 affinity를 재계산한다.
-- 프로필의 `need_more_observation`은 한 단계 강등, `outdated`와 `wrong`은 archived 처리한다. 이 상태 전이 서비스 로직은 후속 구현 범위다.
+- 관찰의 `wrong`은 더 받지 않는다(API 400). "잘못된 기록" 은 기록 지우기(`DELETE /children/{cid}/observations/{kind}/{oid}`)로 바꿨다(#736). 예전에 쌓인 `wrong` 이력은 남기고, DB CHECK 도 그 값을 계속 허용한다.
+- 프로필의 판정은 상태를 직접 바꾸지 않고 strength 를 곱셈으로 줄인다(`wrong` ×0.93 · `outdated` ×0.95 · `need_more_observation` ×0.97 — `rules/profile.py` `VERDICT_DECAY`). `wrong` 은 W 로도 세어 상태 계산(`compute_profile_status`)에 들어간다.
 - `target_kind + target_id`, `child_id` 조회 인덱스를 둔다.
+
+### delete_proposal (삭제 제안 — 버튼으로 확정할 때까지)
+
+대화로 "지워줘" 하면 Memory 는 지우지 않고 제안 1행을 남긴다. 보호자가 카드에서 체크를 고쳐 버튼을 누르면 서버가 **후보 안의 체크한 것만** 지운다 (#535). 되돌릴 수 없는 삭제를 사람이 승인하는 자리다.
+
+| **필드** | **타입** | **비고** |
+| --- | --- | --- |
+| id | uuid | PK |
+| parent_id | uuid | FK → `parent.id`, NOT NULL, ON DELETE CASCADE. 제안한 보호자 — 이 보호자만 확정 · 취소한다 |
+| child_id | uuid | FK → `child.id`, NOT NULL, ON DELETE CASCADE |
+| run_id | text | NOT NULL, UNIQUE. 제안을 만든 run — 한 run 에 제안은 하나 |
+| tabs | jsonb | NOT NULL. 종류별 후보 `[{kind, truncated, ids, picked}]`. kind 는 `observation_food` … · `event`, `picked` 는 AI 가 고른 id(기본 체크) |
+| status | enum | `pending / deleted / cancelled`, DEFAULT `pending` |
+| result | jsonb | 끝난 뒤 종류별 실제 지운 건수 `{kind: n}`. 지난 대화의 한 줄 요약이 읽는다 |
+| created_at | timestamptz | NOT NULL, DEFAULT now() |
+| expires_at | timestamptz | NOT NULL. 만든 뒤 24시간 |
+| decided_at | timestamptz | 확정 · 취소한 시각 |
+
+- **만료는 저장하지 않는다.** `expires_at` 이 지난 `pending` 이 만료다 — 배치가 늦거나 멈춰도 만료된 제안으로는 지울 수 없다.
+- **원문을 담지 않는다.** (종류, id) 만 두고 카드 내용은 그때마다 다시 읽는다. 지워 달라고 한 내용의 사본을 따로 남기면 삭제가 무의미해진다 (`chat_turn` 과 같은 이유).
+- 다형 참조라 후보 id 에 FK 가 없다. 지울 때 같은 아이의 행인지 서버가 다시 확인한다.
+- 개인 기록이다 — 연결 끊기(`unlink_parent`)가 대화 기록과 함께 지운다.
+- `(parent_id, child_id)` 인덱스를 둔다.
 
 ## Schedule
 
@@ -454,7 +511,8 @@
 | all_day | bool | NOT NULL, DEFAULT false |
 | category | enum | `institution | health | activity | etc`, NOT NULL |
 | created_by | enum | `agent | caregiver`, NOT NULL |
-| source_notice_id | uuid | nullable, 현재 FK 없는 근거 식별자 |
+| source_notice_id | uuid | FK → `notice.id` (NOT VALID), nullable, ON DELETE SET NULL. 기관 공지에서 온 일정 |
+| source_notice_item_id | uuid | FK → `notice_item.id`, nullable, UNIQUE, ON DELETE SET NULL. 사진 공지의 어느 항목으로 만든 일정인가 — 항목 하나는 일정 하나다. 공지 저장(commit) 때 채운다 |
 | source_refs | jsonb | nullable, 근거 참조 |
 - `status`, `expires_at`, `EventStatus`는 제거됐다.
 - DB에는 보호자가 제출한 일정만 저장한다. Agent 초안은 DB에 저장하지 않고 SSE payload로 전달한다 (2026-09-22 확정). **복약 초안도 같은 방식이다** — `medication_schedule`에 `draft` 상태를 두지 않는다.
@@ -478,10 +536,14 @@
 | id | uuid | PK, UUIDv7 |
 | event_id | uuid | FK → `event.id`, NOT NULL, ON DELETE CASCADE, index |
 | parent_id | uuid | FK → `parent.id`, NOT NULL, ON DELETE CASCADE, index |
-| remind_at | timestamptz | NOT NULL |
+| lead | enum | NOT NULL. 얼마나 먼저 울릴지. 시간 있는 일정 `at_start` / `5m` / `10m` / `15m` / `30m` / `1h` / `2h` / `1d` / `2d` / `1w`, 종일 일정 `day_of_9am` / `1d_9am` / `2d_9am` / `1w_9am` (KST 오전 9시) |
 | sent_at | timestamptz | nullable, 실제 발송 시점 |
+- UNIQUE: `(event_id, parent_id)` — 보호자 한 명은 한 일정에 알림 1개 (#594).
 
-`parent_id`로 같은 Event를 보는 보호자마다 독립적인 알림을 소유한다.
+`parent_id`로 같은 Event를 보는 보호자마다 독립적인 알림을 소유한다. 일정을 만든 보호자는 제출할 때 함께 걸고, 다른 보호자는 캘린더에서 각자 건다.
+울릴 시각은 저장하지 않는다 — 보낼 때 `event.starts_at`에서 계산한다(`app/rules/reminder.py`). 그래서 일정을 고치면:
+- 종일 여부가 바뀌면 지우지 않고 날 수를 지켜 가까운 값으로 옮긴다 (`at_start`~`2h` ↔ `day_of_9am`, `1d`/`2d`/`1w` ↔ `*_9am`, #603 PM 결정). 옮긴 값의 울릴 시각이 이미 지났으면 그 알림만 지운다.
+- 새 울릴 시각이 아직 오지 않은 알림만 `sent_at`을 비워 다시 울린다. 이미 지난 시각으로 옮긴 알림은 비우지 않는다 — 이미 울린 알림이 한 번 더 울리지 않게.
 
 ### push_device (푸시 수신 기기)
 
@@ -489,13 +551,41 @@
 | --- | --- | --- |
 | id | uuid | PK, UUIDv7 |
 | parent_id | uuid | FK → `parent.id`, NOT NULL, ON DELETE CASCADE, index |
-| device_token | text | NOT NULL, UNIQUE. APNs/FCM 원문 토큰 |
-| platform | enum | `ios | android`, NOT NULL |
-| enabled | bool | NOT NULL, DEFAULT true |
+| session_id | uuid | FK → `session.id`, NOT NULL, UNIQUE, ON DELETE CASCADE |
+| device_token | text | NOT NULL, UNIQUE. FCM 등록 토큰 원문 (로그에 남기지 않는다) |
+| platform | enum | `ios | android | web`, NOT NULL |
 | last_seen_at | timestamptz | NOT NULL, DEFAULT now() |
 | created_at / updated_at | timestamptz | NOT NULL |
 
-같은 기기에서 계정이 바뀌면 upsert 시 `parent_id`, `platform`, `enabled`, `last_seen_at`을 함께 갱신한다.
+기기는 로그인(`session`) 1건에 묶인다 (#594). 로그아웃 · 세션 만료 · 탈퇴로 세션이 지워지면 기기도 함께 지워진다 — 공용 기기에서 로그아웃한 뒤 앞 보호자의 알림이 울리지 않는다.
+- 로그인 하나에 기기 하나. 토큰이 바뀌면 같은 행을 새 토큰으로 덮는다.
+- 같은 토큰이 다른 로그인에 있으면 지우고 넣는다 — 같은 기기에서 계정을 바꾼 것이다.
+- 켜고 끄기는 기기 단위가 아니라 보호자 단위다(`notification_setting`).
+
+### notification_setting (보호자 알림 켜고 끄기)
+
+| **필드** | **타입** | **비고** |
+| --- | --- | --- |
+| parent_id | uuid | PK, FK → `parent.id`, ON DELETE CASCADE |
+| schedule_enabled | bool | NOT NULL. 일정 알림을 받는다 |
+| medication_enabled | bool | NOT NULL. 복약 알림을 받는다 |
+| updated_at | timestamptz | NOT NULL |
+
+설정 탭의 스위치 2개다. 알림 시각은 여기서 고르지 않는다(일정마다 `reminder.lead`).
+행이 없으면 아직 바꾼 적이 없는 것이고 코드의 기본값(`domains/notification/repository.py` 의 `DEFAULT_SETTING`)으로 본다 — 기본값이 바뀌면 만진 적 없는 보호자 모두에게 바로 적용된다.
+
+### tour_seen (화면 가이드를 본 기록)
+
+| **필드** | **타입** | **비고** |
+| --- | --- | --- |
+| parent_id | uuid | PK, FK → `parent.id`, ON DELETE CASCADE |
+| tour_key | text | PK. 본 가이드 이름 (`home-empty` · `home` · `chat` · …) |
+| seen_at | timestamptz | NOT NULL, DEFAULT now(). 처음 본 시각 |
+
+보호자 × 가이드 1행이다 (#696). 행이 없으면 아직 안 본 것이고, ? 로 다시 봐도 행을 바꾸지 않는다. 아이가 아니라 계정 단위라 함께 보는 보호자도 각자 센다.
+🚨 `tour_key` 는 정해진 값인데도 `VARCHAR + CHECK` 가 아니라 `text` 다 — 팀 규칙의 예외다. 이름을 정하는 쪽은 프론트(`lib/tour/types.ts` 의 `TOUR_KEYS`)이고, 서버는 값으로 분기하지 않고 저장해 돌려주기만 한다. CHECK 를 두면 프론트 · API 에 더해 DB 마이그레이션까지 배포 순서에 묶여, 화면이 늘 때마다 마이그레이션을 먼저 돌려야 한다. 허용 값은 API 스키마(`TourKey` Literal)가 막고 — 보호자당 행 수가 여기서 정해지므로 Literal 은 자유 문자열로 풀지 않는다 — 목록에서 빠진 이름의 행은 `GET` 이 걸러 낸다.
+- 새 화면에 가이드를 붙일 때는 `TourKey` 를 프론트보다 먼저(또는 같은 배포에) 늘린다. 프론트에만 있는 이름은 `PUT` 이 422 로 실패해 가이드가 다시 뜨고, `make web-contract` 는 경로 파라미터를 비교하지 않아 이 어긋남을 못 잡는다.
+- 나중에 이 표에 쓰는 경로(배치 · 스크립트)가 생기면 화면 목록을 박는 CHECK 대신 형식 제약(소문자 · 하이픈, 32자 이하 등)을 건다 — 화면이 늘어도 마이그레이션이 필요 없다.
 
 ### diary_entry (보호자 개인 일기)
 
@@ -542,7 +632,7 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
 
 도메인 전용 테이블은 여기 두지 않는다 — 다른 Agent 가 읽지 않는 테이블은 소유 Agent 문서에 있다.
 `daycare_meal` · `menu_catalog` · `nutrient_reference` · `food_doc` · `allergen_term` 은 [food_agent_own_table.md](food/food_agent_own_table.md),
-`medication_schedule` · `medication_dose` · `medication_dose_log` · `prescription_draft` 은 [health_agent_own_table.md](health/health_agent_own_table.md),
+`medication_schedule` · `medication_dose` · `prescription_draft` 은 [health_agent_own_table.md](health/health_agent_own_table.md),
 `growth_doc` · `book_catalog` 은 [growth_agent_own_table.md](growth/growth_agent_own_table.md).
 
 ### 이미 위 표에 반영된 것
@@ -553,26 +643,57 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
 | `child_growth_log` — `numeric(4,1)` · `measured_on date NOT NULL` (09-22 의 `check_date`) | Child §child_growth_log | Growth (G-5) |
 | `suggestion.kind` (`general`/`personalized`) | Suggestion §suggestion | Food · Growth |
 | `source_refs` 제거 → `suggestion_evidence` | Suggestion §suggestion_evidence | Food · Growth |
+| `observation_health` 체온 세 칸 · 먹인 약 두 칸 (아래 절) | Memory/Observation §2 | Health (#551) |
 
-### 아직 위 표에 없는 것
+#### observation_health — 체온 세 칸 · 먹인 약 두 칸
 
-#### observation_health — 체온 세 칸
+2026-10-22 §2 표에 반영했다 (#551, 마이그레이션 `e5b1d7c3a9f2`). Memory 가 발화에서 채우고 Health 가 읽는다.
 
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
-| temperature | numeric(3,1) | nullable. **℃.** 38.4 같은 값. `symptom text[]` 에 "발열" 만 들어가면 숫자가 남지 않는다 |
-| measured_at | timestamptz | nullable. 잰 시각. `observed_time`(관찰 시점)과 다르다 — 한 번의 관찰에서 여러 번 잰다 |
-| measure_site | enum | `ear` / `forehead` / `armpit` / `oral` / `rectal`, nullable. **잰 부위.** 부위마다 정상 범위가 달라 숫자만으로는 못 읽는다 |
+| temperature | numeric(3,1) | nullable. **℃.** 38.4 같은 값. `symptom text[]` 에 "발열" 만 들어가면 숫자가 남지 않는다. 말한 숫자 그대로 — 단위 환산 · 보정 없음. 30.0 미만 · 45.0 초과는 Memory 가 저장하지 않고 되묻는다(DB CHECK 도 같은 범위) |
+| measured_at | timestamptz | nullable. 잰 시각. `observed_time`(관찰 시점)과 다르다 — 한 번의 관찰에서 여러 번 잰다. "밤 11시" 같은 표현을 `observed_time` 과 같은 규칙으로 관찰 날짜에 얹는다 |
+| measure_site | varchar(16) | `ear` / `forehead` / `armpit` / `oral` / `rectal`, nullable. **잰 부위.** 부위마다 정상 범위가 달라 숫자만으로는 못 읽는다. 말에 부위가 있을 때만 |
+| medication_given | text | nullable. **이미 먹인 약 이름, 보호자가 말한 그대로.** Memory 의 코드가 **이번 run 의 보호자 발화**(`AgentContext.utterance`)와 tool 인자 `raw_text` 안에 글자 그대로 있는지 보고 저장한다 — "타이레놀" 을 "아세트아미노펜" 으로 바꿔 쓰지 않는다. `raw_text` 는 모델이 옮겨 적는 칸이라 그것만으로는 기준이 못 된다. 수정으로 약 이름을 바꿀 때도 새 이름이 이번 발화에 있어야 한다("타이레놀 말고 부루펜") |
+| linked_symptom_id | uuid | nullable. FK → `observation_health.id`, `ON DELETE SET NULL`. 같은 말에서 함께 기록된 증상 행 |
 
-#### notice (기관 공지) — 테이블 신설
+- **한 행에는 증상이나 먹인 약 중 하나만 둔다.** 약 행은 `symptom = '{}'` 이고 `observed_time` 이 먹인 시각이다.
+  해열제처럼 필요할 때만 먹이는 약은 복약 회차(`medication_dose`)가 없어 체크할 곳이 없어서 이 행으로 남긴다.
+- **연결은 코드가 채운다.** Memory 저장 tool 은 한 번 호출에 증상과 먹인 약을 같이 받고, 코드가 두 행으로 나누며
+  약 행에 방금 만든 증상 행의 id 를 넣는다. 모델이 id 를 골라 잇지 않는다 — `linked_symptom_id` 는 생성 · 수정 인자에 없다.
+  따로 온 "해열제 먹였어" 는 직전 열 기록에 잇지 않는다(이유를 말하지 않았는데 이으면 원인을 짐작해 사실처럼 남기는 것이다).
+- 증상과 약을 한 번에 저장한 두 행은 `raw_text` 가 같아서, Memory 조회 결과의 health 행에는 `kind`(`symptom` / `medication`)가 붙는다.
+  수정으로 증상 행에 약을 넣거나 약 행에 증상을 넣으면 Memory 가 CHECK 전에 돌려주며 `kind` 가 맞는 행의 id 로 고치라고 안내한다
+  (새로 먹인 약 · 새로 본 증상일 때만 새로 만든다). 약 행에 증상 칸(체온 세 칸 · `severity` · `body_part` ·
+  `suspected_trigger` · `action_taken`)을 얹는 수정도 같다 — `observed_time` 은 약 행에선 먹인 시각이라 고칠 수 있다.
+  체온 세 칸은 DB 도 막는다(`observation_health_medication_no_temperature`). 다섯 칸이 같은 마이그레이션에서 생긴 새 칸이라
+  기존 행에는 늘 참이어서 NOT VALID 없이 건다.
+- 같은 run 에서 체온을 여러 번 말하거나("아침 8시에 38.2도, 밤 9시에 39.1도") 약을 여러 번 먹였으면 행도 여럿이다.
+  Memory 의 run 중복 막기는 증상 몫(증상 · 날짜 · 체온 · 잰 시각 · 본 시각)과 약 몫(약 이름 · 날짜 · 먹인 시각)을
+  따로 센다. 둘 다 이미 저장했으면 같은 호출이고, 한쪽만 저장했으면 남은 쪽만 다시 부르게 돌려준다 — 하나로 세면
+  "발열 38.5" 뒤의 "발열 38.5 + 해열제" 가 통과해 증상 행이 둘이 된다.
+- 체온 숫자도 약 이름처럼 이번 발화에 있어야 저장 · 수정된다. 섭씨 단위(`도` · `℃` · `°C`)가 붙은 숫자만 값으로 견준다 —
+  "38도" 는 38.0, "38도 5부" 는 38.5 하나(38 은 아니다). 단위 없는 숫자는 날수 · 월령 · 분일 수 있어서("생후 38일") 보지 않고, °F 도 받지 않는다(#551 BE 리뷰).
+  반올림 · 화씨 환산한 숫자는 거절한다. 발화를 모르는 수정 호출은 약 이름 · 체온을 고치지 않는다(대조할 글이 없으면
+  통과시키지 않는다).
+  `ObservationHealthUpdate.symptom` 은 최소 1개다. `medication_given` 은 비울 수 없다(비우면 증상도 약도 없는 행이 된다).
+- 증상이 빈 약 행은 증상 코드가 0개라 반복 판정 · 에피소드에 들어가지 않는다.
+- **배포 안전** — 이전에는 수정 인자에 최소 1개 제한이 없어 증상이 빈 행이 있을 수 있었다. 그래서 DB 는 "증상과 약이
+  한 행에 같이 있다" 만 막는다 — 기존 행은 약 칸이 전부 NULL 이라 늘 참이고, 다섯 CHECK 모두 바로 VALIDATE 된다.
+  "증상도 약도 없다" 를 DB 에서 막으면(NOT VALID 로 걸어도) 그 옛 행의 이후 UPDATE — soft delete · Correction 포함 — 가
+  전부 CHECK 에 걸린다. 새 행은 Memory 스키마가 막는다(`ObservationHealthCreate` 의 증상 또는 약 · 수정의 증상 최소 1개).
+  옛 행은 보호자 기록이라 지우지 않는다.
 
-`observation_*.source_notice_id` 가 이미 이 테이블을 가리키는데 테이블이 없어서 FK 가 안 걸려 있다.
-`suggestion_evidence.source_kind` 의 아이 기록 값이기도 하다.
+### 아직 위 표에 없는 것
 
-소유는 Memory · OCR 파이프라인이다. Growth 가 기관 맥락 연결에 읽고, Food 는 `daycare_meal.source_notice_id` 로 건다.
-Growth 는 우선순위 낮음으로 올렸다 — 없어도 핵심 기능은 돈다.
+#### notice · notice_item (기관 원문과 거기서 뽑은 항목)
 
-필드는 아직 정하지 않았다. OCR 3갈래 분류에서 "일반 공지" 로 빠지는 것을 담는다.
+정본은 [`docs/notice/notice-ocr-v1.md`](../notice/notice-ocr-v1.md) · `apps/api/app/domains/notice/models.py`.
+
+- `notice` 는 기관에서 온 원문 1건, `notice_item` 은 거기서 뽑은 보호자가 할 일 · 알 일 N건이다.
+- 처음 계획은 "일반 공지만 담는 표" 였는데, 실제 공지는 한 장에 일정 · 회신 · 비용 · 운영 변경이 섞여 와서 공지 단위로 갈래를 고르면 나머지가 사라진다. 그래서 일정성 공지 · 식단표 원문도 여기 담고, 분류는 항목 단위로 한다.
+- 아이 관찰과 급식 메뉴는 이 표에 없다. 자기 표(`observation_*` · `daycare_meal`)에 들어가 `source_notice_id` 로 원문을 가리킨다.
+- `suggestion_evidence.source_kind` 의 아이 기록 값이기도 하다. 반 전체 공지만 근거로 단 추천을 개인화로 셀지는 아직 정하지 않았다.
 
 #### observation_food.amount — 값 집합 미확정
 
@@ -588,12 +709,11 @@ Growth 는 우선순위 낮음으로 올렸다 — 없어도 핵심 기능은 �
 **테이블이 없다**
 
 - `child_growth_log` — 나중에 도입한다. 이 문서에는 계획만 둔다. `Gate.growth_log_count` 가 이 테이블의 측정 건수를 센다
-- `notice` — `observation_*.source_notice_id` 가 가리키는데 테이블이 없어 FK 를 못 건다. 지금은 plain uuid 다
 - 문서 행 `food_doc` · `growth_doc` · `activity_doc`
 
 **컬럼이 없다**
 
-- `observation_health` 의 체온 세 칸 — `temperature` · `measured_at` · `measure_site`
+- ~~`observation_health` 의 체온 세 칸 — `temperature` · `measured_at` · `measure_site`~~ — 2026-10-22 먹인 약 두 칸과 함께 반영했다 (마이그레이션 `e5b1d7c3a9f2`)
 
 **제약이 없다**
 

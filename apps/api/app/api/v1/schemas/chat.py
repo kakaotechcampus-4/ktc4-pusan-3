@@ -16,7 +16,7 @@
 import datetime as dt
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.api.chat_replies import (
     AgentResultReply,
@@ -28,10 +28,12 @@ from app.api.chat_replies import (
     StoredRef,
     UnavailableReply,
 )
+from app.api.schema_base import ApiSchema
+from app.api.v1.schemas.cards import DeleteProposalCardOut, FoundTabsOut
 from app.api.v1.schemas.observations import ObservationHealthOut, ObservationOut
 
 
-class SavedOut(BaseModel):
+class SavedOut(ApiSchema):
     type: Literal["saved"] = "saved"
     observations: list[ObservationOut | ObservationHealthOut] = Field(
         description=(
@@ -47,7 +49,7 @@ class SavedOut(BaseModel):
     )
 
 
-class SuggestionStateOut(BaseModel):
+class SuggestionStateOut(ApiSchema):
     id: str
     status: Literal["draft", "approved", "rejected", "expired"] = Field(
         description=(
@@ -67,13 +69,16 @@ class AgentResultOut(AgentResultReply):
 
 
 # 🚨 `chat_replies.ChatReply` 에서 `SavedReply` 를 `SavedOut` 으로, `AgentResultReply` 를
-#    `AgentResultOut` 으로 바꾼 목록이다. 저장 쪽에 종류를 늘리면 여기에도 넣는다 — 빠지면
-#    조회가 그 턴을 그대로 넘기다 응답 검증에서 500 이 난다.
+#    `AgentResultOut` 으로, 카드 둘(#535)을 `FoundTabsOut` · `DeleteProposalCardOut` 으로 바꾼
+#    목록이다. 저장 쪽에 종류를 늘리면 여기에도 넣는다 — 빠지면 조회가 그 턴을 그대로 넘기다
+#    응답 검증에서 500 이 난다.
 ChatReplyOut = Annotated[
     NoteReply
     | GuidanceReply
     | UnavailableReply
     | SavedOut
+    | FoundTabsOut
+    | DeleteProposalCardOut
     | EventDraftReply
     | AgentResultOut
     | PartialReply
@@ -82,7 +87,7 @@ ChatReplyOut = Annotated[
 ]
 
 
-class ChatTurnOut(BaseModel):
+class ChatTurnOut(ApiSchema):
     run_id: str
     raw_text: str = Field(description="보호자가 보낸 글 그대로")
     reply_to: str | None = Field(
@@ -106,7 +111,7 @@ class ChatTurnOut(BaseModel):
     )
 
 
-class ChatDayResponse(BaseModel):
+class ChatDayResponse(ApiSchema):
     date: dt.date = Field(description="이 응답의 날짜(한국 시간)")
     turns: list[ChatTurnOut] = Field(
         description=(

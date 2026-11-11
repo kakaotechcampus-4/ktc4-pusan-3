@@ -143,3 +143,41 @@ class ConsentRetention(Base, UUIDPk):
 
     purge_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     """retained_at + 1년. 지나면 파기한다 — 법정 기간이 아니라 현재 서비스 정책이다."""
+
+
+class LocationPurpose(enum.StrEnum):
+    SUGGESTION = "suggestion"
+    """위치 약관 제4조 ① 의 위치 서비스 — 날씨에 맞춘 놀이, 가까운 장소 · 행사 제안.
+
+    병원 찾기는 지금 좌표를 쓰지 않는다. 쓰게 되면 받는 곳이 달라서 값을 따로 더한다.
+    """
+
+
+class LocationUseLog(Base, UUIDPk):
+    """위치를 쓴 사실 1건 — 위치정보법 제16조 ② 의 확인자료 (#693).
+
+    🚨 좌표 칸을 만들지 않는다. 위치 값은 요청을 처리하는 동안만 쓰고 버린다 (처리방침 1장 ③ ·
+       위치 약관 제4조 ④). 여기에는 그 사실만 남긴다.
+
+    취득경로 · 이용 방법 · 제공받는 자는 목적마다 하나로 정해져 있어서 행마다 적지 않는다.
+    목적 값이 가리키는 내용은 docs/safety/retention-v1.md 에 있다. 경로가 다른 위치 이용이
+    생기면 목적 값을 새로 더한다. 🚨 이미 있는 값이 가리키는 내용은 고치지 않는다 — 받는 곳이
+    바뀌면 같은 목적이라도 새 값(예: suggestion_v2)을 더한다. 지난 기록이 그때의 받는 곳을
+    가리켜야 한다 (#697 리뷰).
+
+    위치 동의는 아이가 아니라 보호자의 계정 동의라 아이를 적지 않는다. 동의 증빙과 달리 대상이
+    지워진 뒤에 남길 이유가 없어서 보호자 행과 함께 지워진다.
+    """
+
+    __tablename__ = "location_use_log"
+
+    parent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    purpose: Mapped[LocationPurpose] = mapped_column(
+        enum_col_py(LocationPurpose, name="location_purpose"),
+        nullable=False,
+    )
+    used_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )

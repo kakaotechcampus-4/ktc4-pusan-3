@@ -16,6 +16,7 @@
 
 | 정한 것 | 값 |
 | --- | --- |
+| 연결하지 않는 관찰 | **`polarity = 0`** (좋다·싫다가 없는 기록). 임베딩도 하지 않는다 — §1-1 (#287) |
 | 같은 대상 판단 | 벡터 유사도 임계값이 아니라 **판정기(Jev)** 에게 묻는다 |
 | 판정기를 부르지 않는 경우 | 이름이 같을 때(공백 무시) · 후보가 없을 때 |
 | 반대 방향 확인 | 판정기가 `none` 이면 가까운 후보 **3개**에 방향을 바꿔 한 번씩 더 묻는다 |
@@ -23,7 +24,7 @@
 | 세지 않는 것 | 판정기 오류 · 후보 목록에 없는 답 |
 | 보류 기록 | 별도 테이블 `observation_link_hold`. 관찰이 연결되면 지우고 관찰이 지워지면 같이 지워진다 |
 | 판단이 갈리는 쌍 | 다른 대상으로 본다 (딸기–딸기잼) |
-| 밖으로 나가는 것 | Jev(OpenRouter 경유)에 관찰 대상 이름 · 도메인 · 후보 Profile 이름만. 원문 · 아이 id 는 보내지 않는다 |
+| 밖으로 나가는 것 | Jev(Elice ML API 경유)에 관찰 대상 이름 · 도메인 · 후보 Profile 이름만. 원문 · 아이 id 는 보내지 않는다 |
 | 이번 범위 밖 | `last_observed_on` 갱신 · DB `CuratorStore` 구현 · 실행 흐름 연결 |
 
 코드: [`apps/api/app/agents/curator/embedding/link_step.py`](../../apps/api/app/agents/curator/embedding/link_step.py) (규칙) ·
@@ -39,13 +40,31 @@
 - 계란–달걀 **0.20**, 딸기–딸기잼 **0.90**
 - 잘못된 연결을 0건으로 맞추는 임계값에서 같은 대상의 **74%** 를 놓쳤다
 
-그래서 연결 판단은 판정기가 하고 벡터는 두 곳에만 쓴다 — 후보가 많을 때(30개 초과) 판정기에 보여 줄 후보를 추리는 것, 반대 방향으로 물을 후보를 고르는 것. 관찰 벡터의 본래 쓰임은 도메인 Agent 의 검색이다.
+그래서 연결 판단은 판정기가 하고 벡터는 두 곳에만 쓴다 — 후보가 많을 때(30개 초과) 판정기에 보여 줄 후보를 추리는 것, 반대 방향으로 물을 후보를 고르는 것. 관찰 벡터를 도메인 Agent 의 검색에도 쓸 계획이었지만 아직 그런 검색은 없다 — 지금 관찰 벡터를 읽는 곳은 Curator 뿐이다 (2026-11-09 기준).
 
 **Jev 를 고른 이유** (실험 3 · 4) — 같은 조건에서 Gemini 3.5 Flash Lite 는 잘못된 연결이 6~11건, Jev 는 0건이었다. 비용은 513번 호출에 약 ₩18 이었다.
 
-**남은 한계** (실험 5) — 최종 확인에서 잘못된 연결이 3건 있었다. 모두 딸기–딸기잼처럼 같은 대상인지 사람도 판단이 갈리는 쌍이었고 Jev 도 확신이 낮았다. 분명한 쌍은 틀리지 않았다.
+**남은 한계** (실험 5) — 최종 확인에서 잘못된 연결이 3건 있었다. 모두 딸기–딸기잼처럼 같은 대상인지 사람도 판단이 갈리는 쌍이었고 Jev 도 확신이 낮았다. 분명한 쌍은 틀리지 않았다. 측정 이력 v1(#816)로 보면 이 3건은 데이터가 다른 대상으로 정한 물감놀이–핑거페인팅 한 쌍의 물음으로 보인다 — [`CURATOR_JUDGE_EVAL.md`](../agents/eval/CURATOR_JUDGE_EVAL.md) §3.
 
 판정기는 답만 한다. 답이 후보 목록에 있는지 확인하고 연결하는 것은 코드다 (루트 CLAUDE.md §3).
+
+### 1-1. `polarity = 0` 관찰은 연결하지 않는다 (#287)
+
+Profile 은 대상 하나에 대한 선호 · 기피다. 그래서 Profile 의 `polarity` 는 `-1 / 1 / NULL` 만 있고(`NULL` 은 아직 모름), `0` 은 없다 ([data_model.md](../agents/data_model.md) `profile_affinity`).
+
+**문제** — 전에는 `0` 관찰도 연결 대상이라 `polarity = 0` Profile 이 생겼다. 같은 방향 안에서만 후보를 찾아서 싫어함(-1) "당근" 과 `0` 인 "홍당무" 가 서로 다른 Profile 이 됐고, 승격은 `polarity` 를 보지 않아서 그냥 먹은 기록 3건이 `confirmed` 기억이 되고 추천 근거(티어 1)로 나갔다.
+
+**규칙**
+
+- 임베딩 대상 · 연결 대상 조회에서 `polarity = 0` 을 뺀다 (`DbCuratorStore._list` · 인메모리 store). 쿼리에서 빼야 연결 안 된 관찰이 실행마다 다시 후보로 잡히지 않는다
+- 관찰은 그대로 남는다 — 도메인 Agent 가 최근 14일 근거(티어 3)로 쓴다
+- 방향을 모르는(`NULL`) Profile 은 관찰이 쌓여도 `confirmed` 로 올리지 않는다 (`recompute_profile`)
+- 관찰의 `polarity` 를 고치는 경로는 지금 없다(Memory 고치기 도구에 칸이 없다). `0` 으로 잘못 저장된 관찰은 지우고 다시 기록해야 한다
+- DB 제약과 이미 있던 `0` Profile 정리는 **다음 배포(contract PR)** 에서 한다. 배포가 롤백되면 직전 코드가 새 스키마 위에서 도는데, 이 코드가 먼저 나가 있어야 직전 코드도 `0` Profile 을 만들지 않는다 ([deploy-v1.md](../ops/deploy-v1.md) 롤백 절)
+
+**대가** — 보호자가 좋다 · 싫다를 말하지 않은 "자주 하는 것" 은 Profile 이 되지 않고, 14일이 지나면 근거에서도 빠진다. 모델이 싫어함을 빼먹어 `0` 으로 저장된 관찰도 집계에서 빠진다(전에도 `-1` Profile 에는 안 들어갔다). Memory Agent 가 `polarity` 를 읽는 정확도는 따로 잰다.
+
+🔶 **관찰 벡터로 검색을 붙이면 `0` 관찰도 임베딩해야 한다.** 지금은 Curator 만 벡터를 읽어서 뺐다.
 
 ## 2. 반대 방향 확인
 
@@ -89,11 +108,11 @@
 
 | 칸 | 뜻 |
 | --- | --- |
-| `food_id` · `activity_id` · `education_id` | 보류된 관찰. **셋 중 하나만** 채운다 (CHECK `observation_link_hold_one_target`) |
+| `domain` · `observation_id` | 보류된 관찰. FK 없이 도메인(`food` · `activity` · `education`, CHECK)과 관찰 id 로 가리킨다 (UNIQUE `observation_link_hold_domain_observation_key`) |
 | `uncertain_count` | 1~3 (CHECK). 3이 되면 새 Profile 을 만들고 행을 지운다 |
 | `subject_hash` | `same_name_key(subject)` 의 sha256 |
 
-**FK 를 칸 셋으로 둔 이유** — 관찰은 도메인마다 테이블이 달라서 칸 하나로는 FK 를 걸 수 없다. `correction.target_id` · `suggestion_evidence.source_id` 는 FK 없이 두지만 이 테이블은 **삭제를 DB 가 보장해야 해서** 칸을 나눴다(exclusive arc). 해시는 익명화가 아니다 — "딸기" 같은 짧은 단어는 해시로 원래 값을 찾을 수 있어서 관찰이 지워지면 같이 지워져야 한다 (`ON DELETE CASCADE`).
+**관찰에 FK 를 걸지 않은 이유** — 관찰은 도메인마다 테이블이 달라서 칸 하나로는 FK 를 걸 수 없다. 처음에는 칸 셋으로 나눠 FK 를 걸었지만(exclusive arc) 지금은 `correction.target_id` · `suggestion_evidence.source_id` 처럼 FK 없이 두고, 아이 삭제는 `child_id` 의 `ON DELETE CASCADE`, 관찰 삭제는 store 의 `delete_observation` 이 보류 기록까지 지운다. 해시는 익명화가 아니다 — "딸기" 같은 짧은 단어는 해시로 원래 값을 찾을 수 있어서 관찰이 지워지면 같이 지워져야 한다.
 
 **행이 사는 기간** — 첫 `uncertain` 에서 생기고 관찰이 어떤 경로로든 Profile 에 연결되면 지운다. 테이블에는 지금 보류 중인 관찰의 기록만 남는다.
 
@@ -107,7 +126,7 @@
 
 ## 6. 밖으로 나가는 것
 
-Jev 는 OpenRouter 를 거쳐 부른다. 보내는 값은 셋뿐이다.
+Jev 는 Elice ML API 를 거쳐 부른다 (#686 — 처음엔 OpenRouter 였다. 다른 모델과 호출 경로 · 비용 관리를 한 곳으로 모았다). 보내는 값은 셋뿐이다.
 
 | 보내는 것 | 보내지 않는 것 |
 | --- | --- |
@@ -115,13 +134,13 @@ Jev 는 OpenRouter 를 거쳐 부른다. 보내는 값은 셋뿐이다.
 
 반대 방향 확인도 같은 값을 자리만 바꿔 보낸다.
 
-🔶 **개인정보 처리방침에 반영해야 한다.** OpenRouter · Jev 와 보내는 항목을 추가해야 한다. 초안의 6장(위탁) · 7장(국외 이전)에는 엘리스와 AWS 만 있다 — PM 에게 요청 (루트 CLAUDE.md §10 "외부 LLM 전달 범위").
+🔶 **개인정보 처리방침에 반영해야 한다.** Jev 는 가중치가 공개되지 않은 API 전용 모델이라 Elice 도 TypeSafe(미국)로 넘기는 것으로 본다. 처리방침의 OpenRouter 행을 TypeSafe 로 바꾸는 일은 #687 (PM). 그 이슈가 끝나기 전에는 배포 `.env` 를 Elice 로 바꾸지 않는다.
 
 ## 7. 이번 범위 밖
 
 | 항목 | 상태 |
 | --- | --- |
-| `last_observed_on` 갱신 | Curator 통합 때 처리한다 (김명성). 연결 단계는 새 Profile 을 만들 때만 첫 관찰 날짜를 넣는다 — 관찰이 지워진 것을 알 수 없어서 연결할 때마다 날짜를 올리면 틀린 값이 남는다. 통합 쪽에서 "연결된 active 관찰 중 가장 늦은 `observed_on`" 으로 다시 계산한다. 🚨 감쇠가 돌기 전에 되어 있어야 한다 — 없으면 관찰이 계속 붙는 Profile 도 첫 관찰 날짜 기준으로 오래된 관심이 되어 근거에서 빠진다 |
-| DB `CuratorStore` 구현 · 실행 흐름 연결 | DB 구현은 `clear_hold` 를 `link` 와 같은 트랜잭션에서 해야 한다. 지금은 Protocol 과 인메모리 구현뿐이다 |
+| `last_observed_on` 갱신 | Curator 통합에서 처리했다 (`domains/memory/curator/recompute.py` → `refresh_profile`). 연결 단계는 새 Profile 을 만들 때만 첫 관찰 날짜를 넣는다 — 관찰이 지워진 것을 알 수 없어서 연결할 때마다 날짜를 올리면 틀린 값이 남는다. 통합 쪽에서 "연결된 active 관찰 중 가장 늦은 `observed_on`" 으로 다시 계산한다. 🚨 감쇠가 돌기 전에 되어 있어야 한다 — 없으면 관찰이 계속 붙는 Profile 도 첫 관찰 날짜 기준으로 오래된 관심이 되어 근거에서 빠진다 |
+| DB `CuratorStore` 구현 · 실행 흐름 연결 | DB 구현은 `clear_hold` 를 `link` 와 같은 트랜잭션에서 해야 한다. 구현됐다 — `domains/memory/curator/db_store.py`(같은 세션) · 실행 흐름은 `domains/memory/curator/trigger.py` |
 | 동시 실행 | 같은 아이에 대해 두 실행이 동시에 돌면 같은 대상으로 candidate 가 두 번 생길 수 있다. 부르는 쪽이 막는다 |
 | 연결된 관찰 이름 활용 | 후보를 `merge_key` 뿐 아니라 연결된 관찰들의 이름과도 비교하면 두 번째 "당근"부터 판정기를 부르지 않아도 된다. 다만 잘못된 연결이 번진다 (딸기잼이 한 번 딸기에 붙으면 이후 딸기잼이 모두 딸기로 간다). 운영 뒤에 볼 개선 후보 |

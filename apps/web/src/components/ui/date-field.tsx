@@ -63,7 +63,7 @@ export function DateField({
    *    알림장에서 읽은 일시라, 한 문구를 박아 두면 다른 화면에서 거짓말이 된다
    *    (실제로 08 의 "언제" 칸에 "생일을 골라주세요" 가 떴다).
    */
-  placeholder = "날짜를 골라주세요",
+  placeholder = "날짜를 골라 주세요",
 }: {
   label: string;
   hint?: string;
@@ -197,7 +197,7 @@ export function DateRangeField({
   onChange,
   fromDate,
   toDate,
-  placeholder = "기간을 골라주세요",
+  placeholder = "기간을 골라 주세요",
 }: {
   label: string;
   hint?: string;
@@ -268,7 +268,7 @@ export function DateRangeField({
         open={open}
         onClose={() => setOpen(false)}
         title={label}
-        description="시작일과 끝일을 차례로 눌러주세요. 한 날만 누르면 그날 하루예요."
+        description="시작하는 날과 끝나는 날을 차례로 눌러 주세요. 한 날만 누르면 그날 하루예요."
         footer={
           <div className="flex gap-2">
             <Button variant="secondary" className="flex-1" onClick={() => setOpen(false)}>

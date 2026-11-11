@@ -1,33 +1,30 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { FileText, MapPin, ShieldCheck, UserRound, type LucideIcon } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
+import { LocationPermissionNote } from "@/components/location-permission-note";
 import { SettingsGroup, SettingsInfoRow } from "@/components/settings-row";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
 import { SkeletonBlock, SkeletonText } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { useConsents } from "@/hooks/use-consents";
 import { usePolicies } from "@/hooks/use-policies";
-import {
-  api,
-  isApiError,
-  qk,
-  type ConsentRequest,
-  type ConsentResponse,
-  type ConsentsResponse,
-} from "@/lib/api";
+import { api, isApiError, qk, type ConsentResponse } from "@/lib/api";
 import {
   askedChoices,
   consentChoices,
+  consentRequestBody,
   LEGAL_DOCUMENTS,
   policyHref,
   type ConsentChoice,
   type LegalDocument,
 } from "@/lib/consent";
 import { formatDay } from "@/lib/format";
+import { askDeviceLocation, nextPermission, type DeviceLocationPermission } from "@/lib/location";
 
 /**
  * 10 설정 — 동의 관리.
@@ -94,35 +91,45 @@ export function ConsentSection({ childId }: { childId: string }) {
    *    "조용히 되돌아간 실패" 자리이고(문서 §7), 성공은 화면이 이미 말하고 있다.
    */
   const [announcement, setAnnouncement] = useState("");
+  /**
+   * 휴대폰의 위치 권한 (#593). 위치 동의가 켜져 있을 때만 본다 (`LocationPermissionNote`).
+   * 🚨 동의를 **켠 직후에 권한 창을 띄운다** — 가입 화면에서 켠 것과 같다. 켜 놓고 권한이 없으면 위치가 실리지 않는다.
+   */
+  const [locationPermission, setLocationPermission] = useState<DeviceLocationPermission | null>(
+    null,
+  );
+  const updateLocationPermission = useCallback(
+    (next: DeviceLocationPermission) => setLocationPermission((prev) => nextPermission(prev, next)),
+    [],
+  );
+  /** 권한 창이 떠 있는 동안은 안내를 내린다 — 창 뒤에서 "허용하기" 버튼이 먼저 서지 않게. */
+  const [askingLocation, setAskingLocation] = useState(false);
 
   const policies = usePolicies();
 
-  const consents = useQuery({
-    queryKey: qk.consents(childId),
-    queryFn: () => api.get<ConsentsResponse>("/consents", { query: { child_id: childId } }),
-  });
+  const consents = useConsents(childId);
 
   const change = useMutation({
-    mutationFn: ({ choice: { policy }, next }: Pending) => {
-      const body: ConsentRequest = {
-        scope: policy.scope,
-        action: next,
-        // 🚨 지금 화면이 보여준 약관의 버전이다 — 상수가 아니다 (#90).
-        policy_version: policy.version,
-        // 아이 스코프는 보호자임을 확인한 표시를 함께 보낸다 (계약서 §04).
-        // 🚨 **어느 쪽인지는 서버가 말한다** (`target` · #190). scope 이름으로 가르지 않는다.
-        ...(policy.target === "child" ? { child_id: childId, guardian_attested: true } : {}),
-      };
-      return api.post<ConsentResponse>("/consents", body);
-    },
+    // 🚨 버전은 지금 화면이 보여준 약관의 것이고, 아이 스코프만 법정대리인 확인을 싣는다 (`consentRequestBody`).
+    mutationFn: ({ choice: { policy }, next }: Pending) =>
+      api.post<ConsentResponse>("/consents", consentRequestBody(policy, next, childId)),
     // 🚨 낙관적 업데이트를 쓰지 않는다. 서버가 확정하기 전에 켜진 것처럼 그리면
     //    동의 상태를 화면이 먼저 바꾸는 셈이 된다 (apps/web/CLAUDE.md §3).
     onSuccess: (_data, variables) => {
       setPending(null);
       setAnnouncement(
-        `${consentName(variables.choice)} 동의를 ${variables.next === "granted" ? "받았어요" : "철회했어요"}.`,
+        variables.next === "granted"
+          ? `${consentName(variables.choice)}에 동의했어요.`
+          : `${consentName(variables.choice)} 동의를 철회했어요.`,
       );
       void queryClient.invalidateQueries({ queryKey: qk.consents(childId) });
+      // 🚨 서버가 동의를 기록한 **뒤에** 묻는다. 기록이 실패했는데 휴대폰 권한만 받아 두지 않는다.
+      if (variables.choice.policy.scope === "location" && variables.next === "granted") {
+        setAskingLocation(true);
+        void askDeviceLocation()
+          .then(updateLocationPermission)
+          .finally(() => setAskingLocation(false));
+      }
     },
     /**
      * 🚨 약관이 바뀌었으면 **바꾸지 않고 다시 받아 온다.** 화면이 보여준 글과 서버가 기록할
@@ -210,6 +217,13 @@ export function ConsentSection({ childId }: { childId: string }) {
         </SettingsGroup>
       </div>
 
+      {effective.location === true ? (
+        <LocationPermissionNote
+          status={askingLocation ? null : locationPermission}
+          onStatus={updateLocationPermission}
+        />
+      ) : null}
+
       {/* 켜고 끄기 확정 */}
       <BottomSheet
         open={pending !== null}
@@ -219,12 +233,12 @@ export function ConsentSection({ childId }: { childId: string }) {
         title={
           pending?.next === "withdrawn"
             ? `${consentName(pending.choice)} 동의를 철회할까요?`
-            : `${pending ? consentName(pending.choice) : ""} 동의를 받을까요?`
+            : `${pending ? consentName(pending.choice) : ""}에 동의할까요?`
         }
         description={
           pending?.next === "withdrawn"
-            ? "철회하면 아래가 멈춰요. 설정에서 다시 켤 수 있어요."
-            : "동의하면 아래가 동작해요. 설정에서 언제든 다시 끌 수 있어요."
+            ? "철회하면 아래 기능이 멈춰요. 설정에서 다시 켤 수 있어요."
+            : "동의하면 아래 기능을 쓸 수 있어요. 설정에서 언제든 다시 끌 수 있어요."
         }
         footer={
           pending ? (
@@ -350,9 +364,9 @@ export function LegalDocumentSection() {
             ) : (
               <p id={`${doc.id}-version`} className="text-caption text-ink-subtle pb-2">
                 {doc.href
-                  ? "가장 최신의 처리방침이 열려요."
+                  ? "최신 처리방침이 열려요."
                   : policy
-                    ? `${policy.version} 판이에요.`
+                    ? policyVersionLabel(policy.version)
                     : "지금은 열 수 없어요. 잠시 뒤에 다시 열어 주세요."}
               </p>
             )}
@@ -361,6 +375,19 @@ export function LegalDocumentSection() {
       })}
     </SettingsGroup>
   );
+}
+
+/**
+ * 약관 판의 한 줄 (#868). 🚨 **"판" 이라고 부르지 않는다** — 부모가 쓰는 말이 아니다. 판 이름이 날짜면 본문 머리처럼
+ * "2026년 11월 3일부터 적용돼요" 로 옮긴다. 날짜 계산이 아니라 서버 문자열을 글자로 바꾸는 것이다 — 시행일을 따로
+ * 받지 않고 판 이름을 읽는 것은, 서버가 판 이름을 시행일로 짓기 때문이다(`register_policy_2026_11_03.py`).
+ * 날짜 꼴이 아니면(예전 `draft-1`) 지어내지 않고 이름 그대로 둔다.
+ */
+function policyVersionLabel(version: string): string {
+  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(version);
+  if (!date) return `${version} 버전이에요.`;
+  const [, year, month, day] = date;
+  return `${year}년 ${Number(month)}월 ${Number(day)}일부터 적용돼요.`;
 }
 
 /** 문서 목록의 밑줄 글자. 링크든 버튼이든 같은 모양이어야 한다 — 하는 일이 같다(읽는다). */

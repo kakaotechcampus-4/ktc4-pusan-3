@@ -7,9 +7,12 @@
   함께 보던 보호자의 연결 행도 CASCADE 로 지워진다. 넘기기(이관)는 첫 배포에 없다.
 - 함께 보는 보호자: 보호자만 지운다. 공동 기록의 "적은 사람" 은 SET NULL 로 비워진다.
 
-보호자 행을 지우면 세션 · 로그인 연결 · 기기 · 일기 · 개인 알림 · 연결 행 · 앱 안 신고가 CASCADE 로
-따라온다.
-동의 증빙 보관은 purge_* 가 한다.
+보호자 행을 지우면 세션 · 로그인 연결 · 기기 · 일기 · 개인 알림 · 연결 행 · 앱 안 신고 ·
+화면 가이드를 본 기록 · 대화 기록 · 삭제 제안(#535)이 CASCADE 로 따라온다.
+동의 증빙 보관은 purge_* 가 한다. 한도 표(`rate_event`)의 그 보호자 통은 여기서 지운다.
+
+🚨 LLM 사용량(`llm_usage`, #710)은 지우지 않는다. 보호자 칸(`parent_id`)만 SET NULL 로 비워지고
+   숫자는 90일 정리가 지운다 — 제공처 콘솔 합계와 맞추려면 탈퇴한 보호자의 토큰도 남아 있어야 한다.
 
 🚨 사진 원본 같은 외부 파일은 지우지 않는다. 지금은 파일 저장이 없고, 생기면 그 묶음(K)이 맡는다.
 """
@@ -24,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domains.child.models import Child
 from app.domains.consent.retention import purge_child, purge_parent
 from app.domains.identity.models import AuthHandoff, AuthIdentity, AuthProvider, Parent
+from app.domains.rate_event.repository import delete_events_with_prefix
 
 
 @dataclass(frozen=True)
@@ -36,7 +40,7 @@ class Withdrawn:
     child_ids: tuple[uuid.UUID, ...]
     """함께 지운 아이 — 등록 보호자일 때만 있다.
 
-    커밋 뒤 메모리 보관함에서 그 아이 것을 지운다 (#561).
+    보관함은 표(`run_hold`)로 옮겨 FK CASCADE 로 함께 지워진다 (#877) — 커밋 뒤 따로 할 일은 없다.
     """
 
 
@@ -74,4 +78,8 @@ async def withdraw_parent(
     for child_id in child_ids:
         await purge_child(session, child_id=child_id, now=now)
     await purge_parent(session, parent_id=parent_id, now=now)
+    # 한도 표에는 FK 가 없다(IP 통 때문). 재가입은 새 id 라 옛 보호자 통은 한도를 지키지
+    # 못하고 id 만 남으니 함께 지운다 — 통 모양은 api/quota.py · api/invite_attempts.py (#899 리뷰)
+    for prefix in (f"input:{parent_id}:", f"invite:parent:{parent_id}"):
+        await delete_events_with_prefix(session, prefix=prefix)
     return Withdrawn(kakao_user_id=kakao_user_id, child_ids=child_ids)

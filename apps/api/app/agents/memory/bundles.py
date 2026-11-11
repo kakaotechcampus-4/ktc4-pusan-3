@@ -11,10 +11,12 @@ from app.agents.memory.schemas.task import MemoryTask, WorkType
 
 _DOMAINS = ("food", "health", "education", "activity", "routine")
 
-# 되돌리기 어려운 tool
-MUTATING_PREFIXES: tuple[str, ...] = ("create_", "update_", "delete_")
+# 되돌리기 어려운 tool. 삭제 제안도 DB 에 남는 쓰기다 (#535)
+MUTATING_PREFIXES: tuple[str, ...] = ("create_", "update_", "delete_", "propose_")
 
 # 작업 종류마다 "해냈다" 로 치는 쓰기. agent의 조기 종료와 pipeline의 불일치 기록이 같이 쓴다
+# 삭제 제안(propose_delete)은 넣지 않는다 — 제안 뒤에는 모델이 "카드에서 확인해 주세요" 를 말해야
+# 해서 조기 종료하면 안 된다. pipeline 의 불일치 기록은 lookup_edit 를 비교하지 않는다
 WRITES_FOR: dict[WorkType, tuple[str, ...]] = {
     WorkType.OBSERVE: ("create_observation_",),
     WorkType.SCHEDULE: ("create_event", "create_event_item"),
@@ -31,8 +33,10 @@ RECORD_BASE: frozenset[str] = frozenset(
     }
 )
 
-# 조회·수정·삭제 묶음: 관찰 query·update 10 + 일정·준비물 update·delete 4
-# 관찰 삭제는 update 의 status=deleted 라 관찰 delete tool 은 없다
+# 조회·수정·삭제 묶음: 관찰 query·update 10 + 일정 update · 준비물 update·delete 3 + 공지 조회 1
+# + 삭제 제안 1. 공지 조회는 읽기만 하고 조회 카드가 없다 (#832)
+# 관찰 · 일정을 지우는 tool 은 없다 — 제안을 보호자가 버튼으로 확정한다 (#535). 준비물은 아직
+# 채팅 확인으로 지운다 (후속 이슈)
 LOOKUP_EDIT: frozenset[str] = frozenset(
     {
         *(
@@ -41,9 +45,10 @@ LOOKUP_EDIT: frozenset[str] = frozenset(
             for domain in _DOMAINS
         ),
         "update_event",
-        "delete_event",
         "update_event_item",
         "delete_event_item",
+        "query_notice",
+        "propose_delete",
     }
 )
 

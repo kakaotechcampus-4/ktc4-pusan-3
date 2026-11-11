@@ -31,10 +31,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
+from app.agents.common.food_safety import menu_codes
 from app.agents.food.food_groups import food_groups_of_menu
 from app.agents.food.nutrition_source import NutritionFacts, pick_nutrition
 from app.agents.food.store.ports import MenuCatalogRow, MenuCatalogStore, MenuSource
-from app.agents.food.tools.safety import menu_codes
 from app.rules.menu_key import normalize_menu_key
 
 logger = logging.getLogger(__name__)

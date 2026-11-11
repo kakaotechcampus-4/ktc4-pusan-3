@@ -44,16 +44,18 @@
 
 ### 기억
 
-- 🚨 **근거 Memory 가 없으면 개인화 추천 대신 일반 추천을 낸다.** 또래 기준 일반 추천임을 **화면에 명시**하고, 쌓인 기록 건수를 그대로 보여준다. 되물을 때는 최소 질문 **1개**(복수 금지). 근거가 없는데 "우리 아이 맞춤"인 척하지 않는 것이 이 규칙의 전부다.
+- 🚨 **근거 Memory 가 없으면 개인화 추천 대신 일반 추천을 낸다.** 일반 추천임을 **화면에 명시**하고(막연한 요청이면 또래 기준, 보호자가 놀이 · 교육 주제나 루틴 행동 · 음식 재료나 요리 종류를 정해 물었으면 그 요청에 맞춤), 쌓인 기록 건수를 그대로 보여준다. 되물을 때는 최소 질문 **1개**(복수 금지). 근거가 없는데 "우리 아이 맞춤"인 척하지 않는 것이 이 규칙의 전부다.
 - 🚨 **개인화 추천에는 사용한 `source_id` 를 반드시 첨부한다.** 근거를 달고 나가는데 `suggestion_evidence` 가 0행이면 **버그**다 (품질 지표 하드 기준 0건).
-- 🚨 **일반 추천과 개인화 추천은 타입으로 구분한다.** 개인화는 아이 기록을, 일반은 문서 행을 근거로 단다(Food 일반 추천은 고른 메뉴 — 레시피 카탈로그 행 — 만으로도 된다, #442). 일반 추천은 아이 기록 근거가 0행인 것이 정상이고, 그래서 **개인화 추천으로 집계되면 안 된다** — 두 개가 한 필드에 섞이면 위의 하드 기준이 무의미해진다.
+- 🚨 **일반 추천과 개인화 추천은 타입으로 구분한다.** 개인화는 아이 기록을, 일반은 문서 행을 근거로 단다(Food 일반 추천은 고른 메뉴 — 레시피 카탈로그 행 — 만으로도 된다, #442. 같은 예외를 Growth 도서에도 — 고른 책의 서지 행(도서관 정보나루)만으로도 된다, #506. 보호자가 놀이를 정해 물은 Activity 일반 추천은 그 요청이 기준이라 문서 행이 없어도 된다. 같은 예외를 Growth 교육에도 — 보호자가 정한 주제 · 루틴 행동의 문서 행이 없을 때, #702. 같은 예외를 Food 에도 — 보호자가 재료 · 요리 종류를 정해 물었고 그 말이 요청 글에 있을 때, 레시피북에 없는 흔한 메뉴는 메뉴 · 문서 행이 없어도 된다. 막연한 요청은 해당 없다, #740). 일반 추천은 아이 기록 근거가 0행인 것이 정상이고, 그래서 **개인화 추천으로 집계되면 안 된다** — 두 개가 한 필드에 섞이면 위의 하드 기준이 무의미해진다.
 - 🚨 **한 번의 관찰을 성향으로 확정하지 않는다.** 승격은 오직 Curator 의 반복 집계로만. LLM 이 `state` 를 직접 쓰지 않는다.
-- 🚨 **부모의 말은 아이의 Fact 가 아니다.** "요즘 산만하다"는 보호자 Observation(`caregiver_observation`). 주체를 섞지 말 것 — 부모의 알레르기가 아이 것으로 저장되는 게 eval 케이스 10번이다.
+- 🚨 **부모의 말은 아이의 Fact 가 아니다.** 보호자 자신의 상태 · 감정("나 피곤해")은 관찰로 저장하지 않는다 — 보호자 이야기를 남기는 곳은 일기뿐이고, 일기는 관찰 · 기억으로 바꾸지 않는다. 아이에 대한 말("요즘 산만한 것 같아")은 출처(`confidence_source` — 직접 봄 · 확신이 약함 · 전해 들음 · 기관 공지)를 달아 저장한다. 주체를 섞지 말 것 — 부모의 알레르기가 아이 것으로 저장되는 게 eval 케이스 10번이다.
 - 🚨 **6개월 이상 지난 관심 기록은 단독 근거로 쓰지 않는다.**
 
 ### 실행
 
-- 🚨 **되돌릴 수 없는 것은 사람이 승인한다** — 승인 게이트는 **딱 2곳**: ㉠ 캘린더 쓰기 ㉡ 건강·알레르기 기록 확정. 그 외에 승인을 늘리지 말 것(자동화가 무의미해진다), **줄이지도 말 것**.
+- 🚨 **되돌릴 수 없는 것은 사람이 승인한다** — 승인 게이트는 **딱 3곳**: ㉠ 캘린더 쓰기 ㉡ 건강·알레르기 기록 확정 ㉢ 대화로 지울 때의 삭제 확정(AI 가 고른 후보를 보호자가 체크해 버튼으로 — #535 · 11-03 팀 회의). 그 외에 승인을 늘리지 말 것(자동화가 무의미해진다), **줄이지도 말 것**.
+  - ㉢ 은 AI 가 고른 삭제라서 게이트다. 보호자가 직접 누르는 삭제(기록 탭 · 일기 · 아이 삭제 · 탈퇴)는 게이트가 아니라 확인 창이다.
+  - 화면 표식 `btn-approve` · `caution` 은 ㉠ ㉡ 전용이다. ㉢ 은 파괴적 확정이라 `danger` 를 쓴다. 웹 문서 · 주석에 남은 "게이트 2곳 전용" 은 이 표식을 가리킨다.
 - 🚨 **자동 실행 경로를 코드에 만들지 않는다.** 일정은 승인 전에는 저장하지 않는다 — Agent 는 초안까지만 만든다. 승인 없는 Suggestion 은 24시간 뒤 만료.
 - 🚨 **20초 초과 시 부분 결과로 전환.** Agent 2개 중 1개만 성공해도 그 화면을 보여준다 — 성공과 실패를 한 화면에 섞는다.
 
@@ -73,7 +75,7 @@
 | ------------------------ | ------------------------------------------------------------------------------------------------------- |
 | **AI(LLM)가 하는 것**    | 자연어에서 관찰 추출·라벨링(Fact/Observation/Inference), 의도 분류·라우팅, 식사·놀이·교육 후보 **생성** |
 | **코드(규칙)가 하는 것** | 날짜·나이 계산, 일정 충돌, **알레르기·금지식품 필터**, Memory 감쇠, 반복 승격, 승인 게이트              |
-| **사람이 하는 것**       | **되돌릴 수 없는 것만** — 일정 등록/변경, 알레르기·건강 기록 확정                                       |
+| **사람이 하는 것**       | **되돌릴 수 없는 것만** — 일정 등록/변경, 알레르기·건강 기록 확정, AI 가 고른 삭제 확정                 |
 
 > 판단 기준: **"틀렸을 때 되돌릴 수 있나?"** 못 되돌리면 사람. **"100% 맞아야 하나?"** 그러면 코드. 나머지가 LLM.
 
@@ -81,22 +83,23 @@
 
 ## 4. 처리 파이프라인
 
-입력 한 줄 → 다섯 칸. 도식: [`docs/assets/agent-flow.png`](docs/assets/agent-flow.png)
+입력 한 줄 → 다섯 칸. 도식: [`docs/assets/agent-flow.png`](docs/assets/agent-flow.png) (기획 때 그림이라 저장 전 승인 칸이 그려져 있다 — 지금 흐름은 아래 글이 맞다)
 
 ```
 ① 인식      Supervisor — 안전 사전검사(규칙) + 의도 판정(기록형 / 요청형 / 혼합형)
-   ↓
-  승인 게이트 ①  "이렇게 이해했어요" → 부모가 맞아요/수정할게요/아니에요
+   ↓          승인 없이 바로 저장한다 — 틀리면 부모가 나중에 고친다(Correction · ⑤). 게이트가 아니다
    ↓          (저장 안 되면 다음 칸으로 전파하지 않는다)
 ② 기록      Memory Agent + Curator — 한 줄이 관찰 N건으로 분리 · 병합 · 집계 · 승격
    ↓
-③ 행동      공통 컨텍스트 강제 주입(프로필·알레르기·오늘 급식·이번 주 일정)
-   ↓          → Agent 최대 2개가 각자 memory.search → 후보 + 규칙 필터 + 근거 매핑
-④ 결과      Why this / Why now / 사용한 기록 N건
+③ 행동      Agent 최대 2개가 각자 자기 통로로 읽는다 — 아이 기록은 memory.search, 알레르기 · 급식 · 일정은 Agent 별 조회
+   ↓          → 후보 + 규칙 필터(알레르기는 코드가 거른다 · 이름을 프롬프트에 싣지 않는다) + 근거 매핑
+④ 결과      "이렇게 저장했어요" · 왜 이 추천인지(`reason` 한 칸) · 사용한 기록 N건
    ↓
-  승인 게이트 ②  되돌릴 수 없는 것만 사람 앞으로
+  승인 게이트  되돌릴 수 없는 3곳만 사람 앞으로 — ㉠ 캘린더 쓰기 ㉡ 건강·알레르기 확정 ㉢ 대화 삭제 확정 (§2)
    ↓
-⑤ 반영      선택·거절·Correction 을 Memory 로 되돌려 기록 → 다음 입력의 맥락
+⑤ 반영      Correction 은 기억을 고친다. 추천의 선택 · 거절 · 평가는 추천 행에 남는다 — 성향은 바꾸지 않는다
+              (성향은 보호자가 적은 관찰의 반복 집계로만 바뀐다 · §2). Food · Growth 는 같은 메뉴 · 책을 한동안
+              다시 내지 않으려고 이 행을 읽는다 → 다음 입력의 맥락
 ```
 
 **설계상 중요한 두 가지**
@@ -115,18 +118,19 @@
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | **Observation Memory**             | 관찰 **1건**. 도메인별 5계층 테이블                                                                       | `observation_food` · `_health` · `_education` · `_activity` · `_routine` |
 | **Child Memory**                   | 관찰이 쌓여 만들어진 아이 프로필                                                                          | `profile_affinity` · `health_safety` |
-| **Fact / Observation / Inference** | 3분류. 부모 발화는 `caregiver_observation` — 아이의 fact 로 승격 금지                                     | 관찰의 `type`                                                |
+| **관찰의 출처**                    | 그 관찰이 어디서 왔는가 — `parent_direct`(직접 봄) · `parent_hedged`(확신이 약함) · `parent_hearsay`(전해 들음) · `institution_notice`(기관 공지). 기획의 Fact / Observation / Inference 3분류를 이렇게 담았다. 보호자 자신의 이야기는 저장하지 않는다 | 관찰의 `confidence_source`                                   |
+| **notice**                         | 기관에서 온 **원문** 1건(알림장 · 가정통신문 · 식단표). 알림이 아니다 — 일정 알림은 `reminder`. 원문에서 뽑은 할 일 · 알 일은 `notice_item` | `notice` · `notice_item` |
 | **Curator**                        | 중복 병합 · 반복 집계 · 승격/강등/감쇠를 **규칙으로** 수행                                                | AI 파트                                                      |
 | **승격 (promotion)**               | `candidate → confirmed → archived`                                                                        | `profile_state`                                              |
-| **감쇠 (decay)**                   | 오래된 기억을 근거에서 빼는 것. `profile_safety` 는 **감쇠 없음** (보호자만 `retracted`)                  | 규칙                                                         |
+| **감쇠 (decay)**                   | 오래된 기억을 근거에서 빼는 것. `health_safety` 는 **감쇠 없음** (보호자만 `retracted`)                   | 규칙                                                         |
 | **Supervisor**                     | 안전 사전검사 + 의도 분류 + Agent 최대 2개 라우팅                                                         | AI 파트                                                      |
 | **의도 3형**                       | `기록형` / `요청형` / `혼합형`                                                                            | Supervisor 출력                                              |
 | **도메인 Agent**                   | `food` · `activity` · `growth` · `health` **4종 고정**. Agent 이름은 `growth` 지만 관찰 테이블은 `observation_education`, `observation_routine` | `suggestion_agent`                                           |
-| **Suggestion**                     | 추천 1건. `draft → approved / rejected / expired`                                                         | `suggestion_status`                                          |
+| **Suggestion**                     | 추천 1건. DB 에 써지는 상태는 `draft` · `approved` 둘이다. `expired` 는 24시간(`expires_at`)이 지난 draft 를 **읽을 때** 붙이는 값이고 DB 에는 쓰지 않는다. `rejected` 는 값만 있고 쓰는 길(거절 API)이 없다 | `suggestion_status`                                          |
 | **근거 (evidence)**                | 그 추천이 쓴 `source_id` 목록. **0행이면 버그**. 컬럼이 `memory_*` 가 아닌 것은 문서 행·`daycare_meal` 도 가리키기 때문 | `suggestion_evidence`                                        |
-| **Correction**                     | 부모가 기록·기억을 고치는 것. **묻는 것이 대상마다 다르다** — 기록은 `once_only`(이번만 그랬어요) / `wrong`(잘못된 기록), 기억은 `need_more_observation`(기록이 더 필요해요) / `outdated`(지금은 달라요) / `wrong`. `confirm`(맞아요)은 없다 — 아무것도 바꾸지 않아 이력으로도 남기지 않는다. | `correction_verdict`                                         |
+| **Correction**                     | 부모가 기록·기억을 고치는 것. **묻는 것이 대상마다 다르다** — 기록은 `once_only`(이번만 그랬어요) 하나다(잘못된 기록은 고치기가 아니라 기록 지우기 — #736). 기억은 `need_more_observation`(기록이 더 필요해요) / `outdated`(지금은 달라요) / `wrong`. `confirm`(맞아요)은 없다 — 아무것도 바꾸지 않아 이력으로도 남기지 않는다. | `correction_verdict`                                         |
 | **run**                            | 입력 1건의 처리 단위. 진행 상황은 SSE 로 흐른다                                                           | `GET /runs/{rid}/events`                                     |
-| **승인 게이트**                    | 되돌릴 수 없는 2곳                                                                                        | §2 · §3                                                      |
+| **승인 게이트**                    | 되돌릴 수 없는 3곳 — ㉠ 캘린더 쓰기 ㉡ 건강·알레르기 확정 ㉢ 대화 삭제 확정. 표식 `btn-approve` · `caution` 은 ㉠ ㉡ 전용 | §2 · §3                                                      |
 
 **주의** — `activity` 와 `play/interest` 가 기획서·테크스펙에 섞여 있다. **코드에서는 `activity` 로 통일**한다 (`suggestion_agent` enum 기준).
 
@@ -151,10 +155,11 @@
 │   │   ├── CLAUDE.md         스택·버전 · API 클라이언트 관례 · 화면 규칙 — 고태영
 │   │   ├── package.json      pnpm · 버전 고정 (^ 없음)
 │   │   ├── pnpm-lock.yaml    ⚠️ 반드시 커밋
-│   │   ├── .env.example      NEXT_PUBLIC_API_BASE_URL 템플릿
+│   │   ├── .env.example      NEXT_PUBLIC_API_BASE_URL · 웹 푸시 Firebase 값 템플릿 (값은 넣지 않는다)
 │   │   ├── Dockerfile        배포 이미지 (standalone 3단계). 🚨 API 주소는 빌드 인자다 — 런타임에 못 바꾼다
 │   │   ├── .dockerignore     빌드 컨텍스트 제외 목록. `.env*` 를 여기서 막는다
 │   │   ├── e2e/              Playwright 화면 규칙 테스트 (`make web-e2e`) — §2 가 화면에서 지켜지는지를 목 서버로 건다
+│   │   ├── e2e-live/         실서버 e2e (`make web-e2e-live`) — 실제 api + DB 에서 저장하고 다시 읽는 행복 경로. 로그인은 시드(`apps/api/scripts/seed_e2e.py`), LLM 은 안 부른다
 │   │   ├── contract/         웹 API 타입 ↔ 서버 OpenAPI 비교 (`make web-contract`) — 서버 스키마는 전부 대응표에 있어야 한다
 │   │   └── src/
 │   │       ├── app/          App Router — layout · providers · globals.css
@@ -169,15 +174,18 @@
 │   │   ├── modules/          로컬 Expo 모듈 — `cookie-flush`(Android 웹뷰 쿠키를 디스크에 쓴다 · #469). 그 안의 `android/` 는 생성물이 아니라 소스다
 │   │   └── src/
 │   │       ├── config.ts     EXPO_PUBLIC_WEB_URL — 이 앱이 아는 유일한 주소
-│   │       └── native/       웹이 못 하는 것만 — safe area 크기 · 로그인 인증 세션 · 외부 링크 · 쿠키 flush 시점.
-│   │                         🚨 Android 권한은 INTERNET 하나다. 사진 권한은 스토어 심사 때문에 뺐다 (#408)
+│   │       └── native/       웹이 못 하는 것만 — safe area 크기 · 로그인 인증 세션 · 외부 링크 · 쿠키 flush 시점 · 기기 안 음성인식 · 일정 알림 토큰 · 흐린 위치.
+│   │                         🚨 Android 실행 중 권한은 RECORD_AUDIO · POST_NOTIFICATIONS · ACCESS_COARSE_LOCATION 셋이다. 마이크는 말로 적기(#595), 음성은 휴대폰 밖으로 안 나간다.
+│   │                         알림은 일정 알림(#609) — 나머지는 FCM 수신용 일반 권한이고, 패키지가 붙이는 배지 · 부팅 권한은 막았다.
+│   │                         위치는 대략 위치만(#593) — 정밀 · 백그라운드는 막았고, 좌표는 셸 안에서 소수점 둘째 자리로 흐린 값만 웹에 넘긴다.
+│   │                         사진 권한은 스토어 심사 때문에 뺐다 (#408)
 │   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI · uv)
 │       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동
 │       ├── README.md         사전 준비 · 실행 · 자주 쓰는 명령 · 트러블슈팅
 │       ├── pyproject.toml    의존성 · ruff · pytest 설정
 │       ├── uv.lock           ⚠️ 반드시 커밋 — 6명 동일 버전 고정
 │       ├── .env.example      환경변수 템플릿 (실제 값 없음)
-│       ├── alembic/          (비어 있음) DB 마이그레이션
+│       ├── alembic/          DB 마이그레이션 (`versions/`). 배포한 것은 고치지 않고 새 revision 을 더한다 — expand-only 를 CI 가 검사한다
 │       ├── app/
 │       │   ├── main.py       FastAPI 앱 진입점
 │       │   ├── core/         설정(pydantic-settings) — 김명성
@@ -185,25 +193,28 @@
 │       │   ├── api/          라우터 · 스키마 — 김명성
 │       │   │   ├── health.py 운영용 헬스체크 — /api/v1 밖 (계약서 §01)
 │       │   │   ├── deps/     인증 · 권한 · 동의 검사
-│       │   │   ├── idempotency.py  Idempotency-Key 기억 (같은 키 → 처음 응답 재생)
+│       │   │   ├── idempotency.py  Idempotency-Key 기억 — Redis, 없으면 프로세스 메모리 (같은 키 → 처음 응답 재생)
 │       │   │   ├── runs/     run 채널 · SSE · 백그라운드 러너 · Agent 이벤트 → 화면 이벤트 번역. v1/ 밖인 이유 — 계약서 버전과 무관하다
-│       │   │   │             🚨 둘 다 프로세스 메모리 — api 는 --workers 1 전제 (#134)
+│       │   │   │             🚨 api 는 아직 --workers 1 (#134). 되묻기 · 다시 시도 맥락 · 한도는 DB 로 옮겼고(#877), run 채널은 워커 메모리 + 표 미러다 — docs/ops/stateless-v1.md
 │       │   │   └── v1/       도메인 엔드포인트
-│       │   ├── domains/      (비어 있음) 도메인 모델 · 리포지토리 — 김명성
-│       │   ├── agents/       (비어 있음) Agent — **내부 구조는 이시하가 결정**
+│       │   ├── domains/      도메인 모델 · 리포지토리 — 김명성
+│       │   ├── agents/       Agent (supervisor · memory · curator · food · activity · growth · health) — **내부 구조는 이시하가 결정**
+│       │   │   ├── entrypoint.py  api 가 보는 유일한 진입점 — api 는 이 파일만 import 한다
 │       │   │   └── CLAUDE.md (미생성) Agent 구현 · 프롬프트 — 이시하
-│       │   ├── rules/        (비어 있음) 규칙(순수 Python) — 공동
-│       │   ├── providers/    (비어 있음) 외부 모델 SDK 격리
-│       │   ├── integrations/ (비어 있음) 외부 서비스 API (Kakao OAuth · MFDS)
-│       │   ├── infra/db/     (비어 있음) DB 세션 · 엔진 — 김명성
-│       │   └── workers/      (비어 있음) 알림 발송 · 감쇠 배치
+│       │   ├── rules/        규칙(순수 Python) — 공동
+│       │   ├── providers/    외부 모델 SDK 격리 (급식표 · 공지 사진 읽기)
+│       │   ├── integrations/ 외부 서비스 API (Kakao OAuth · 공공데이터 날씨 · 행사 · 병원 · 식품 · 도서관 정보나루 · FCM · Discord)
+│       │   ├── infra/db/     DB 세션 · 엔진 — 김명성
+│       │   └── workers/      서버 cron 이 돌리는 배치 — 일정 알림 발송 · 만료 정리 · 기억 다시 계산
 │       └── tests/            pytest — unit · integration · eval(라이브 LLM)
-├── eval/                     (비어 있음) 테스트 케이스 10개 — 오현식 · 이도헌
+├── eval/                     통합 평가 — 단발 프로브 34개 · 일주일 시나리오 · 장애 점검표. 실행 코드는 `apps/api/tests/eval/` — 오현식 · 이도헌
 ├── deploy/
 │   ├── docker/                compose 두 벌 — docker-compose.yml 은 로컬 개발 DB(Postgres+pgvector)+Redis,
 │   │                          docker-compose.deploy.yml 은 배포(db+redis+api+web+caddy). .env 는 한 곳을 같이 쓴다
-│   ├── caddy/                  Caddyfile — HTTPS 종단 + 리버스 프록시 (icatch.ai.kr → web, api.icatch.ai.kr → api)
-│   └── nginx/, scripts/       (비어 있음) 배포용
+│   ├── caddy/                  Caddyfile — HTTPS 종단 + 리버스 프록시 (icatch.ai.kr → web, api.icatch.ai.kr → api, dev.· 는 dev 환경)
+│   │                          🚨 한 EC2 에 prod(main) · dev(develop) 두 벌이 뜬다. CI 통과 후에만 배포, 헬스 실패면 직전 이미지로 자동 롤백 —
+│   │                          DB 는 안 되돌리므로 마이그레이션은 expand-only ([`docs/ops/deploy-v1.md`](docs/ops/deploy-v1.md))
+│   └── scripts/                `deploy.sh`(배포 · 롤백) · `backup.sh` · `restore-check.sh`(백업 · 복원 점검) · `health-alert.sh`(컨테이너 감시)
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
 
@@ -240,7 +251,7 @@
 | | |
 | --- | --- |
 | **Data** | **PostgreSQL + pgvector 한 곳** (벡터 DB 분리 안 함 — 6명 10주엔 인프라 하나가 낫다) |
-| **AI** | LLM API · Structured Output · Tool Calling · Embedding 검색 · Supervisor + Domain Agent · Memory Curator |
+| **AI** | LLM API · Structured Output · Tool Calling · Embedding(Curator 가 같은 뜻의 기억을 묶을 때 — Agent 의 기억 조회는 영역 · 날짜 조건 검색) · Supervisor + Domain Agent · Memory Curator |
 | **협업** | GitHub · Notion(기획·의사결정 기록) · Discord |
 
 ---
@@ -298,6 +309,9 @@
 🚨 **이 저장소는 public 이다.** 1단계에서 학생 API 토큰 8건이 실제로 유출됐고, 노트북·`docs/*.md` 본문에서도 나왔다.
 
 - `.env` 는 커밋하지 않는다. 프론트 번들에 API 키를 넣지 않는다.
+  - 예외는 **Firebase 웹 설정값**(`NEXT_PUBLIC_FIREBASE_*`) 하나다 (#609). 웹 푸시 토큰을 받는 데 쓰는 공개 식별자라
+    번들에 들어가야 동작한다. 그래도 **값은 저장소에 쓰지 않는다** (`.env.local` · `deploy/docker/.env`).
+    서버의 FCM 서비스 계정 키는 비밀이고 프론트에 오지 않는다 ([`docs/web/web-push-v1.md`](docs/web/web-push-v1.md))
 - `/api/v1` 엔드포인트는 기본적으로 Bearer 인증을 요구한다. 로그인 자체를 시작·완료하기
   위한 아래 5개, 쿠키로 access 를 다시 받는 `POST /auth/refresh`, 가입 전 동의 화면이 약관을 읽는
   `GET /policies` · `GET /policies/{scope}/{version}`, 개인정보 처리방침 정본 `GET /privacy-policy` ·
@@ -308,11 +322,11 @@
   - `GET /auth/{provider}/callback`
   - `POST /auth/{provider}`
   - `POST /auth/{provider}/signup`
-  - `POST /auth/refresh` — Bearer 대신 HttpOnly 쿠키(`icatch_rt`)로 인증한다. access 가 만료된 뒤에 부르는 곳이라 Bearer 를 요구할 수 없다 (#466)
+  - `POST /auth/refresh` — Bearer 대신 HttpOnly 쿠키(`__Host-icatch_rt`, #783)로 인증한다. access 가 만료된 뒤에 부르는 곳이라 Bearer 를 요구할 수 없다 (#466)
   - `GET /policies` — 약관은 공개 문서이고, 동의 화면은 계정이 생기기 전에 뜬다 (#91)
   - `GET /policies/{scope}/{version}` — 그 화면의 "전문 보기" 가 여는 약관 정본 HTML (#172)
   - `GET /privacy-policy` · `GET /privacy-policy/{version}` — 개인정보 처리방침 정본 HTML (#221). 누구나 언제든 볼 수 있게 게시해야 하고, 동의 대상이 아니라 동의 목록 밖에 둔다. 스토어에 거는 고정 주소가 앞의 것이다
-- 운영용 `/health` 는 `/api/v1` 밖에 있어 위 인증 규칙의 대상이 아니다.
+- 운영용 `/health` · `/health/ready` 는 `/api/v1` 밖에 있어 위 인증 규칙의 대상이 아니다.
 - **한 번 커밋된 비밀은 지워도 남는다.** `git rm` 이나 "키 제거" 커밋을 해도 히스토리의 blob 은 공개된 채다. 유일한 조치는 **키 폐기(rotate)** — 실수했다면 즉시 담임 매니저에게 알린다.
 - 문서·주석·테스트 픽스처에 **실제 사용자 발화나 아이 정보를 붙여넣지 않는다.**
 - 첫 커밋 날 보안 5종 체크, 배포 전 AI 보안 리뷰 1회 (고태영).
@@ -327,7 +341,11 @@
 
 그중 코드에 직접 걸리는 것:
 
-- **외부 LLM 전달 범위** — 공통 컨텍스트 강제 주입 구조상 무관한 Agent 에도 건강정보가 갈 수 있다
-- **키·몸무게를 어느 Agent 가 어떤 추천에 쓰는지** (#75) — 외부 LLM 으로 보낼 수 있다는 것까지는 정했다 (개인정보 처리방침에 전달 항목으로 적는다). 필요한 Agent 에만 넘길 수 있는지는 바로 위 항목(공통 컨텍스트 구조)과 같은 숙제다
+- 지금은 없다.
+
+11-10 에 코드로 확인해 닫은 것 (근거 줄은 [`docs/safety/llm-inputs-v1.md`](docs/safety/llm-inputs-v1.md)):
+
+- **외부 LLM 전달 범위** — 기획의 "공통 컨텍스트 강제 주입" 은 만들지 않았다. Agent 마다 자기 통로로 읽고, 알레르기 · 건강 정보의 **이름은 어느 Agent 의 프롬프트에도 싣지 않는다** (코드 필터와 화면 문구에만 쓴다). 그래서 "무관한 Agent 에 건강정보가 간다" 는 걱정은 해당하지 않는다
+- **키·몸무게** (#75) — 모델로 나가지 않는다. 성장 변화는 코드가 계산해 문장으로 만든다
 
 새로 확정되면 **해당 `docs/<도메인>/` 에 기능 문서로 고정**하고 위 목록에서 뺀다. — 보관 · 삭제 범위는 10-14 확정 → [`docs/safety/retention-v1.md`](docs/safety/retention-v1.md)

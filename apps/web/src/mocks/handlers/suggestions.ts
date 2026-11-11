@@ -2,13 +2,22 @@ import { http, HttpResponse } from "msw";
 
 import {
   draftEvent,
+  eventGeneralSuggestion,
+  eventSuggestion,
   generalSuggestions,
   mealDraft,
+  placeGeneralSuggestion,
+  placeSuggestion,
+  requestedFoodSuggestion,
+  requestedGeneralSuggestion,
+  seriesRef,
   staleSuggestion,
   suggestionDraft,
   suggestionAllergens,
   suggestionGroups,
   suggestions,
+  warnedGeneralSuggestion,
+  warnedSuggestion,
 } from "../fixtures";
 import { currentScenario } from "../scenario";
 import type {
@@ -16,7 +25,9 @@ import type {
   ApproveSuggestionsRequest,
   ApproveSuggestionsResponse,
   Precheck,
+  Reminder,
 } from "@/lib/api/types";
+import { isReminderLead, refuseReminder } from "./calendar";
 import { allergyStatus } from "./children";
 import { apiError, consentRequired, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
@@ -29,6 +40,16 @@ import { withIdempotency } from "./idempotency";
  */
 const linkedSuggestions = new Set<string>();
 
+/** 새로 넣은 일정의 번호. 넣을 때마다 다른 id 를 주려고 센다 (#723). */
+let submittedCount = 0;
+
+/**
+ * `photo_event_partial` 에서 받은 일정 넣기 요청 수와, 이미 한 번 끊었는가 (#824).
+ * 🚨 **한 번만 끊는다** — 다시 누르면 들어가야 "못 넣은 것만 다시 넣는다" 를 볼 수 있다.
+ */
+let partialSeen = 0;
+let partialCut = false;
+
 /**
  * 채택된 제안. 🚨 **일정과 다른 축이다** — 여기 있다고 캘린더에 들어간 것이 아니다.
  *    실서버는 `suggestion.status` 한 칸이고, 목은 그 칸을 이 집합으로 흉내 낸다.
@@ -38,13 +59,25 @@ const approvedSuggestions = new Set<string>();
 /** 테스트용. 목 서버는 프로세스 수명만큼 살아 있다. */
 export function resetSubmittedEvents(): void {
   linkedSuggestions.clear();
+  submittedCount = 0;
+  partialSeen = 0;
+  partialCut = false;
   approvedSuggestions.clear();
 }
 
 /**
  * 고를 수 있는 제안 — 개인화와 일반 둘 다다 (#509). 실서버의 채택 · 초안 · 제출은 `kind` 를 보지 않는다.
  */
-const pickable = [...suggestions, ...generalSuggestions];
+const pickable = [
+  ...suggestions,
+  ...generalSuggestions,
+  requestedGeneralSuggestion,
+  requestedFoodSuggestion,
+  placeSuggestion,
+  placeGeneralSuggestion,
+  eventSuggestion,
+  eventGeneralSuggestion,
+];
 
 /**
  * 초안 만들기와 제출이 함께 거는 검사. 🚨 **실서버(#241)와 같은 순서 · 같은 코드 · 같은 문구다** —
@@ -68,22 +101,33 @@ function refuseUnapproved(ids: string[]) {
  *    실서버도 `kind` 를 가리지 않고 `check.blocked` 면 뺀다.
  */
 function notBlocked(item: { id: string }): boolean {
-  return !(suggestionAllergens[item.id] ?? []).some((a) => allergyStatus(a) === "active");
+  return !allergensOf(item.id).some((a) => allergyStatus(a) === "active");
+}
+
+/**
+ * 제안에 든 알레르기 항목. `precheck_shared_item` 이면 두부 제안(`s_2`)에도 계란이 들어 있다 — 같은 식품이 든
+ * 제안 둘을 고르면 시트가 그 식품을 한 장으로 묻는지 보는 시나리오다 (#823). 픽스처를 바꾸지 않는 것은
+ * `s_2` 를 골라 다음 단계로 가는 e2e 가 여럿이라서다.
+ */
+function allergensOf(id: string): string[] {
+  const base = suggestionAllergens[id] ?? [];
+  return currentScenario() === "precheck_shared_item" && id === "s_2" ? [...base, "계란"] : base;
 }
 
 /**
  * 알레르기 사전검사. 🚨 **규칙이 만든다** — 모델은 관여하지 않는다 (최상위 §3).
  *
  * 🚨 **기준은 제안의 `allergens` 다** (#233 · 문서 §3-8). `agent` 와 무관해서 놀이 제안의
- *    간식도 걸린다. `health_safety` 에 행이 없는 항목만 묻는다 — `retracted` 는 묻지 않고,
- *    `active` 는 `notBlocked` 에서 제안째 빠졌다. 개인화 · 일반 공통이다 (#509).
+ *    간식도 걸린다. `health_safety` 에 걸리는 행이 없는 항목만 묻는다 — 괜찮았던 식품(`tolerated`)은 묻지 않고,
+ *    `active` 는 `notBlocked` 에서 제안째 빠졌다. 🚨 **내린 기록은 다시 묻는다** (#825 · 서버 PR 3 ·
+ *    `allergyStatus` 머리말). 개인화 · 일반 공통이다 (#509).
  * 🚨 **어느 제안 것인지 `suggestion_id` 로 말한다.** 안 실으면 화면은 재료 하나로 고른 것
  *    전부를 막는다 — 알레르기에서 덜 막는 쪽으로 기울 수 없기 때문이다 (`Precheck` 의 ⚠️).
  * 🚨 **채택할 때 묻는다.** 초안을 만든 뒤가 아니다 — 일정을 안 만들면 영영 안 묻게 된다.
  */
 function prechecksFor(items: Array<{ id: string }>): Precheck[] {
   return items.flatMap((s) =>
-    (suggestionAllergens[s.id] ?? [])
+    allergensOf(s.id)
       .filter((a) => allergyStatus(a) === null)
       .map((a) => ({
         code: "unknown_ingredient" as const,
@@ -131,12 +175,26 @@ export const suggestionHandlers = [
     //    근거 0건인 것이 개인화로 집계된다 (CLAUDE.md §2). 일반 추천의 근거는 **문서 행**이다 (#249).
     //    결과를 낸 Agent 는 묶음이 온다 — 일반 추천만 있어도 그 Agent 의 묶음이 있다.
     //    ⚠️ 답하는 길(#246) 전이라 `options` 는 비어 온다 — 서버와 같은 모양이다.
-    if (scenario === "scarcity" || scenario === "empty") {
+    //    `suggest_requested` 는 보호자가 놀이를 정해 물은 일반 추천이다 — 문서 근거가 비어 온다 (#597).
+    //    `suggest_requested_food` 는 재료를 정해 물은 식사 일반 추천이다 — 같은 꼴로 문서 · 메뉴 근거가 비어 온다 (#740).
+    if (
+      scenario === "scarcity" ||
+      scenario === "empty" ||
+      scenario === "suggest_requested" ||
+      scenario === "suggest_requested_food"
+    ) {
       // 🚨 등록된 알레르기(`active`)가 든 일반 추천은 빼고 내보낸다 (`notBlocked`). 사전검사만 거르면
       //    확인 시트에서 "있어요" 로 등록한 재료가 다음 화면에서 다시 서고, 이번에는 묻지도 않고 채택된다.
-      const general = (scenario === "empty" ? generalSuggestions : [generalSuggestions[0]]).filter(
-        notBlocked,
-      );
+      const general = (
+        scenario === "empty"
+          ? generalSuggestions
+          : scenario === "suggest_requested"
+            ? [requestedGeneralSuggestion]
+            : scenario === "suggest_requested_food"
+              ? [requestedFoodSuggestion]
+              : [generalSuggestions[0]]
+      ).filter(notBlocked);
+      const count = scenario === "scarcity" ? 1 : 0;
       const generalAgents = new Set(general.map((g) => g.agent));
       return HttpResponse.json({
         suggestions: [],
@@ -149,14 +207,12 @@ export const suggestionHandlers = [
             : { code: "empty", message: "조건에 맞는 추천이 없어요." },
           cautions: [],
         })),
-        // 카드의 기록 수는 그 Agent 도메인 수다 (#433 리뷰 ⑥) — 질문 카드의 scarcity.count 와 같은 값을 싣는다
-        general: withStatus(
-          general.map((g) => ({ ...g, record_count: scenario === "empty" ? 0 : 1 })),
-        ),
+        // 카드의 기록 수는 그 Agent 도메인 수다 (#433 리뷰 ⑥). 단일 Agent 목이라 합계와 우연히 같다.
+        general: withStatus(general.map((g) => ({ ...g, record_count: count }))),
         looked_at: "",
         guards: [],
         scarcity: {
-          count: scenario === "empty" ? 0 : 1,
+          count,
           question: {
             id: "q1",
             text: "요즘 실내와 야외 중 어디를 더 찾나요?",
@@ -164,6 +220,34 @@ export const suggestionHandlers = [
           },
         },
         // 🚨 일반 추천도 고르고 채택하므로 알레르기 사전검사가 걸린다 (#509 · 게이트 ㉡)
+        prechecks: prechecksFor(general),
+      });
+    }
+
+    // Agent 둘이 모두 일반 추천을 낸 응답. `scarcity.count`는 호환용 합계이고 화면은 각 카드의
+    // `record_count`를 응답 Agent 순서대로 따로 말해야 한다 (#662).
+    if (scenario === "suggest_multi_general") {
+      const recordCounts: Partial<Record<Agent, number>> = { food: 22, activity: 8 };
+      const order = asked.agents ?? ["food", "activity"];
+      const general = order.flatMap((agent) => {
+        const item = generalSuggestions.find((suggestion) => suggestion.agent === agent);
+        return item ? [{ ...item, record_count: recordCounts[agent] ?? 0 }] : [];
+      });
+      const generalAgents = new Set(general.map((item) => item.agent));
+      return HttpResponse.json({
+        suggestions: [],
+        groups: order.map((agent) => ({
+          agent,
+          merges_into_one: agent === "food",
+          notice: generalAgents.has(agent)
+            ? null
+            : { code: "empty", message: "조건에 맞는 추천이 없어요." },
+          cautions: [],
+        })),
+        general: withStatus(general),
+        looked_at: "",
+        guards: [],
+        scarcity: { count: 30, question: null },
         prechecks: prechecksFor(general),
       });
     }
@@ -288,6 +372,62 @@ export const suggestionHandlers = [
       }
     }
 
+    /**
+     * 장소가 붙은 놀이 추천 (#516). 개인화 하나(실내 물놀이장 자리)와 일반 하나에 확인 문구(`place_notice`)가 온다.
+     * 🚨 문구는 근거가 아니라서 `evidence` 는 그대로다 — 화면이 "사용한 기록" 에 넣거나 세면 안 된다.
+     * 일반 추천이 있으니 `scarcity` 도 붙는다(`suggest_mixed` 와 같은 모양).
+     */
+    if (scenario === "suggest_place") {
+      const shown = alive.map((s) => (s.id === "s_4" ? placeSuggestion : s));
+      const general = [placeGeneralSuggestion].filter(notBlocked);
+      return HttpResponse.json({
+        suggestions: withStatus(shown),
+        groups: suggestionGroups.filter((g) => shown.some((s) => s.agent === g.agent)),
+        general: withStatus(general),
+        looked_at: "",
+        guards: [],
+        scarcity: { count: 3, question: null },
+        prechecks: prechecksFor([...shown, ...general]),
+      });
+    }
+
+    /**
+     * 행사가 붙은 놀이 추천 (#681). 개인화 하나(여러 날 행사)와 일반 하나(하루짜리 행사)에 기간
+     * (`event_starts_on` · `event_ends_on`)과 행사 확인 문구가 온다. `suggest_place` 와 같은 자리를 바꾼다.
+     * 🚨 기간도 근거가 아니라서 `evidence` 는 그대로다.
+     */
+    if (scenario === "suggest_event") {
+      const shown = alive.map((s) => (s.id === "s_4" ? eventSuggestion : s));
+      const general = [eventGeneralSuggestion].filter(notBlocked);
+      return HttpResponse.json({
+        suggestions: withStatus(shown),
+        groups: suggestionGroups.filter((g) => shown.some((s) => s.agent === g.agent)),
+        general: withStatus(general),
+        looked_at: "",
+        guards: [],
+        scarcity: { count: 3, question: null },
+        prechecks: prechecksFor([...shown, ...general]),
+      });
+    }
+
+    /**
+     * 위험 경고가 붙은 놀이 추천 (#402 · #672). 개인화 하나(실내 물놀이장 자리)에 경고 하나, 일반 하나에 경고 둘.
+     * 🚨 경고는 근거가 아니라서 `evidence` 는 그대로다. 나머지 추천은 `warnings: []` 로 온다 — 빈 줄이 서면 안 된다.
+     */
+    if (scenario === "suggest_warnings") {
+      const shown = alive.map((s) => (s.id === "s_4" ? warnedSuggestion : s));
+      const general = [warnedGeneralSuggestion].filter(notBlocked);
+      return HttpResponse.json({
+        suggestions: withStatus(shown),
+        groups: suggestionGroups.filter((g) => shown.some((s) => s.agent === g.agent)),
+        general: withStatus(general),
+        looked_at: "",
+        guards: [],
+        scarcity: { count: 3, question: null },
+        prechecks: prechecksFor([...shown, ...general]),
+      });
+    }
+
     // 식품 사전에 없는 알레르기(꽃가루)는 뺄 놀이를 코드가 못 정해서 확인 문구만 낸다 (#433 리뷰 ③).
     // 글자는 서버 activity/tools/filters.allergy_cautions 와 같다
     if (scenario === "suggest_cautions") {
@@ -352,6 +492,27 @@ export const suggestionHandlers = [
     // ⚠️ 실서버의 `409 not_draft`(거절된 제안) · `409 suggestion_expired`(24시간 지남)는 여기서
     //    안 난다 — 목의 제안은 늘 `draft` 이고 만료되지 않는다. 이미 채택한 것은 서버도 그대로 200 이다.
 
+    /**
+     * 🚨 **채택할 때 알레르기를 다시 읽는다** (문서 §3-8 ②). 목록을 받은 뒤 다른 보호자가
+     *    등록한 알레르기가 든 제안이 있으면 **하나라도 걸려도 전부 거절**하고, 걸린 id 를 싣는다.
+     *    이미 채택한 것은 다시 보지 않는다(`draft` 만 본다).
+     *    서버 #835 와 같다 (`docs/api/suggestions-v1.md` §8). ⚠️ 서버는 알레르기 항목이 든 제안인데 건강정보 동의가
+     *    없으면 `403 consent_required` 를 먼저 낸다 — 목은 `consent` 시나리오가 채택 전체를 403 으로 막는 것으로 대신한다.
+     */
+    const blocked = picked
+      .filter((s) => !approvedSuggestions.has(s.id) && !notBlocked(s))
+      .map((s) => s.id);
+    if (blocked.length > 0) {
+      return apiError(
+        409,
+        "allergen_blocked",
+        "알레르기로 등록된 항목이 들어 있어 고를 수 없어요",
+        {
+          suggestion_ids: blocked,
+        },
+      );
+    }
+
     for (const id of ids) approvedSuggestions.add(id);
 
     const response: ApproveSuggestionsResponse = {
@@ -395,6 +556,29 @@ export const suggestionHandlers = [
       .map((id) => pool.find((s) => s.id === id))
       .filter((s): s is (typeof pool)[number] => s !== undefined);
 
+    /**
+     * 🚨 **채택한 뒤에 등록된 알레르기를 다시 본다** (서버 #859). ⚠️ 서버 PR 보다 목이 먼저다 —
+     *    `docs/api/suggestions-v1.md` §8 은 서버 PR 이 머지될 때까지 이 틈을 "남은 일" 로 적고 있다.
+     *    채택은 새로고침해도 남고 "일정으로 만들기" 는 나중에 눌러도 되어서, 그사이 다른 보호자가 등록한
+     *    알레르기를 채택 검사는 보지 못한다. 판정은 채택과 같다 — 하나라도 걸리면 초안을 하나도 만들지 않고
+     *    걸린 id 를 요청 순서대로 싣는다. food 를 한 장으로 묶기 **전에** 본다(어느 제안인지 id 로 말해야 한다).
+     *    오류 순서도 서버와 같다: 400 → 404 · 422 → 403 `consent_required` → 409 `allergen_blocked`.
+     *    알레르기 항목이 없는 제안뿐이면 건강정보를 읽지 않아 `consent` 시나리오에서도 막지 않는다.
+     */
+    const withAllergens = chosen.filter((s) => allergensOf(s.id).length > 0);
+    if (withAllergens.length > 0) {
+      if (currentScenario() === "consent") return consentRequired("child_health");
+      const blocked = withAllergens.filter((s) => !notBlocked(s)).map((s) => s.id);
+      if (blocked.length > 0) {
+        return apiError(
+          409,
+          "allergen_blocked",
+          "알레르기로 등록된 항목이 들어 있어 일정으로 만들 수 없어요",
+          { suggestion_ids: blocked },
+        );
+      }
+    }
+
     const food = chosen.filter((s) => s.agent === "food");
     const rest = chosen.filter((s) => s.agent !== "food");
 
@@ -423,10 +607,40 @@ export const suggestionHandlers = [
     withIdempotency(async ({ request }) => {
       await networkDelay();
       const body = (await request.json()) as {
-        event: { title: string; starts_at: string | null; all_day: boolean };
+        event: {
+          title: string;
+          starts_at: string | null;
+          ends_at?: string | null;
+          all_day: boolean;
+        };
         items: Array<{ item_id: string | null; item_name: string }>;
         suggestion_ids?: string[];
+        reminder?: { lead: unknown } | null;
+        repeat?: { weekdays?: number[]; until?: string; label?: string };
       };
+
+      // 🚨 08 사진에서 일정 여럿을 한 번에 넣다가 두 번째만 실패하는 경우 (#824). 서버가 저장하기 전에
+      //    죽은 것처럼 500 이다 — `withIdempotency` 는 실패를 기억하지 않아서 같은 키로 다시 보내면 여기를 다시 지난다.
+      if (currentScenario() === "photo_event_partial" && !partialCut && ++partialSeen === 2) {
+        partialCut = true;
+        return apiError(500, "internal_error", "잠시 후 다시 시도해 주세요");
+      }
+
+      // 🚨 반복 일정(#738)은 요일과 끝 날짜가 다 있어야 한다. 문구는 서버 값이라 되돌려 받지 않는다 (`RepeatRequest`).
+      //    회차로 펼치는 것은 실서버 몫이라(#761) 목은 첫 회차 한 건만 돌려준다 — 서버 응답도 `event` 는 첫 회차고 `series` 가 붙는다.
+      if (
+        body.repeat &&
+        (!body.repeat.weekdays?.length || !body.repeat.until || "label" in body.repeat)
+      ) {
+        return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+          fields: ["repeat"],
+        });
+      }
+      // 🚨 반복 규칙이 성립하지 않으면 서버는 422 `invalid_repeat` 다 (#761). 카드에서 고칠 수 없는 실패라
+      //    화면이 "대화로 다시 말해 주세요" 를 붙이는지 보려고 시나리오로 만든다.
+      if (body.repeat && currentScenario() === "repeat_invalid") {
+        return apiError(422, "invalid_repeat", "반복은 첫 회차부터 90일까지만 돼요");
+      }
 
       // 🚨 일자 없이 제출되면 안 된다. 화면이 막지만 계약도 막는다 (규칙은 코드가 진다).
       //    실서버는 스키마가 `starts_at` 을 필수로 걸어 공통 검증 오류로 낸다.
@@ -434,6 +648,33 @@ export const suggestionHandlers = [
         return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
           fields: ["event.starts_at"],
         });
+      }
+
+      // 실서버 `SubmitEventBody._ends_after_starts` 와 같다. 08 시트가 읽은 끝을 실어 보낸다 (#723).
+      // 모델 검증이라 실서버는 공통 검증 오류(400 · `fields: ["event"]`)로 낸다 (`api/errors.py`).
+      const endsAt = body.event.ends_at ?? null;
+      if (endsAt !== null && Date.parse(endsAt) <= Date.parse(body.event.starts_at)) {
+        return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+          fields: ["event"],
+        });
+      }
+
+      // 🚨 알림이 틀리면 **일정도 넣지 않는다** — 서버는 저장 전에 검사한다 (#603).
+      let reminder: Reminder | null = null;
+      if (body.reminder) {
+        const { lead } = body.reminder;
+        if (!isReminderLead(lead)) {
+          return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+            fields: ["reminder.lead"],
+          });
+        }
+        // 🚨 반복 일정은 첫 회차 하나로 거절하지 않는다 (#761). 서버는 지난 회차만 건너뛰고 전 회차가 다 지났을 때만
+        //    422 다 — 목은 회차를 펼치지 않아서 반복이면 시각 검사를 하지 않는다 (종류 검사는 위에서 했다).
+        if (!body.repeat) {
+          const wrong = refuseReminder(lead, body.event.starts_at, body.event.all_day);
+          if (wrong) return wrong;
+        }
+        reminder = { lead };
       }
 
       const sids = [...new Set(body.suggestion_ids ?? [])];
@@ -445,6 +686,28 @@ export const suggestionHandlers = [
       if (sids.some((sid) => linkedSuggestions.has(sid))) {
         return apiError(409, "already_confirmed", "이미 캘린더에 넣은 제안이에요");
       }
+
+      /**
+       * 🚨 **초안을 만든 뒤에 등록된 알레르기를 제출이 다시 본다** (서버 #902). ⚠️ 서버 PR 보다 목이 먼저다.
+       *    05 승인 시트는 열어 둔 채 몇 시간 뒤에도 넣을 수 있고, 초안이 여러 장이면 한 장씩 넣는 사이에도 시간이
+       *    흐른다. 판정 · 응답은 초안 만들기와 같다 — 하나라도 걸리면 일정을 넣지 않고 걸린 id 를 요청 순서대로
+       *    싣는다. 오류 순서도 서버와 같다: `already_confirmed` 다음에 403 `consent_required` → 409 `allergen_blocked`.
+       *    알레르기 항목이 없는 제안뿐이면(직접 만든 일정 포함) 건강정보를 읽지 않는다.
+       *    `withIdempotency` 는 실패를 기억하지 않아서, 같은 키로 다시 보내면 여기를 다시 지난다 — 서버와 같다.
+       */
+      const withAllergens = sids.filter((sid) => allergensOf(sid).length > 0);
+      if (withAllergens.length > 0) {
+        if (currentScenario() === "consent") return consentRequired("child_health");
+        const blocked = withAllergens.filter((sid) => !notBlocked({ id: sid }));
+        if (blocked.length > 0) {
+          return apiError(
+            409,
+            "allergen_blocked",
+            "알레르기로 등록된 항목이 들어 있어 일정으로 만들 수 없어요",
+            { suggestion_ids: blocked },
+          );
+        }
+      }
       for (const sid of sids) linkedSuggestions.add(sid);
 
       /**
@@ -452,9 +715,13 @@ export const suggestionHandlers = [
        *    "확인하고 넣은 것" 과 "들어간 것" 이 달라져 승인 게이트가 거짓말이 된다.
        * 🚨 `items` 는 **최종 목록**이다 — 배열에서 빠진 것은 저장되지 않는다 (#122).
        */
+      submittedCount += 1;
       const event = draftEvent({
+        // 🚨 넣을 때마다 다른 id 다 — 08 은 이 id 를 공지 항목에 잇는데, 같으면 "한 일정을 두 항목에" 로 막힌다.
+        id: `e_new_${submittedCount}`,
         title: body.event.title,
         starts_at: body.event.starts_at,
+        ends_at: endsAt,
         all_day: body.event.all_day,
         // 실서버와 같다 (#241) — 제안에서 온 일정만 `agent` 이고, 출처 참조는 이 경로가 채우지 않는다.
         created_by: sids.length > 0 ? "agent" : "caregiver",
@@ -465,6 +732,18 @@ export const suggestionHandlers = [
           is_prepared: false,
           prepared_at: null,
         })),
+        // 🚨 제출한 보호자 본인의 알림만 걸린다 — 응답도 그것만 싣는다.
+        reminder,
+        // 반복이면 첫 회차에 묶음이 붙는다 (서버 #761). 반복이 아니면 키 자체가 없다.
+        ...(body.repeat?.weekdays && body.repeat.until
+          ? {
+              series: seriesRef(
+                `series_new_${submittedCount}`,
+                body.repeat.weekdays,
+                body.repeat.until,
+              ),
+            }
+          : {}),
       });
 
       // 🚨 제안의 `status` 를 싣지 않는다 — 제출은 상태를 바꾸지 않는다 (#206).

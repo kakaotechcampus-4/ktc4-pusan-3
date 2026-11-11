@@ -4,13 +4,12 @@
 04 에서 "저장됨" 으로 본 기록과 07 기록 탭의 기록이 같은 모양이 된다.
 
 🚨 건강 관찰은 `ObservationHealthOut` 으로 바꾼다 — `subject` · `polarity` · `affinity` 키가
-   아예 없다.
-   목록 · 상세 · 캘린더는 `VISIBLE_DOMAINS` 가 앞에서 걸러서 여기까지 오지 않는다 (#259).
-   여기까지 오는 건 04 run 의 `saved` 뿐이다.
+   아예 없다. 목록 · 상세 · 캘린더(#764) · 04 run 의 `saved` · 지난 대화가 모두 이 모양을 받는다.
 """
 
 import uuid
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
@@ -127,11 +126,15 @@ def _domain_fields(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def _field_value(value: Any) -> Any:
-    """enum 은 값으로, 시각은 서비스 시간대(KST)로.
+    """enum 은 값으로, 시각은 서비스 시간대(KST)로, 체온은 숫자로.
 
-    🚨 DB 는 timestamptz 를 UTC 로 돌려준다(health `observed_time`). 그대로 실으면 보호자가 말한
-       밤 9시가 `…T12:00:00Z` 로 보인다 (#471 검토).
+    🚨 DB 는 timestamptz 를 UTC 로 돌려준다(health `observed_time` · `measured_at`). 그대로 실으면
+       보호자가 말한 밤 9시가 `…T12:00:00Z` 로 보인다 (#471 검토).
+    🚨 numeric(3,1) 은 Decimal 로 온다(health `temperature`). JSON 으로 바꾸면 "38.5" 글자가 된다 —
+       소수 첫째 자리까지라 float 로 옮겨도 값이 바뀌지 않는다 (#551).
     """
     if isinstance(value, datetime):
         return value.astimezone(KST)
+    if isinstance(value, Decimal):
+        return float(value)
     return value.value if hasattr(value, "value") else value

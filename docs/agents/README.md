@@ -44,7 +44,7 @@ memory-agent-v1.md
 
 **다만 기피 대상 자체가 후보로 나오면 출력에서 거절한다.** 근거로 쓰는 것과 그 활동을 다시 내지 않는 것은 별개다. Food 는 영양 때문에 기피 식품을 내야 할 때가 있지만 Activity 에는 그런 대항 요인이 없고, 모델에게 기피 근거를 주고 안 내기를 기대하는 것은 프롬프트에 맡기는 것이라 보장이 아니다. 기피 근거와 `merge_key` 가 같은 후보는 출력 tool 이 거절한다 — 풀에서 지우는 제거 필터가 아니라 출력 검증이라 위 문장과 부딪히지 않는다. 자리는 [activity/activity-agent-v1.md](activity/activity-agent-v1.md) §3-3 출력 검증이고, 공통 규약에는 [shared/Tool_공통.md](shared/Tool_공통.md) §5-5 가 원칙("후보를 지우는 공통 규칙은 안전뿐")과 Food·Activity 대비를 적어 두었다.
 
-**승인된 추천은 `observation_activity`로 간다.** 보호자가 승인하면 Memory Agent가 `suggestion`을 관찰로 재구조화해 저장하고, feedback(`child_liked`/`child_disliked`/`not_acted`)이 그 관찰의 `polarity`(+1/−1/0)를 갱신한다. `not_acted`는 "안 했다"가 아니라 "반응이 딱히 없음"이다.
+**승인된 추천은 `observation_activity`로 간다.** 보호자가 승인하면 Memory Agent가 `suggestion`을 관찰로 재구조화해 저장하고, feedback(`child_liked`/`child_disliked`/`not_acted`)이 그 관찰의 `polarity`(+1/−1/0)를 갱신한다. `not_acted`는 "안 했다"가 아니라 "반응이 딱히 없음"이다. 🚧 **이 경로는 아직 구현 전이다** — 지금은 채택 · feedback 을 `suggestion` 행에 저장만 하고 관찰 · `polarity` 는 바꾸지 않는다(`PATCH …/feedback` 설명: "기억은 바꾸지 않는다").
 
 **근거는 `suggestion_evidence` 테이블에 행으로 쌓는다.** `PK(suggestion_id, source_kind, source_id)`. `source_kind`가 아이 기록(`observation_*`·`profile_affinity` 등)이면 개인화 근거로 세고, 문서 행(`activity_doc`)이면 참고로만 센다. `kind='personalized'`인데 아이 기록 행이 0이면 버그다. `kind='general'`은 아이 기록 0행이 정상이고, 문서 행까지 0행인 것만 따로 센다.
 
@@ -173,6 +173,8 @@ app/agents/activity/
 | `common/ports.py` · `common/gate.py` | 생일 · 동의 포트 · `SafetyLookupError` · `Gate` · `read_safety_basis()` |
 | `common/evidence.py` | `rank_evidence()` |
 | `common/suggestion.py` · `common/readout.py` | `SuggestionDraft` · `Readout` |
+| `common/food_safety.py` | 음식 이름 · 메뉴 행의 알레르기 · 연령 판정(`filter_food_safety` · `resolve_safety` · `menu_codes`). Food 와 Growth(스캔)가 쓰고, Activity 는 `foods` 칸의 알레르기 항목 표시(`menu_codes`)에 쓴다(#582). 행 · 등록은 Protocol(`MenuRow` · `SafetyRow`)로 받는다 |
+| `common/food_words.py` | 글에 든 음식 낱말을 등록 알레르기 · 연령 규칙과 대조(`check_foods` · `mentions_blocked_food`). Food 의 섭취 확인 · 추천 이유 검사와 Growth 음식 용어 스캔이 쓴다. Activity 는 `foods` 칸(`ITEM`) · 음식 활동 문장(`SENTENCE`) · 개인화 이유 검사 · 요청 글 안내에 쓴다 — `ITEM` 은 `reference/known_foods.yaml` 의 흔한 재료도 읽는다 (#582) |
 
 `ToolResult`와 `ErrorCode`는 [shared/Tool_공통.md](shared/Tool_공통.md) §1의 어휘 하나로 통일돼 있다. Agent 전용 코드가 필요하면 `common` 것을 상속해서 얹는다 — `memory/result.py`가 선례다.
 

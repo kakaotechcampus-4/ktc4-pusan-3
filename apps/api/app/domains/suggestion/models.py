@@ -1,9 +1,9 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, ForeignKey, Index, Text, func
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,6 +33,15 @@ class SuggestionStatus(enum.StrEnum):
     APPROVED = "approved"
     REJECTED = "rejected"
     EXPIRED = "expired"
+
+
+class SuggestionMealSlot(enum.StrEnum):
+    """식사 추천의 끼니. Food Agent 의 `MealSlot` 과 같은 값이다 (#898)."""
+
+    BREAKFAST = "breakfast"
+    LUNCH = "lunch"
+    DINNER = "dinner"
+    SNACK = "snack"
 
 
 class SuggestionFeedback(enum.StrEnum):
@@ -65,6 +74,16 @@ class Suggestion(Base, UUIDPk, Timestamps):
     allergens: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     # 일정으로 만들 때 준비물(event_item.item_name) 하나씩. 알레르기 판단에는 쓰지 않는다.
     items: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
+    # 장소가 붙은 추천의 확인 문구(공공데이터 기준일 · 운영 여부). Agent 가 코드 문구로 만든다.
+    # 근거가 아니다 — 화면이 제안 문장 아래 한 줄로 세운다 (#516). 장소가 없으면 비어 있다
+    place_notice: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 그 추천의 위험 경고 문구(위험 용어 사전의 축 문구). Agent 가 코드 문구로 싣는다.
+    # 근거가 아니다 — 화면이 그 추천 카드에 글자 그대로 보인다 (#402). 경고가 없으면 빈 배열
+    warnings: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
+    # 행사가 붙은 추천의 행사 기간. 화면이 확인 문구 줄에 날짜로 세운다 — 날짜 없이 이름만
+    # 나가면 지난 행사인지 알 수 없다 (#516). 근거가 아니다. 행사가 없으면 비어 있다
+    event_starts_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    event_ends_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[SuggestionStatus] = mapped_column(
         enum_col_py(SuggestionStatus, name="suggestion_status"),
         nullable=False,
@@ -78,6 +97,15 @@ class Suggestion(Base, UUIDPk, Timestamps):
     # 추천을 만든 입력 run. 05 가 "후보 보기 →" 로 연 run 의 추천을 찾는다.
     # run 밖에서 만든 행은 비어 있다
     run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 보호자가 놀이를 정해 물은 Activity 일반 추천이다("물놀이 뭐 하지?"). 기준이 그 요청이라
+    # 문서 행 근거 없이 저장되고, 05 도 문서 근거 없이 내보낸다. 저장 검사가 Activity 일반 추천일
+    # 때만 켠다 — 문서 근거가 검수에서 빠진 일반 추천과 가를 수 있게 행에 남긴다 (#597 리뷰)
+    requested: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.false())
+    # 식사 추천의 끼니. Food 만 채운다. 근거가 아니다 — 일정 초안 제목("아침 식사")에만 쓴다 (#898).
+    # Food 가 아닌 추천 · 이 칸이 생기기 전의 행은 비어 있다
+    meal_slot: Mapped[SuggestionMealSlot | None] = mapped_column(
+        enum_col_py(SuggestionMealSlot, name="suggestion_meal_slot"), nullable=True
+    )
 
 
 class SuggestionEvent(Base):

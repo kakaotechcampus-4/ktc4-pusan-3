@@ -1,11 +1,13 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useRouter, useSearchParams } from "next/navigation";
+import { josa } from "es-hangul";
+import { ArrowLeft } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 
 import { ApprovalSheet } from "@/components/approval-sheet";
-import { SafetyCheckSheet } from "@/components/safety-check-sheet";
+import { SafetyCheckSheet, type SafetyResult } from "@/components/safety-check-sheet";
 import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
@@ -16,7 +18,10 @@ import { Banner } from "@/components/ui/banner";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
+import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import { IconButtonLink } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
 import { Screen } from "@/components/ui/screen";
 import { Spinner } from "@/components/ui/spinner";
 import { phaseOf, Swap } from "@/components/ui/swap";
@@ -39,6 +44,9 @@ import {
   type SuggestionsResponse,
 } from "@/lib/api";
 import { useEnterMotion } from "@/lib/motion";
+import { scarcityCopy, type AgentRecordCount } from "@/lib/scarcity-copy";
+import { suggestionsTour } from "@/lib/tour/screens/suggestions";
+import { BACK } from "@/lib/view-transition";
 
 /**
  * 05 제안 후보.
@@ -62,7 +70,7 @@ import { useEnterMotion } from "@/lib/motion";
  * 🚨 **실패는 "묶음이 없는 Agent" 다** (#249). 0개로 끝난 Agent 도 안내(`notice`)와 함께 묶음이 오고,
  *    이어서 할 수 없는 Agent(`cannot_resume`)도 안내만 온다 — 둘 다 다시 시도를 두지 않는다.
  *    눌러도 같은 응답이 온다.
- * ⚠️ 서버가 `groups` 를 안 보내던 응답(예전 서버)은 예전 규칙으로 본다. 프론트가 또래 기준 추천을
+ * ⚠️ 서버가 `groups` 를 안 보내던 응답(예전 서버)은 예전 규칙으로 본다. 프론트가 일반 추천을
  *    지어내지 않는다.
  */
 export default function SuggestionsPage() {
@@ -90,7 +98,6 @@ function isPromptKey(value: string | null): value is PromptKey {
 
 function SuggestionsScreen() {
   const childId = useChildId();
-  const router = useRouter();
   const searchParams = useSearchParams();
 
   const runId = searchParams.get("run");
@@ -103,6 +110,15 @@ function SuggestionsScreen() {
    */
   const rawPromptKey = searchParams.get("prompt");
   const promptKey = isPromptKey(rawPromptKey) ? rawPromptKey : null;
+  /**
+   * 위 화살표가 돌아갈 곳 (#683). 🚨 **주소로 정한다** — `router.back()` 은 어디서 왔는지 모르고,
+   *    기기 뒤로가기는 웹뷰 히스토리라 따로 있다 (apps/web CLAUDE.md §3 라우팅).
+   *    03 홈 버튼은 `prompt` 를 싣고 오고, 고른 영역이 없으면 안내 카드가 "홈에서 고르면" 이라고 말한다 —
+   *    둘은 홈이다. 그 밖의 입구(04 "후보 보기" · "이것도 도와드릴까요?" · 부분 실패 "다시 준비하기")는
+   *    전부 04 대화다. ⚠️ 날짜(`?date=`)는 싣지 않는다 — 05 로 오는 주소에 날짜가 없다.
+   */
+  const fromHome = rawPromptKey !== null || agents.length === 0;
+  const backHref = fromHome ? `/child/${childId}/home` : `/child/${childId}/chat`;
 
   /**
    * 🚨 **여러 개 고를 수 있다.** 고른 것을 한 번에 초안으로 바꾼다 —
@@ -126,6 +142,30 @@ function SuggestionsScreen() {
    *    알레르기가 확인된 제안은 **채택 자체를 하지 않는다** (`safety-check-sheet.tsx`).
    */
   const [checkingSafety, setCheckingSafety] = useState(false);
+  /**
+   * 알레르기 때문에 고르지 못했다는 안내 (#823). 🚨 **실패가 아니다** — 다시 시도를 두지 않는다.
+   *    예전에는 고른 것이 전부 막히면 시트만 닫히고 선택이 조용히 풀려서, 보호자는 무슨 일이
+   *    일어났는지 모른 채 목록으로 돌아왔다.
+   *    - `all_blocked`: 시트에서 고른 것이 전부 막혔다. `items` 는 알레르기로 답한 식품
+   *    - `approve_blocked`: 채택 API 가 `409 allergen_blocked` 로 거절했다 — 목록을 받은 뒤 그사이 등록된 알레르기다
+   */
+  const [safetyNotice, setSafetyNotice] = useState<
+    | { kind: "all_blocked"; agents: Agent[]; items: string[] }
+    | { kind: "approve_blocked"; agents: Agent[] }
+    | null
+  >(null);
+  /**
+   * 채택한 뒤에 알레르기로 막혀 일정으로 만들 수 없는 제안 (#859 · 승인 시트에서 넣다가 막힌 것도 · #902). 🚨 **채택을 풀지 않는다** — 서버에서 계속
+   *    `approved` 고 되돌리는 길이 없다. "고른 것" 에는 남고, 초안 만들기에 싣는 id 에서만 뺀다.
+   *    같은 id 로 다시 누르면 같은 409 다.
+   */
+  const [draftBlockedIds, setDraftBlockedIds] = useState<string[]>([]);
+  /**
+   * 승인 시트에서 캘린더에 넣은 제안 (#902 리뷰). 🚨 다시 만들 때 뺀다 — 서버의 초안 만들기는 이미 넣은 제안을 막지
+   *    않아서, 빼지 않으면 그 제안이 초안으로 다시 서고 넣으면 `409 already_confirmed` 다. ⚠️ 화면 안에서만 산다 —
+   *    새로고침하면 되살린 채택에 다시 섞인다 (서버가 채택 목록에 "넣었는가" 를 싣지 않는다).
+   */
+  const [putIds, setPutIds] = useState<string[]>([]);
   const approving = useSheetTarget<CreateEventDraftsResponse>();
 
   const suggestions = useQuery({
@@ -158,6 +198,22 @@ function SuggestionsScreen() {
   const createDrafts = useMutation({
     mutationFn: (ids: string[]) => createEventDrafts(childId, { suggestion_ids: ids }),
     onSuccess: (result) => approving.show(result),
+    /**
+     * 🚨 **`409 allergen_blocked` 는 채택한 뒤에 등록된 알레르기다** (서버 #859 · 문서 §3-8).
+     *    채택은 새로고침해도 남고 일정은 나중에 만들어도 되어서, 그사이 다른 보호자가 등록한 알레르기를
+     *    초안 만들기가 다시 본다. 하나라도 걸리면 초안을 하나도 만들지 않으므로, 걸린 제안만 빼고 다시
+     *    누르게 한다 — 같은 id 로 다시 누르면 같은 409 다. ⚠️ 서버가 어느 제안인지 안 실으면 보낸 것
+     *    전부를 뺀다 (알레르기에서 덜 막는 쪽으로 기울 수 없다 · 채택의 409 와 같다).
+     */
+    onError: (error, ids) => {
+      if (!isApiError(error, "allergen_blocked")) return;
+      const listed = error.detail?.suggestion_ids;
+      const blocked =
+        Array.isArray(listed) && listed.length > 0 && listed.every((id) => typeof id === "string")
+          ? (listed as string[])
+          : ids;
+      setDraftBlockedIds((prev) => [...new Set([...prev, ...blocked])]);
+    },
   });
 
   /**
@@ -169,6 +225,24 @@ function SuggestionsScreen() {
   const approve = useMutation({
     mutationFn: (ids: string[]) => approveSuggestions(childId, { suggestion_ids: ids }),
     onSuccess: (result) => setApprovedIds(result.suggestions.map((s) => s.id)),
+    /**
+     * 🚨 **`409 allergen_blocked` 는 서버가 알레르기 필터를 다시 건 결과다** (문서 §3-8).
+     *    목록을 받은 뒤 다른 보호자가 알레르기를 등록했다. 하나라도 걸리면 서버는 **전부** 거절하므로
+     *    아무것도 채택되지 않았다. 걸린 제안만 선택에서 빼고 다시 고르게 한다 — 같은 선택으로
+     *    다시 누르면 같은 409 다. ⚠️ 서버가 어느 제안인지 안 실으면 고른 것 전부를 뺀다
+     *    (알레르기에서 덜 막는 쪽으로 기울 수 없다).
+     */
+    onError: (error, ids) => {
+      if (!isApiError(error, "allergen_blocked")) return;
+      const listed = error.detail?.suggestion_ids;
+      // 🚨 빈 배열도 "어느 제안인지 모른다" 다 — 아무것도 안 빼면 다시 눌러도 같은 409 에 갇힌다.
+      const blocked =
+        Array.isArray(listed) && listed.length > 0 && listed.every((id) => typeof id === "string")
+          ? (listed as string[])
+          : ids;
+      setSelectedIds((prev) => prev.filter((id) => !blocked.includes(id)));
+      setSafetyNotice({ kind: "approve_blocked", agents: agentsOf(blocked) });
+    },
   });
 
   const data = suggestions.data;
@@ -185,6 +259,7 @@ function SuggestionsScreen() {
 
   /** 🚨 물을 것이 있으면 **묻고 나서** 채택한다. 없으면 바로 채택한다. */
   function startApprove() {
+    setSafetyNotice(null);
     if (prechecks.length > 0) setCheckingSafety(true);
     else approve.mutate(selectedIds);
   }
@@ -193,7 +268,7 @@ function SuggestionsScreen() {
    * 확인이 끝났다. 🚨 **알레르기가 걸린 제안은 빼고** 나머지만 채택한다 —
    *    `null` 은 "어느 제안인지 모른다" 라서 고른 것 전부를 뺀다(= 채택할 것이 없다).
    */
-  function afterSafety(blockedSuggestionIds: string[] | null) {
+  function afterSafety({ blockedSuggestionIds, allergyItems }: SafetyResult) {
     setCheckingSafety(false);
     const keep =
       blockedSuggestionIds === null
@@ -201,22 +276,46 @@ function SuggestionsScreen() {
         : selectedIds.filter((id) => !blockedSuggestionIds.includes(id));
     setSelectedIds(keep);
     if (keep.length > 0) approve.mutate(keep);
+    // 🚨 고른 것이 전부 막혔으면 **말한다** (#823). 조용히 선택만 풀면 보호자는 이유를 모른다.
+    else
+      setSafetyNotice({ kind: "all_blocked", agents: agentsOf(selectedIds), items: allergyItems });
   }
   const visible = data?.suggestions ?? [];
   /**
-   * 또래 기준 일반 추천. 🚨 **`scarcity` 가 있을 때만 그린다** — 서버도 일반 추천이 있을 때만
+   * 일반 추천. 🚨 **`scarcity` 가 있을 때만 그린다** — 서버도 일반 추천이 있을 때만
    * `scarcity` 를 붙인다. 근거가 부족한 후보가 개인화 **대신** 나간 것이라, 개인화와 같은 화면에
-   * 설 때도 카드 라벨과 점선이 "또래 기준" 을 말한다 (CLAUDE.md §2 · #512 리뷰).
+   * 설 때도 카드 라벨과 점선이 "일반 추천" 임을 말한다 (CLAUDE.md §2 · #512 리뷰).
    * 서버가 아직 `general` 을 안 보내면 빈 배열이고, 화면은 질문 1개만 그린다.
    */
   const scarcity = data?.scarcity ?? null;
   const general = scarcity ? (data?.general ?? []) : [];
+  /**
+   * 일반 추천을 낸 Agent별 기록 수. 같은 Agent가 추천을 여러 장 내도 안내에는 한 번만 쓰고,
+   * 서버 응답의 Agent 순서를 유지한다. 정상 문구는 합계인 `scarcity.count`를 읽지 않는다 (#662).
+   */
+  const generalRecords = general.reduce<{
+    seen: Set<Agent>;
+    records: AgentRecordCount[];
+  }>(
+    (result, item) => {
+      if (!result.seen.has(item.agent)) {
+        result.seen.add(item.agent);
+        result.records.push({ label: domainLabel(item.agent), count: item.record_count });
+      }
+      return result;
+    },
+    { seen: new Set<Agent>(), records: [] },
+  ).records;
   /**
    * 고를 수 있게 그린 제안 전부 — 개인화가 먼저, 일반이 뒤다 (화면에 선 순서).
    * 🚨 **id 와 Agent 만 꺼낸다.** 두 타입을 한 배열의 원소로 섞으면 근거를 읽는 자리에서
    *    둘을 가를 수 없게 된다 — 여기서 쓰는 것은 고른 개수 · 채택 상태뿐이다.
    */
   const pickable = [...visible, ...general].map(({ id, agent, status }) => ({ id, agent, status }));
+  /** 제안 id 들이 속한 Agent. 🚨 순서는 화면에 선 순서다. 안내 카드의 머리 라벨에 쓴다. */
+  function agentsOf(ids: string[]): Agent[] {
+    return [...new Set(pickable.filter((s) => ids.includes(s.id)).map((s) => s.agent))];
+  }
   /**
    * 🚨 **새로고침해도 채택은 남는다** (#249). 서버가 그 run 의 채택한 추천도 돌려주므로 응답의
    *    `status` 로 되살린다 — 다시 고르게 그리면 채택 API 가 `not_draft` 로 거절한다.
@@ -262,22 +361,61 @@ function SuggestionsScreen() {
   const consentBlocked = isApiError(suggestions.error, "consent_required")
     ? suggestions.error
     : null;
+  /**
+   * 채택이 `403 consent_required` 로 막혔다 (#835). 알레르기 항목이 든 제안은 서버가 건강정보를 다시 읽어야
+   *    채택할 수 있어서, 목록을 받은 뒤 동의를 거뒀으면 여기서 막힌다. 🚨 **일반 실패 카드로 그리지 않는다** —
+   *    다시 눌러도 같은 403 이다. 목록이 막혔을 때와 같은 동의 카드로 가는 곳을 말한다.
+   */
+  const approveConsentBlocked = isApiError(approve.error, "consent_required")
+    ? approve.error
+    : null;
+  /**
+   * 초안 만들기가 `403 consent_required` 로 막혔다 (#859). 알레르기 항목이 든 제안은 서버가 건강정보를 다시 읽어야
+   *    초안을 만든다 — 채택한 뒤 동의를 거뒀으면 여기서 막힌다. 채택의 403 과 같은 동의 카드로 그린다.
+   */
+  const draftConsentBlocked = isApiError(createDrafts.error, "consent_required")
+    ? createDrafts.error
+    : null;
+  /** 채택한 것 중 알레르기로 일정이 될 수 없게 된 것 (#859). 🚨 "고른 것" 에는 그대로 남는다. */
+  const draftBlocked = (chosenIds ?? []).filter((id) => draftBlockedIds.includes(id));
+  /** 초안 만들기에 싣는 id. 비면 일정으로 만들 것이 없다 — 묻지도 버튼을 세우지도 않는다. */
+  const draftIds = (chosenIds ?? []).filter(
+    (id) => !draftBlockedIds.includes(id) && !putIds.includes(id),
+  );
+  /** 이번 화면에서 넣은 것이 있고 더 만들 것이 없다 — 단계를 지우고 그 사실만 말한다. */
+  const allPut = chosenIds !== null && draftIds.length === 0 && putIds.length > 0;
 
   return (
-    <Screen className="gap-5">
-      <header>
-        <PageTitle>제안 후보</PageTitle>
-        {/* 🚨 looked_at 앞에 가운뎃점을 하나 더 붙이지 않는다 — 이미 점으로 나뉜 메타
-            스트립이고, 띄운 가운뎃점은 줄당 하나까지다 (문서 §4). */}
-        {/* 서버가 아직 무엇을 봤는지 내지 않으면 비어 온다 — 빈 줄을 그리지 않는다 (#249). */}
-        {/* ⚠️ 받는 동안 이 줄의 자리를 잡지 않는다. 지금 서버는 늘 빈 값을 보내서(`routers/suggestions.py`),
-            자리를 잡으면 받는 순간 회색 줄 하나가 생겼다 사라진다. 서버가 채우기 시작하면 그때 잡는다
-            (디자인 시스템 §7 "빈 상태 · 스켈레톤"). */}
-        {data?.looked_at ? (
-          <p className="text-body-sm text-ink-muted mt-2">{data.looked_at}</p>
-        ) : null}
-      </header>
-
+    <Screen
+      className="gap-5"
+      topBar={
+        // 🚨 **머리를 붙여 둔다** (#683). 후보가 Agent 당 셋에 일반 카드 · 요약 · 질문까지 서서 화면이 길고,
+        //    흐름 화면이라 네비가 없다 — 돌아가는 길이 본문에 있으면 스크롤 몇 번에 화면 밖으로 밀린다.
+        // 🚨 줄 전체를 `-ml-3` 로 민다 (44px 원 안의 아이콘이 왼쪽 기준선에 맞게 · 04 대화와 같다).
+        <header className="-ml-3 flex items-center gap-1">
+          <IconButtonLink
+            href={backHref}
+            label={fromHome ? "홈으로 돌아가기" : "대화로 돌아가기"}
+            {...BACK}
+          >
+            <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+          </IconButtonLink>
+          <div className="min-w-0 flex-1">
+            <PageTitle>추천 후보</PageTitle>
+            {/* 🚨 looked_at 앞에 가운뎃점을 하나 더 붙이지 않는다 — 이미 점으로 나뉜 메타
+                스트립이고, 띄운 가운뎃점은 줄당 하나까지다 (문서 §4). */}
+            {/* 서버가 아직 무엇을 봤는지 내지 않으면 비어 온다 — 빈 줄을 그리지 않는다 (#249). */}
+            {/* ⚠️ 받는 동안 이 줄의 자리를 잡지 않는다. 지금 서버는 늘 빈 값을 보내서(`routers/suggestions.py`),
+                자리를 잡으면 받는 순간 회색 줄 하나가 생겼다 사라진다. 서버가 채우기 시작하면 그때 잡는다
+                (디자인 시스템 §7 "빈 상태 · 스켈레톤"). */}
+            {data?.looked_at ? (
+              <p className="text-caption text-ink-subtle">{data.looked_at}</p>
+            ) : null}
+          </div>
+          <TourHelpButton tour={suggestionsTour} />
+        </header>
+      }
+    >
       {/* 🚨 배너는 화면 최상단 **한 곳**에만 둔다 (문서 §7). guard 가 여럿이어도 배너는 하나고,
           안에서 줄로 나눈다. 도메인 이름은 `blocked_agents` 에서 만든다 — 문구에 박지 않는다.
           🚨 **`danger` 다** — guard 는 "막혔다" 다 (문서 §7 배너). `caution` 은 "내가 확인해야
@@ -289,7 +427,7 @@ function SuggestionsScreen() {
         {data && data.guards.length > 0 ? (
           <Banner
             tone="danger"
-            title={`${[...blockedByGuard].map(domainLabel).join(", ")} 제안을 만들지 않았어요`}
+            title={`${[...blockedByGuard].map(domainLabel).join(", ")} 추천을 만들지 않았어요`}
           >
             {data.guards.map((guard) => (
               <p key={`${guard.code}:${guard.blocked_agents.join(",")}`}>{guard.message}</p>
@@ -299,7 +437,7 @@ function SuggestionsScreen() {
             {data.guards.some((guard) => guard.code === "safety_unknown") ? (
               <>
                 <p className="text-caption mt-1">
-                  알레르기를 알려주시면 식사 제안도 함께 준비해요.
+                  알레르기를 알려 주시면 식사 추천도 함께 준비해요.
                 </p>
                 <ButtonLink
                   href={`/child/${childId}/profile`}
@@ -327,7 +465,7 @@ function SuggestionsScreen() {
           <ConsentRequiredCard
             childId={childId}
             error={consentBlocked}
-            what="제안을 준비할 수 없어요."
+            what="추천을 준비할 수 없어요."
           />
         ) : suggestions.isError ? (
           // 🚨 llm_unavailable 을 기본값으로 대체하지 않는다. 실패했다고 화면에 말한다.
@@ -335,7 +473,7 @@ function SuggestionsScreen() {
             <p>
               {suggestions.error instanceof Error
                 ? suggestions.error.message
-                : "제안을 준비하지 못했어요."}
+                : "추천을 준비하지 못했어요."}
             </p>
             {/* 🚨 하루 한도는 다시 눌러도 같은 답이다 — 다시 시도를 세우지 않는다 (apps/web CLAUDE §3 에러) */}
             {isApiError(suggestions.error, "daily_input_limit") ? null : (
@@ -379,13 +517,13 @@ function SuggestionsScreen() {
 
         {/* 🚨 일반 추천이 먼저, 되묻는 질문이 그 뒤다. 부모가 이 화면에 온 이유는 "지금 뭘 할까" 고,
           질문은 "다음엔 더 맞추기" 다 — 순서를 뒤집으면 답부터 요구하는 화면이 된다.
-          카드마다 "또래 기준" 라벨과 기록 건수가 붙으므로 위에 따로 머리글을 두지 않는다.
+          카드마다 "일반 추천" 라벨과 기록 건수가 붙으므로 위에 따로 머리글을 두지 않는다.
           🚨 **아래 요약 카드보다 위에 선다** (#509). 일반 추천도 고르는 대상이라, 다음 행동이
           고를 것보다 먼저 서면 안 된다 (다음 행동은 목록 아래 한 곳 · `suggestion-list.tsx` 머리말). */}
         {scarcity && general.length > 0 ? (
           <ul className="flex flex-col gap-3">
             {general.map((item) => (
-              // 카드의 기록 수는 그 Agent 도메인 수다 — 질문 카드의 `scarcity.count` 는 합이다 (#433 리뷰 ⑥)
+              // 카드와 안내의 기록 수는 이 Agent 도메인 수다. 합계인 `scarcity.count`는 호환 필드다.
               <GeneralSuggestionCard
                 key={item.id}
                 suggestion={item}
@@ -406,8 +544,11 @@ function SuggestionsScreen() {
         {(data?.groups ?? [])
           .filter((group) => group.merges_into_one)
           .map((group) => {
+            // 🚨 채택한 뒤에는 **초안에 실릴 것만** 센다 (#859) — 알레르기로 빠진 제안까지 세면 "2가지는 일정
+            //    하나로" 와 "그 제안을 빼고" 가 한 화면에서 다른 숫자를 말한다.
+            const willDraft = chosenIds === null ? pickedIds : draftIds;
             const count = pickable.filter(
-              (s) => s.agent === group.agent && pickedIds.includes(s.id),
+              (s) => s.agent === group.agent && willDraft.includes(s.id),
             ).length;
             return count > 1 ? (
               <p key={`merge:${group.agent}`} role="status" className="text-body-sm text-ink-muted">
@@ -416,10 +557,70 @@ function SuggestionsScreen() {
             ) : null;
           })}
 
+        {/* 🚨 알레르기로 고르지 못했다는 안내 (#823). 실패 카드가 아니라서 빨강도 다시 시도도 없다.
+            다시 고르는 자리 바로 위에 둔다. */}
+        {safetyNotice && chosenIds === null ? (
+          <Card>
+            <div role="status">
+              {safetyNotice.agents.length > 0 ? (
+                <p className="text-label text-ink-subtle">
+                  {safetyNotice.agents.map(domainLabel).join(", ")}
+                </p>
+              ) : null}
+              <p className="text-body-sm text-ink mt-1">
+                {safetyNotice.kind === "approve_blocked"
+                  ? "그사이 알레르기로 등록된 식품이 들어간 추천이 있어서 고르지 못했어요. 그 추천을 빼고 다시 골라 주세요."
+                  : safetyNotice.items.length > 0
+                    ? `${josa(safetyNotice.items.join(", "), "이/가")} 들어간 추천은 고를 수 없어요. 다른 추천을 골라 주세요.`
+                    : // 🚨 이유를 단정하지 않는다. 화면이 모르는 검사일 수도, 어느 제안 것인지 몰라
+                      //    전부 막은 알레르기일 수도 있다 (`SafetyResult.allergyItems` 머리말).
+                      "확인이 필요한 항목 때문에 고른 추천을 고르지 않았어요. 다른 추천을 골라 주세요."}
+              </p>
+            </div>
+          </Card>
+        ) : null}
+
+        {/* 🚨 카드 안에 카드를 두지 않으려고 확인 카드 밖, 바로 위에 둔다. 쓰기가 막힌 것이라 저장된 것이 없다고 말한다. */}
+        {approveConsentBlocked && chosenIds === null ? (
+          <ConsentRequiredCard
+            childId={childId}
+            error={approveConsentBlocked}
+            what="고른 것을 남길 수 없어요. 저장된 것은 하나도 없어요."
+          />
+        ) : null}
+
+        {/* 🚨 채택한 뒤 알레르기로 일정이 될 수 없게 된 안내 (#859). 위 #823 안내와 같은 꼴이다 — 실패가 아니라서
+            빨강도 다시 시도도 없다. 고른 것은 그대로라 "고르지 못했어요" 가 아니라 "일정으로 만들지 않았어요" 다. */}
+        {chosenIds !== null && draftBlocked.length > 0 ? (
+          <Card>
+            <div role="status">
+              {agentsOf(draftBlocked).length > 0 ? (
+                <p className="text-label text-ink-subtle">
+                  {agentsOf(draftBlocked).map(domainLabel).join(", ")}
+                </p>
+              ) : null}
+              <p className="text-body-sm text-ink mt-1">
+                {draftIds.length > 0
+                  ? "그사이 알레르기로 등록된 식품이 들어간 추천이 있어서 일정으로 만들지 않았어요. 그 추천을 빼고 다시 만들 수 있어요."
+                  : "그사이 알레르기로 등록된 식품이 들어간 추천이라 일정으로 만들 수 없어요."}
+              </p>
+            </div>
+          </Card>
+        ) : null}
+
+        {/* 🚨 초안 만들기의 403 도 일반 실패 카드로 그리지 않는다 — 다시 눌러도 같은 403 이다 (#859). */}
+        {draftConsentBlocked && chosenIds !== null ? (
+          <ConsentRequiredCard
+            childId={childId}
+            error={draftConsentBlocked}
+            what="일정 초안을 만들 수 없어요. 캘린더에 넣은 것은 없어요."
+          />
+        ) : null}
+
         {/* 🚨 **다음 행동은 여기 한 곳이다** (줄마다 두지 않는다 · `suggestion-list.tsx` 머리말).
           그래서 화면의 `primary` 도 하나다 — 단계가 바뀌어도 이 카드 안에서 하나씩만 선다. */}
         {pickable.some((s) => s.agent !== "health") ? (
-          <Card>
+          <Card data-tour="confirm">
             <p className="text-section text-ink">
               {chosenIds === null ? "이렇게 준비할게요" : "이렇게 하기로 했어요"}
             </p>
@@ -433,7 +634,7 @@ function SuggestionsScreen() {
                     ? "아직 없음"
                     : pickedByAgent
                         .map(({ agent, count }) => `${domainLabel(agent)} ${count}가지`)
-                        .join(" · ")}
+                        .join(", ")}
                 </dd>
               </div>
             </dl>
@@ -450,7 +651,9 @@ function SuggestionsScreen() {
                     고른 것을 먼저 남겨요. 캘린더에는 아무것도 넣지 않아요.
                   </p>
 
-                  {approve.isError ? (
+                  {approve.isError &&
+                  !isApiError(approve.error, "allergen_blocked") &&
+                  !approveConsentBlocked ? (
                     <CardFailed className="mt-3">
                       <p>
                         {approve.error instanceof Error
@@ -477,8 +680,20 @@ function SuggestionsScreen() {
                           `이 ${selectedIds.length}가지로 할게요`}
                   </Button>
                 </>
+              ) : draftIds.length === 0 ? (
+                /* 🚨 넣은 제안은 다시 만들지 않는다 (#902 리뷰). 버튼 대신 넣었다는 사실만 말한다 — 막힌 것이 있으면
+                   위 안내 카드가 그 이유를 말한다. */
+                allPut ? (
+                  <p className="text-body-sm text-ink-muted mt-3">
+                    {draftBlocked.length > 0
+                      ? "넣을 수 있는 것은 캘린더에 넣었어요."
+                      : "고른 것을 캘린더에 넣었어요."}
+                  </p>
+                ) : null
               ) : (
                 /* ── ② 일정으로도 만들까 ─────────────────────────────────────── */
+                /* 🚨 고른 것이 전부 알레르기로 막혔으면 묻지 않는다 (#859) — 만들 것이 없는데 버튼을 세우면
+                   눌러도 같은 409 다. 이유는 위 안내 카드가 말한다. */
                 <>
                   <p className="text-body-sm text-ink mt-3">일정으로도 만들까요?</p>
                   {/* 🚨 **안 만드는 버튼을 두지 않는다.** 안 만들 사람은 그냥 나간다(아래 "홈으로") —
@@ -488,16 +703,18 @@ function SuggestionsScreen() {
                   서버가 정하는데, 화면이 "N건 만들어요" 라고 먼저 말하면 응답과 다를 때
                   거짓말이 된다. */}
                   <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-2 px-3 py-2">
-                    저장될 내용을 먼저 보여드려요. 승인 전에는 캘린더에 넣지 않아요. 안 만들어도
-                    고른 것은 그대로 남아요.
+                    일정 초안을 먼저 보여 드려요. 확인하고 넣기 전에는 캘린더에 넣지 않아요. 안
+                    만들어도 고른 것은 그대로 남아요.
                   </p>
 
-                  {createDrafts.isError ? (
+                  {createDrafts.isError &&
+                  !isApiError(createDrafts.error, "allergen_blocked") &&
+                  !draftConsentBlocked ? (
                     <CardFailed className="mt-3">
                       <p>
                         {createDrafts.error instanceof Error
                           ? createDrafts.error.message
-                          : "저장될 내용을 만들지 못했어요."}
+                          : "일정 초안을 만들지 못했어요."}
                       </p>
                       <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
                     </CardFailed>
@@ -508,7 +725,7 @@ function SuggestionsScreen() {
                     className="mt-4"
                     disabled={createDrafts.isPending}
                     aria-busy={createDrafts.isPending}
-                    onClick={() => createDrafts.mutate(chosenIds)}
+                    onClick={() => createDrafts.mutate(draftIds)}
                   >
                     {createDrafts.isPending ? <Spinner /> : null}
                     {createDrafts.isPending ? "준비하는 중이에요" : "일정으로 만들기"}
@@ -546,7 +763,7 @@ function SuggestionsScreen() {
           <ScarcityCard
             childId={childId}
             scarcity={scarcity}
-            hasGeneral={general.length > 0}
+            records={generalRecords}
             hasPersonal={visible.length > 0}
           />
         ) : null}
@@ -557,9 +774,11 @@ function SuggestionsScreen() {
 
       {/* 🚨 화면 바닥에 붙이지 않는다. 후보가 한두 개뿐인 화면에서 `mt-auto` 는 목록과 버튼 사이에
           빈 화면을 한 폭 만든다 — 나가는 버튼은 내용 바로 뒤를 따라간다. */}
-      <Button variant="secondary" block onClick={() => router.push(`/child/${childId}/home`)}>
+      {/* 🚨 위 화살표와 따로 남긴다 — 채택을 마친 보호자가 "일정은 안 만들래" 하고 나가는 자리다
+          (위 ② 의 "안 만드는 버튼을 두지 않는다"). 대화에서 왔어도 할 일을 끝낸 것이라 홈으로 간다. */}
+      <ButtonLink href={`/child/${childId}/home`} variant="secondary" block {...BACK}>
         홈으로
-      </Button>
+      </ButtonLink>
 
       {/* 🚨 **승인 게이트 ㉡ 는 여기다** — 채택 **전**에 묻는다 (`safety-check-sheet.tsx`).
           채택을 되돌리는 길이 없어서, 알레르기가 확인된 제안은 채택 자체를 하지 않는다. */}
@@ -567,6 +786,7 @@ function SuggestionsScreen() {
         open={checkingSafety}
         childId={childId}
         prechecks={prechecks}
+        selectedIds={selectedIds}
         onCancel={() => setCheckingSafety(false)}
         onConfirm={afterSafety}
       />
@@ -582,8 +802,15 @@ function SuggestionsScreen() {
           }}
           childId={childId}
           result={approving.target}
+          // 🚨 시트를 연 사이 등록된 알레르기 (#902) — 초안 만들기의 409 와 같은 자리에 쌓는다. 닫으면 위 안내가
+          //    서고, 다시 만들 때 그 제안이 빠진다. 같은 id 로 다시 만들면 초안 만들기가 같은 409 를 낸다.
+          onAllergenBlocked={(ids) => setDraftBlockedIds((prev) => [...new Set([...prev, ...ids])])}
+          onSuggestionsSubmitted={(ids) => setPutIds((prev) => [...new Set([...prev, ...ids])])}
         />
       ) : null}
+
+      {/* 🚨 제안이 다 선 뒤에만 뜬다. 실패 카드만 있으면 비출 것도 없다. */}
+      <ScreenTour tour={suggestionsTour} ready={suggestions.isSuccess} />
     </Screen>
   );
 }
@@ -592,30 +819,38 @@ function SuggestionsScreen() {
  * 근거가 부족할 때 되묻는 자리. 🚨 **질문은 한 개까지만** 드린다 (CLAUDE.md §2).
  * 쌓인 기록 건수를 숨기지 않고 그대로 보여준다 — 없는 근거로 "우리 아이 맞춤" 인 척하지 않는다.
  *
- * 🚨 **위에 일반 추천을 그렸는지에 따라 문구가 달라진다.** 또래 기준 추천을 이미 보여 준 화면에서
+ * 🚨 **위에 일반 추천을 그렸는지에 따라 문구가 달라진다.** 일반 추천을 이미 보여 준 화면에서
  *    "추천을 만들지 않겠다" 고 말하면 화면이 스스로를 부정한다. 카드가 두 경우를 다 알고 있어야
  *    서버가 `general` 을 안 보낼 때도 말이 된다.
  * 🚨 **개인화도 같이 선 화면에서는 "위 추천" 이라고 하지 않는다** (#512 리뷰). 같은 Agent 안에서도 둘이
- *    섞여 오는데, 그때 "위 추천은 또래 기준이에요" 는 위에 선 개인화 추천까지 또래 기준이라고 부른다 —
+ *    섞여 오는데, 그때 "위 추천은 …" 은 위에 선 개인화 추천까지 일반 추천이라고 부른다 —
  *    우리 아이 기록으로 고른 것을 일반 추천이라고 낮춰 부르는 것도 §2 가 막는 혼동이다.
- *    대신 카드에 붙은 라벨("또래 기준 일반 추천")을 가리킨다. 제목도 같다 — 위에 우리 아이 기준 추천이
+ *    대신 카드에 붙은 라벨("일반 추천")을 가리킨다. 제목도 같다 — 위에 우리 아이 기준 추천이
  *    서 있는데 "다음엔 우리 아이 기준으로" 라고 하면 지금 것은 아니라는 뜻으로 읽힌다.
+ * 🚨 **누적 건수를 "적다" 고 말하지 않는다** (#662). 안내 문구는 Agent별 `general[].record_count`를
+ *    그대로 말하고, 이번 추천에 직접 쓴 기록이 없었다는 사실만 덧붙인다.
  */
 function ScarcityCard({
   childId,
   scarcity,
-  hasGeneral,
+  records,
   hasPersonal,
 }: {
   childId: string;
   scarcity: Scarcity;
-  hasGeneral: boolean;
+  records: readonly AgentRecordCount[];
   /** 같은 화면에 개인화 추천도 섰다. */
   hasPersonal: boolean;
 }) {
   const [answered, setAnswered] = useState<string | null>(null);
   /** 🚨 Agent 가 되물었을 때만 있다 (#249). 없으면 기록 건수만 말하고 질문은 세우지 않는다. */
   const question = scarcity.question;
+  const copy = scarcityCopy({
+    records,
+    fallbackCount: scarcity.count,
+    hasPersonal,
+    asked: question !== null,
+  });
 
   const answer = useMutation({
     mutationFn: (value: string) => {
@@ -628,25 +863,9 @@ function ScarcityCard({
   });
 
   return (
-    <Card>
-      <h2 className="text-section text-ink">
-        {hasGeneral
-          ? hasPersonal
-            ? "기록이 더 쌓이면 모두 우리 아이 기준으로 골라 드릴게요"
-            : "다음엔 우리 아이 기준으로 골라 드릴게요"
-          : "판단할 기록이 부족해요"}
-      </h2>
-      <p className="text-body-sm text-ink-muted mt-1">
-        {scarcity.count === 0
-          ? "이 주제로 쌓인 기록이 아직 없어요."
-          : `이 주제로 쌓인 기록이 ${scarcity.count}건뿐이에요.`}{" "}
-        {hasGeneral
-          ? hasPersonal
-            ? "그래서 또래 기준이라고 적힌 추천은 우리 아이 기록 대신 또래 기준으로 골랐어요."
-            : "그래서 위 추천은 또래 기준이에요."
-          : "근거 없이 추천을 만들지는 않을게요."}
-        {hasGeneral && question ? " 하나만 알려주시면 다음부터 달라져요." : null}
-      </p>
+    <Card data-tour="question">
+      <h2 className="text-section text-ink">{copy.title}</h2>
+      <p className="text-body-sm text-ink-muted mt-1">{copy.body}</p>
 
       {question ? <p className="text-body text-ink mt-4">{question.text}</p> : null}
       {/* 🚨 답하는 길(#246) 전에는 선택지가 비어 온다 — 문장으로만 세운다 (04 의 되묻기와 같다). */}
@@ -669,7 +888,7 @@ function ScarcityCard({
         <p className="text-body-sm text-ink-muted mt-2">답을 저장하지 못했어요.</p>
       ) : answered ? (
         <p className="text-body-sm text-ink-muted mt-2">
-          기록으로 남겼어요. 다음 제안부터 근거로 써요.
+          기록으로 남겼어요. 다음 추천부터 근거로 써요.
         </p>
       ) : null}
 

@@ -100,8 +100,8 @@ function ChildOnboardingScreen() {
   });
 
   function buildBody(): OnboardingRequest | null {
-    const heightValue = parseMeasurement(height);
-    const weightValue = parseMeasurement(weight);
+    const heightValue = parseMeasurement("height", height);
+    const weightValue = parseMeasurement("weight", weight);
 
     const body: OnboardingRequest = {
       ...(relation ? { relation } : {}),
@@ -124,8 +124,8 @@ function ChildOnboardingScreen() {
      *    값을 그냥 빼는데, 그대로 제출하면 **적은 사람만 적었다고 믿는다.** 여기서 먼저 막는다.
      */
     const next = {
-      height: measurementError(parseMeasurement(height)),
-      weight: measurementError(parseMeasurement(weight)),
+      height: measurementError("height", parseMeasurement("height", height)),
+      weight: measurementError("weight", parseMeasurement("weight", weight)),
     };
     setMeasureErrors(next);
     if (next.height || next.weight) return;
@@ -144,13 +144,13 @@ function ChildOnboardingScreen() {
     <Screen className="gap-5">
       <div>
         <p className="text-label text-ink-subtle">아이 등록 · 2 / 2</p>
-        <PageTitle className="mt-2">알려주실 게 있다면 지금</PageTitle>
+        <PageTitle className="mt-2">더 알려 주실 게 있나요</PageTitle>
         <p className="text-body text-ink-muted mt-3">
           전부 선택이에요. 편한 것만 적고 넘어가도 되고, 나중에 프로필에서 적어도 돼요.
         </p>
       </div>
 
-      <Section title="아이와의 관계" description="10 설정의 보호자 목록에 이렇게 보여요.">
+      <Section title="아이와의 관계" description="설정의 보호자 목록에 이렇게 보여요.">
         {/* 🚨 고를 수 있는 것이 **셋뿐이다.** 01 에서 법정대리인 동의를 한 사람이라
             시터·그 밖에는 여기 설 수 없다 (`lib/relation.ts` 의 `OWNER_RELATIONS`).
             함께 보는 시터는 초대로 들어오고, 그 화면은 5종 전부다. */}
@@ -177,13 +177,13 @@ function ChildOnboardingScreen() {
       */}
       <ChoiceField
         label="성별"
-        hint="나이에 맞는 제안을 고를 때만 써요. 밝히지 않아도 돼요."
+        hint="화면에만 보여요. 추천을 고를 때는 쓰지 않아요. 밝히지 않아도 돼요."
         value={gender}
         options={GENDER_OPTIONS}
         onChange={setGender}
       />
 
-      <Section title="키 · 몸무게" description="오늘 잰 값으로 기록해요. 한쪽만 적어도 돼요.">
+      <Section title="키·몸무게" description="오늘 잰 값으로 기록해요. 한쪽만 적어도 돼요.">
         {/* 🚨 **잰 날짜를 여기서 묻지 않는다.** 서버가 오늘로 찍는다 — 프론트가 날짜를
             만들지 않는다 (CLAUDE.md §4). 다른 날 잰 값은 11-1 에서 날짜를 골라 적는다.
             🚨 백분위·또래 비교·"빠르다/느리다" 를 여기에도 만들지 않는다 (최상위 §2). */}
@@ -226,7 +226,7 @@ function ChildOnboardingScreen() {
         {emptyNotice && !body ? (
           <Card>
             <p className="text-body-sm text-ink-muted">
-              아직 아무것도 적지 않으셨어요. 하나만 골라주거나 건너뛰기를 눌러주세요.
+              아직 고른 것이 없어요. 하나를 고르거나 &ldquo;지금은 건너뛰기&rdquo;를 눌러 주세요.
             </p>
           </Card>
         ) : null}
@@ -235,7 +235,7 @@ function ChildOnboardingScreen() {
           <ConsentRequiredCard
             childId={childId}
             error={consentBlocked}
-            what="적어주신 것을 저장할 수 없어요."
+            what="적어 주신 것을 저장하지 않았어요."
           />
         ) : save.isError ? (
           <CardFailed>
@@ -259,7 +259,7 @@ function ChildOnboardingScreen() {
           지금은 건너뛰기
         </Button>
         <p className="text-caption text-ink-subtle text-center">
-          적은 값만 저장하고, AI 가 추론한 값은 저장하지 않아요.
+          적은 값만 저장해요. AI가 짐작한 값은 저장하지 않아요.
           <br />
           건너뛰어도 나중에 프로필에서 적을 수 있어요.
         </p>

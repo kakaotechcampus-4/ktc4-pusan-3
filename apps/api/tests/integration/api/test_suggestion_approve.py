@@ -7,16 +7,20 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import idempotency
+from app.domains.safety.models import SafetyKind
+from app.domains.safety.repository import create_safety
 from app.domains.suggestion.models import (
     Suggestion,
     SuggestionAgent,
     SuggestionEvent,
     SuggestionKind,
+    SuggestionMealSlot,
     SuggestionStatus,
 )
 from tests.integration.api.conftest import Bearer, issue_bearer, link_child
@@ -31,6 +35,8 @@ async def _make_suggestion(
     kind: SuggestionKind = SuggestionKind.PERSONALIZED,
     expires_at: datetime | None = None,
     items: Sequence[str] = (),
+    allergens: Sequence[str] = (),
+    meal_slot: SuggestionMealSlot | None = None,
 ) -> Suggestion:
     """테스트용 제안 직접 INSERT."""
     row = Suggestion(
@@ -41,7 +47,9 @@ async def _make_suggestion(
         reason="야외 활동 선호",
         status=status,
         items=list(items),
+        allergens=list(allergens),
         expires_at=expires_at or (datetime.now(UTC) + timedelta(hours=24)),
+        meal_slot=meal_slot,
     )
     session.add(row)
     await session.flush()
@@ -142,6 +150,189 @@ async def test_approve_other_childs_suggestion(
     assert resp.json()["error"]["code"] == "not_found"
 
 
+# ── 채택 직전 알레르기 재확인 ─────────────────────────────────────────────────
+
+
+def _granted(value: bool):
+    async def read(session, *, child_id):
+        return value
+
+    return read
+
+
+async def _approve(db_client: AsyncClient, cid: uuid.UUID, headers, *rows: Suggestion):
+    return await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/approve",
+        json={"suggestion_ids": [str(r.id) for r in rows]},
+        headers=headers,
+    )
+
+
+async def test_채택_전에_등록된_알레르기에_걸리면_아무것도_채택하지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """목록을 받은 뒤 등록된 알레르기 — 걸린 추천만 detail 에 싣고, 같이 보낸 다른 추천도 남긴다."""
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    headers, parent_id = bearer
+    safe = await _make_suggestion(session, child_id=cid, agent=SuggestionAgent.FOOD)
+    walnut = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, allergens=["호두", "잣"]
+    )
+    await create_safety(
+        session, child_id=cid, parent_id=parent_id, kind=SafetyKind.ALLERGY, label="호두"
+    )
+
+    resp = await _approve(db_client, cid, headers, safe, walnut)
+
+    assert resp.status_code == 409
+    error = resp.json()["error"]
+    assert error["code"] == "allergen_blocked"
+    assert error["detail"] == {"suggestion_ids": [str(walnut.id)]}
+    for row in (safe, walnut):
+        await session.refresh(row)
+        assert row.status == SuggestionStatus.DRAFT
+
+
+async def test_채택_재확인은_목록과_같은_이름_사전으로_맞춘다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """견과류로 등록한 알레르기에 호두가 든 추천이 걸린다 — 목록이 빼는 것과 같다."""
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    headers, parent_id = bearer
+    row = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, allergens=["호두"]
+    )
+    await create_safety(
+        session, child_id=cid, parent_id=parent_id, kind=SafetyKind.ALLERGY, label="견과류"
+    )
+
+    resp = await _approve(db_client, cid, headers, row)
+
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "allergen_blocked"
+
+
+async def test_알레르기_기록에_없는_항목은_채택을_막지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """답을 미룬 "모름"(행 없음)은 막지 않는다 (event-draft-ui-v1.md §3-8)."""
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    headers, _ = bearer
+    row = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, allergens=["잣"]
+    )
+
+    resp = await _approve(db_client, cid, headers, row)
+
+    assert resp.status_code == 200
+    assert resp.json()["suggestions"][0]["status"] == "approved"
+
+
+async def test_알레르기_항목이_없는_추천만_채택하면_건강정보를_읽지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    async def must_not_read(*args, **kwargs):
+        raise AssertionError("건강정보를 읽었다")
+
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", must_not_read)
+    monkeypatch.setattr("app.api.v1.routers.suggestions.list_safety_labels", must_not_read)
+    headers, _ = bearer
+    row = await _make_suggestion(session, child_id=cid)
+
+    resp = await _approve(db_client, cid, headers, row)
+
+    assert resp.status_code == 200
+
+
+async def test_건강정보_동의가_없으면_알레르기_항목이_든_추천을_채택하지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """목록도 동의 없이는 이 추천을 내보내지 않는다 — 동의 없이 건강정보를 읽어 판정하지 않는다."""
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(False))
+    headers, _ = bearer
+    row = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, allergens=["호두"]
+    )
+
+    resp = await _approve(db_client, cid, headers, row)
+
+    assert resp.status_code == 403
+    error = resp.json()["error"]
+    assert error["code"] == "consent_required"
+    assert error["detail"]["scopes"] == ["child_health"]
+    await session.refresh(row)
+    assert row.status == SuggestionStatus.DRAFT
+
+
+async def test_이미_채택한_추천은_새로_고른_추천과_같이_와도_알레르기를_다시_보지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """채택 뒤에 등록된 알레르기로 지난 채택을 뒤집지 않는다 — 새로 고른 추천만 다시 본다."""
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    headers, parent_id = bearer
+    earlier = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        allergens=["호두"],
+    )
+    fresh = await _make_suggestion(session, child_id=cid, agent=SuggestionAgent.FOOD)
+    await create_safety(
+        session, child_id=cid, parent_id=parent_id, kind=SafetyKind.ALLERGY, label="호두"
+    )
+
+    resp = await _approve(db_client, cid, headers, earlier, fresh)
+
+    assert resp.status_code == 200
+    assert {s["status"] for s in resp.json()["suggestions"]} == {"approved"}
+    await session.refresh(fresh)
+    assert fresh.status == SuggestionStatus.APPROVED
+
+
+async def test_만료된_추천이_섞이면_알레르기보다_만료를_먼저_알린다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    headers, parent_id = bearer
+    walnut = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, allergens=["호두"]
+    )
+    expired = await _make_suggestion(
+        session, child_id=cid, expires_at=datetime.now(UTC) - timedelta(hours=1)
+    )
+    await create_safety(
+        session, child_id=cid, parent_id=parent_id, kind=SafetyKind.ALLERGY, label="호두"
+    )
+
+    resp = await _approve(db_client, cid, headers, walnut, expired)
+
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "suggestion_expired"
+
+
+async def test_알레르기를_못_읽으면_통과시키지_않고_아무것도_채택하지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """못 읽었다고 기본값으로 넘기지 않는다 (루트 §2) — 예외가 그대로 올라간다."""
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("DB 를 읽지 못했다")
+
+    monkeypatch.setattr("app.api.v1.routers.suggestions.list_safety_labels", broken)
+    headers, _ = bearer
+    row = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, allergens=["호두"]
+    )
+
+    with pytest.raises(RuntimeError):
+        await _approve(db_client, cid, headers, row)
+
+    await session.refresh(row)
+    assert row.status == SuggestionStatus.DRAFT
+
+
 # ── 일정 초안 API ─────────────────────────────────────────────────────────
 
 
@@ -168,13 +359,17 @@ async def test_event_drafts_from_approved(
 async def test_event_drafts_food_grouped(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
-    """food 제안 N건 → 초안 1건 묶음."""
-    s1 = await _make_suggestion(
-        session, child_id=cid, agent=SuggestionAgent.FOOD, status=SuggestionStatus.APPROVED
-    )
-    s2 = await _make_suggestion(
-        session, child_id=cid, agent=SuggestionAgent.FOOD, status=SuggestionStatus.APPROVED
-    )
+    """food 제안 N건 → 초안 1건 묶음. 제목은 그 끼니다 (#898)."""
+    s1, s2 = [
+        await _make_suggestion(
+            session,
+            child_id=cid,
+            agent=SuggestionAgent.FOOD,
+            status=SuggestionStatus.APPROVED,
+            meal_slot=SuggestionMealSlot.BREAKFAST,
+        )
+        for _ in range(2)
+    ]
     headers, _ = bearer
     resp = await db_client.post(
         f"/api/v1/children/{cid}/suggestions/event-drafts",
@@ -184,8 +379,33 @@ async def test_event_drafts_food_grouped(
     assert resp.status_code == 201
     data = resp.json()
     assert len(data["drafts"]) == 1
-    assert data["drafts"][0]["event"]["title"] == "저녁 식사"
+    assert data["drafts"][0]["event"]["title"] == "아침 식사"
     assert len(data["drafts"][0]["suggestion_ids"]) == 2
+
+
+async def test_event_drafts_food_title_without_one_meal(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """끼니가 섞이면 한 끼니를 고르지 않는다 — 제목은 "식사" (#898)."""
+    rows = [
+        await _make_suggestion(
+            session,
+            child_id=cid,
+            agent=SuggestionAgent.FOOD,
+            status=SuggestionStatus.APPROVED,
+            meal_slot=slot,
+        )
+        for slot in (SuggestionMealSlot.BREAKFAST, SuggestionMealSlot.DINNER)
+    ]
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(r.id) for r in rows]},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    [draft] = resp.json()["drafts"]
+    assert draft["event"]["title"] == "식사"
 
 
 # 🚨 채택 · 초안 · 제출은 kind 를 보지 않는다 — 05 의 일반 추천도 같은 길로 일정이 된다
@@ -264,7 +484,8 @@ async def test_event_drafts_food_grouped_across_kinds(
         assert resp.status_code == 201
         drafts = resp.json()["drafts"]
         assert len(drafts) == 1
-        assert drafts[0]["event"]["title"] == "저녁 식사"
+        # 끼니 칸이 빈 행(이 칸 전에 만든 추천)이라 끼니를 짐작하지 않는다 (#898)
+        assert drafts[0]["event"]["title"] == "식사"
         assert len(drafts[0]["suggestion_ids"]) == 2
 
 
@@ -317,6 +538,66 @@ async def test_event_drafts_food_items_merged_once(
     [draft] = resp.json()["drafts"]
     assert [i["item_name"] for i in draft["items"]] == ["두부", "애호박", "양파"]
     assert all(i["item_id"] is None for i in draft["items"])
+
+
+async def test_event_drafts_food_core_items_merged_once(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """주재료만 남긴 food 둘을 한 끼로 묶어도 핵심 재료는 처음 나온 순서로 한 번씩이다 (#474)."""
+    s1 = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        items=["두부", "시금치"],
+    )
+    s2 = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        items=["두부", "당근"],
+    )
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(s1.id), str(s2.id)]},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    [draft] = resp.json()["drafts"]
+    assert [i["item_name"] for i in draft["items"]] == ["두부", "시금치", "당근"]
+
+
+async def test_event_drafts_food_without_items_make_empty_draft_items(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """주재료가 없거나 모두 상비 재료라 items 가 비어도 초안은 만들어지고 준비물만 빈다 (#474).
+
+    Activity 준비물은 그대로이고, food 초안과 섞이지 않는다.
+    """
+    food = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        items=[],
+    )
+    activity = await _make_suggestion(
+        session, child_id=cid, status=SuggestionStatus.APPROVED, items=["돗자리", "물통"]
+    )
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(food.id), str(activity.id)]},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    by_suggestion = {
+        tuple(d["suggestion_ids"]): [i["item_name"] for i in d["items"]]
+        for d in resp.json()["drafts"]
+    }
+    assert by_suggestion == {(str(food.id),): [], (str(activity.id),): ["돗자리", "물통"]}
 
 
 async def test_event_drafts_items_stay_with_their_suggestion(
@@ -431,6 +712,71 @@ async def test_event_drafts_not_approved(
     assert resp.json()["error"]["code"] == "not_approved"
 
 
+# ── 초안 만들기 직전 알레르기 재확인 (#859) ───────────────────────────────────
+# 판정 · "모름" · 조회 실패는 같은 함수라 위의 채택 테스트가, 내린 기록은 사전검사 테스트
+# (test_suggestions_endpoint.py · test_allergy_states.py)가 본다. 여기서는 초안 만들기가 그 함수를
+# 부르는지와, 부르는 자리에서만 갈릴 수 있는 것만 본다.
+
+
+async def _drafts(db_client: AsyncClient, cid: uuid.UUID, headers, *rows: Suggestion):
+    return await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(r.id) for r in rows]},
+        headers=headers,
+    )
+
+
+async def test_채택_뒤에_등록된_알레르기에_걸리면_초안을_하나도_만들지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """food 를 한 장으로 묶기 전에 본다 — 같이 고른 food · 놀이 중 걸린 추천 id 만 싣는다."""
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    headers, parent_id = bearer
+    approved = SuggestionStatus.APPROVED
+    rice = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, status=approved
+    )
+    walnut = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, status=approved, allergens=["호두"]
+    )
+    play = await _make_suggestion(session, child_id=cid, status=approved)
+    await create_safety(
+        session, child_id=cid, parent_id=parent_id, kind=SafetyKind.ALLERGY, label="견과류"
+    )
+
+    resp = await _drafts(db_client, cid, headers, rice, walnut, play)
+
+    assert resp.status_code == 409
+    error = resp.json()["error"]
+    assert error["code"] == "allergen_blocked"
+    assert error["detail"] == {"suggestion_ids": [str(walnut.id)]}
+
+
+async def test_채택_뒤에_건강정보_동의를_거두면_알레르기_항목이_든_추천으로_초안을_만들지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """동의가 없어 알레르기를 못 읽는 것을 "걸린 것 없음" 으로 넘기지 않는다 (루트 §2).
+
+    부르는 자리에서 동의를 먼저 보고 재확인을 건너뛰게 바뀌면 여기서만 깨진다.
+    """
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(False))
+    headers, _ = bearer
+    walnut = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        allergens=["호두"],
+    )
+
+    resp = await _drafts(db_client, cid, headers, walnut)
+
+    assert resp.status_code == 403
+    error = resp.json()["error"]
+    assert error["code"] == "consent_required"
+    assert error["detail"]["scopes"] == ["child_health"]
+
+
 # ── 일정 제출 API ─────────────────────────────────────────────────────────
 
 
@@ -466,6 +812,86 @@ async def test_submit_event_with_suggestion(
         select(SuggestionEvent).where(SuggestionEvent.suggestion_id == s.id)
     )
     assert link is not None
+
+
+# ── 제출 직전 알레르기 재확인 (#902) ─────────────────────────────────────────
+# 판정 · 모름 · 조회 실패는 같은 함수라 채택 테스트가 본다. 여기서는 제출이 그 함수를 쓰기 전에
+# 부르는지와, 부르는 자리에서만 갈릴 수 있는 것만 본다.
+
+
+async def _submit(db_client: AsyncClient, cid: uuid.UUID, headers, key: str, *rows: Suggestion):
+    return await db_client.post(
+        f"/api/v1/children/{cid}/events",
+        json={
+            "event": {
+                "title": "저녁 식사",
+                "starts_at": "2026-10-10T18:00:00+09:00",
+                "ends_at": None,
+                "all_day": False,
+                "event_type": "episodic",
+                "category": "etc",
+            },
+            "items": [],
+            "suggestion_ids": [str(r.id) for r in rows],
+        },
+        headers={**headers, "Idempotency-Key": key},
+    )
+
+
+async def test_초안을_만든_뒤_등록된_알레르기에_걸리면_일정을_넣지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """05 시트를 열어 둔 사이 등록된 알레르기 — 걸린 id 만 싣고, 일정 · 연결을 쓰지 않는다."""
+    from app.domains.schedule.models import Event
+
+    idempotency.clear()
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    headers, parent_id = bearer
+    approved = SuggestionStatus.APPROVED
+    rice = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, status=approved
+    )
+    walnut = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, status=approved, allergens=["호두"]
+    )
+    await create_safety(
+        session, child_id=cid, parent_id=parent_id, kind=SafetyKind.ALLERGY, label="견과류"
+    )
+
+    resp = await _submit(db_client, cid, headers, "allergen-1", rice, walnut)
+
+    assert resp.status_code == 409
+    error = resp.json()["error"]
+    assert error["code"] == "allergen_blocked"
+    assert error["detail"] == {"suggestion_ids": [str(walnut.id)]}
+    assert (await session.scalars(select(Event).where(Event.child_id == cid))).all() == []
+    assert (await session.scalars(select(SuggestionEvent))).all() == []
+
+
+async def test_초안을_만든_뒤_건강정보_동의를_거두면_알레르기_항목이_든_추천으로_일정을_넣지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """동의가 없어 알레르기를 못 읽는 것을 "걸린 것 없음" 으로 넘기지 않는다 (루트 §2).
+
+    부르는 자리에서 동의를 먼저 보고 재확인을 건너뛰게 바뀌면 여기서만 깨진다.
+    """
+    idempotency.clear()
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(False))
+    headers, _ = bearer
+    walnut = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        allergens=["호두"],
+    )
+
+    resp = await _submit(db_client, cid, headers, "allergen-2", walnut)
+
+    assert resp.status_code == 403
+    error = resp.json()["error"]
+    assert error["code"] == "consent_required"
+    assert error["detail"]["scopes"] == ["child_health"]
 
 
 async def test_submit_event_without_suggestion(
@@ -753,3 +1179,78 @@ async def test_submit_event_with_items(db_client: AsyncClient, bearer: Bearer, c
     items = resp.json()["event"]["items"]
     assert len(items) == 2
     assert {i["item_name"] for i in items} == {"도시락", "물통"}
+
+
+async def test_Redis_가_죽으면_일정_등록은_503_이고_아무것도_저장하지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """#671 — 장애 직전에 Redis 에 적힌 키는 장애 동안 안 보여서, 같은 키 재시도가 일정을
+    하나 더 만든다. 되돌릴 수 없는 쓰기(승인 게이트 ㉠)라 메모리로 넘어가지 않고 막는다
+    (docs/api/idempotency-v1.md §3-6).
+    """
+    import redis
+
+    from app.domains.schedule.models import Event
+
+    idempotency.clear()
+    down = redis.Redis(host="127.0.0.1", port=1, socket_connect_timeout=0.2)
+    monkeypatch.setattr(idempotency, "get_redis", lambda: down)
+    headers, _ = bearer
+
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/events",
+        json={
+            "event": {
+                "title": "장애 중 일정",
+                "starts_at": "2026-10-10T15:00:00+09:00",
+                "ends_at": None,
+                "all_day": False,
+                "event_type": "episodic",
+                "category": "activity",
+            },
+            "items": [],
+        },
+        headers={**headers, "Idempotency-Key": "redis-down-1"},
+    )
+
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "temporarily_unavailable"
+    assert (await session.scalars(select(Event).where(Event.child_id == cid))).all() == []
+
+
+async def test_Redis_가_쓰기만_거절해도_같은_키로_일정이_두_번_생기지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """#671 리뷰 — RDB 저장 실패(MISCONF)면 GET 은 되고 SET 만 거절된다. GET 만 보고 통과시키면
+    저장 · commit 뒤 키를 못 남겨 같은 키 재시도가 일정을 하나 더 만든다."""
+    from app.domains.schedule.models import Event
+    from tests.unit.api.test_idempotency_redis import WriteRefused
+
+    idempotency.clear()
+    monkeypatch.setattr(idempotency, "get_redis", lambda: WriteRefused())
+    headers, _ = bearer
+    body = {
+        "event": {
+            "title": "쓰기 거절 중 일정",
+            "starts_at": "2026-10-10T15:00:00+09:00",
+            "ends_at": None,
+            "all_day": False,
+            "event_type": "episodic",
+            "category": "activity",
+        },
+        "items": [],
+    }
+
+    codes = [
+        (
+            await db_client.post(
+                f"/api/v1/children/{cid}/events",
+                json=body,
+                headers={**headers, "Idempotency-Key": "misconf-1"},
+            )
+        ).status_code
+        for _ in range(2)
+    ]
+
+    assert codes == [503, 503]
+    assert (await session.scalars(select(Event).where(Event.child_id == cid))).all() == []

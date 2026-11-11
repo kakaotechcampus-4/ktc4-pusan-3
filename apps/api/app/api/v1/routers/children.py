@@ -1,8 +1,8 @@
 """아이 엔드포인트 — 계약서 §04 · §05 · §06.
 
 `POST /children`(등록) · `GET` · `PATCH /children/{cid}`(프로필) ·
-`POST /children/{cid}/onboarding`(02 화면) · `/children/{cid}/growth`(키·몸무게 기록) ·
-`POST /children/{cid}/inputs`.
+`DELETE /children/{cid}`(아이 삭제) · `POST /children/{cid}/onboarding`(02 화면) ·
+`/children/{cid}/growth`(키·몸무게 기록) · `POST /children/{cid}/inputs`.
 
 인증은 여기서 하지 않는다. router.py 의 protected_router 에 붙어서 자동으로 걸린다.
 
@@ -27,6 +27,7 @@ from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.quota import today_kst
 from app.api.runs import chat_record, pending_reply, registry, runner
+from app.api.runs.tidy import tidy
 from app.api.v1.schemas.children import (
     ChildProfile,
     CreateChildRequest,
@@ -45,11 +46,13 @@ from app.api.v1.schemas.children import (
 )
 from app.core.config import settings
 from app.domains.chat.repository import find_turn_date
+from app.domains.child.delete import ChildDeletion, delete_owned_child
 from app.domains.child.models import Child, ChildGrowthLog, ParentChildRelation
 from app.domains.child.repository import (
     create_child,
     create_growth_log,
     delete_growth_log,
+    find_accessible_child,
     find_child_link,
     find_growth_log,
     has_child_link,
@@ -262,9 +265,80 @@ async def update_child_profile(
     return response
 
 
+_DELETED_REPLAY = {"status_code": 204}
+"""같은 키 재생값. 204 는 본문이 없어서 "지웠다" 는 표시만 적어 둔다 — 값은 보지 않는다."""
+
+
+@router.delete(
+    "/children/{cid}",
+    status_code=204,
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 503)},
+)
+async def delete_child(
+    cid: UUID,
+    parent: CurrentParent,
+    session: SessionDep,
+    request: Request,
+    idempotency_key: Annotated[str | None, Header()] = None,
+) -> Response:
+    """아이 삭제 — 아이 기본정보 · 건강정보 동의를 거두는 것과 같다 (#751).
+
+    아이와 아이의 기록 · 일정 · 사진 · 대화 · 일기 · 함께 보는 보호자 연결을 바로 지운다.
+    유예가 없고 되돌릴 수 없다. 동의 이력만 1년 보관 표로 옮긴다(탈퇴와 같은 `purge_child`).
+    보호자 계정은 그대로다.
+
+    - **등록 보호자만** 지운다. 함께 보는 보호자는 `403 owner_only` 다 — 키를 보기 전에 막는다.
+    - 되돌릴 수 없어서 `Idempotency-Key` 가 필수다. 지우는 것은 언제나 한 번이다.
+      같은 키가 **동시에** 두 번 오면 뒤의 것은 잠금에서 기다렸다가 대개 204 를 재생받는다 — 앞의
+      것이 커밋한 뒤 키를 적기 전이면 403 이다. **끝난 뒤** 같은 키로 다시 오면 아이가 없어
+      `403 child_access_denied` 다 — 아이 접근 확인이 재생보다 먼저다(docs/api/idempotency-v1.md
+      §3-1). 화면은 이 403 을 받으면 지워진 것으로 본다.
+    - 보호자가 직접 누르는 삭제라 승인 게이트가 아니다(루트 §2). 화면이 확인을 한 번 더 받는다.
+
+    오류 (순서대로): 403 child_access_denied(연결 없음 · 없는 아이 — 404 로 있는지 드러내지
+    않는다) → 403 owner_only → 400 idempotency_key_required → 503 temporarily_unavailable(Redis
+    장애 — 지우기 전에 막는다).
+    """
+    child = await find_accessible_child(session, child_id=cid, parent_id=parent.parent_id)
+    if child is None:
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+    if child.owner_parent_id != parent.parent_id:
+        raise ApiError(403, "owner_only", "아이를 등록한 보호자만 아이를 삭제할 수 있어요")
+    if not idempotency_key:
+        raise ApiError(
+            400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
+        )
+    scope = {
+        "parent_id": parent.parent_id,
+        "method": request.method,
+        "path": request.url.path,
+        "key": idempotency_key,
+    }
+    if await idempotency.recall(**scope) is not None:
+        return Response(status_code=204)
+
+    child_id = child.id
+    deleted = await delete_owned_child(
+        session, child_id=child_id, parent_id=parent.parent_id, now=datetime.now(UTC)
+    )
+    if deleted is ChildDeletion.GONE:
+        # 같은 키가 동시에 두 번 왔으면 뒤의 것은 앞의 것이 커밋할 때까지 잠금에서 기다렸다 —
+        # 그 사이 앞의 것이 기억해 둔 응답을 다시 본다. 안 보면 지운 것은 맞는데 화면에 403 이 뜬다
+        if await idempotency.recall(**scope) is not None:
+            return Response(status_code=204)
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+    if deleted is ChildDeletion.NOT_OWNER:
+        raise ApiError(403, "owner_only", "아이를 등록한 보호자만 아이를 삭제할 수 있어요")
+    await session.commit()
+    await idempotency.remember(**scope, replay=_DELETED_REPLAY)
+    # 원문이 든 보관함(되묻기 · 05 다시 시도 · 사진 읽은 내용)은 표(run_hold)라 아이 행의
+    # FK CASCADE 가 같은 트랜잭션에서 지웠다 — 누가 넣은 것이든 그 아이 것 전부 (#561 · #751 · #877)
+    return Response(status_code=204)
+
+
 @router.post(
     "/children/{cid}/onboarding",
-    responses={status: {"model": ErrorEnvelope} for status in (400, 403)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 503)},
 )
 async def submit_onboarding(
     child: AccessibleChild,
@@ -291,7 +365,7 @@ async def submit_onboarding(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 
@@ -329,7 +403,7 @@ async def submit_onboarding(
         growth=None if growth is None else _growth_out(growth, today),
     )
     await session.commit()
-    idempotency.remember(**scope, replay=response.model_dump(mode="json"))
+    await idempotency.remember(**scope, replay=response.model_dump(mode="json"))
     return response
 
 
@@ -432,7 +506,11 @@ async def remove_growth_log(child: AccessibleChild, log_id: UUID, session: Sessi
     return Response(status_code=204)
 
 
-@router.post("/children/{cid}/inputs", status_code=202)
+@router.post(
+    "/children/{cid}/inputs",
+    status_code=202,
+    responses={503: {"model": ErrorEnvelope}},
+)
 async def create_input(
     child: AccessibleChild,
     body: CreateInputRequest,
@@ -443,11 +521,14 @@ async def create_input(
 ) -> CreateInputResponse:
     """접수만 한다 — 채널을 열고 러너를 뒤에서 띄우고 바로 202. Agent 를 기다리지 않는다.
 
-    순서: (아이 접근 확인 — 의존성) → 키 확인 → 재생 → 동의 읽기 → 맥락 확인 → 한도 →
-    맥락 찜하기 → 채널 열기 → 키 기억 → 러너 시작.
-    키를 러너보다 먼저 적어 두면 같은 키가 몇 ms 뒤에 또 와도 새 run이 아니라
-    재생으로 흡수된다 (idempotency.py). 이어받기 맥락은 재생 뒤에 본다. 같은 키 재생은 이미 꺼낸
-    맥락으로 돈 run을 돌려받아야 하고, 400 을 받으면 안 된다. 찜하는 건 한도를 통과한 뒤다.
+    순서: (아이 접근 확인 — 의존성) → 키 확인 → 재생 → 동의 읽기 → 맥락 찜하기(확인과 표시가 한
+    문장) → 한도 → 채널 열기(표에 쓰일 때까지) → 키 기억 → 러너 시작. 찜한 뒤 러너가 뜨기 전에
+    무엇이 터지든 표시를 푼다.
+    키 기억은 "처음 적은 요청만" 이다(SET NX) — 재생 확인 뒤에 같은 키가 겹쳐 와도 먼저 적은
+    요청만 러너를 띄우고, 나머지는 그 run 을 돌려받는다 (idempotency.py). 진 요청도 한도는 1회
+    쓴다. 이어받기 맥락은 재생 뒤에 본다. 같은 키 재생은 이미 꺼낸
+    맥락으로 돈 run을 돌려받아야 하고, 400 을 받으면 안 된다. 늦게 온 답은 한도를 쓰기 전에
+    400 이다.
     재생할 run 이 failed 로 끝났으면 재생하지 않고 새 run 으로 받는다. 채널이 이미 지워졌으면
     대화 기록으로 끝났는지 알린다 (#538).
     """
@@ -462,9 +543,10 @@ async def create_input(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if replayed is not None:
-        previous = registry.get(replayed)
+        # 다른 워커가 돌린 run 이어도 끝 신호를 본다 (#877 4단계)
+        previous = await registry.lookup(replayed)
         if previous is None:
             # 채널은 닫힌 지 5분 뒤 지워지고 키는 24시간 남는다. 끝난 run 은 대화 기록이 남아
             # 있으니 화면이 SSE(404) 대신 지난 대화로 결과를 그리게 알린다 (#538).
@@ -477,31 +559,32 @@ async def create_input(
             return CreateInputResponse(run_id=replayed)
         if previous.ended_with != "failed":
             return CreateInputResponse(run_id=replayed)
-        # failed 는 "저장 없음" 이라 러너가 키를 놓는데, 거기서 Redis 오류로 실패하면 키가 남는다.
-        # 여기서 다시 놓고 새 run 으로 받는다. 지난 실패를 재생하면 다시 보내도 같은 실패뿐이다
-        # (#538)
+        # failed 는 "저장 없음" 이라 러너가 키를 놓는데, Redis 장애로 못 지웠으면 키가 남아 있을
+        # 수 있다. 여기서 다시 놓고 새 run 으로 받는다. 지난 실패를 재생하면 다시 보내도 같은
+        # 실패뿐이다 (#538 · #671)
         idempotency.forget_run(replayed)
 
     # 아이 건강정보 동의의 현재 값을 입력 한 번에 한 번 읽어 Agent 까지 값으로 넘긴다 (#372).
     # 🚨 읽기에 실패하면 False 로 바꾸지 않고 예외로 끝낸다 — "동의 안 함" 으로 넘기면 Agent 가
     #    health_safety 를 읽지 않고 알레르기 필터 없이 추천을 연다. 한도 · 되묻기 맥락 · 채널 ·
     #    키 기억보다 앞이라 실패한 요청이 하루 한도와 한 번뿐인 맥락을 먹지 않는다.
-    # 🚨 되묻기 맥락 확인(get)보다도 앞이다. get 과 consume 사이에 await 가 생기면 같은
-    #    reply_to 로 거의 동시에 온 두 답이 둘 다 확인을 통과해 관찰이 두 행이 된다.
     #    공통 의존성(AccessibleChild)에 넣지 않았다 — 아이 주소를 쓰는 모든 요청에 쿼리가 붙는다.
     health_consent = await child_health_granted(session, child_id=child.child_id)
     # 좌표는 위치정보 동의가 있을 때만 Agent 로 넘긴다 (#380). 좌표가 안 왔으면 읽지도 않는다.
     # 동의가 없으면 버리고 실내 전용으로 돈다 — 화면이 보냈어도 동의 없이 쓰지 않는다.
     # 🚨 좌표는 저장 · 로그 · 예외 문구에 싣지 않는다. CoarseLocation 이 한 번 더 자르고
-    #    repr 을 막는다. 동의 읽기와 같은 이유로 되묻기 맥락 확인(get)보다 앞이다 (await)
+    #    repr 을 막는다. 동의 읽기와 같은 이유로 되묻기 맥락 찜하기(claim)보다 앞이다
     location = None
     if body.location is not None and await location_granted(session, parent_id=parent.parent_id):
         location = entrypoint.CoarseLocation(lat=body.location.lat, lon=body.location.lon)
 
     continuation = None
     if body.reply_to is not None:
-        # 확인만 한다. 한도에 걸려 429 로 끝나도 맥락은 남아야 한다
-        continuation = pending_reply.get(
+        # 확인과 "사용 중" 표시가 DB 한 문장이다(`run_hold`, #877). 같은 reply_to 로 거의 동시에
+        # 온 두 답은 워커가 달라도 하나만 받는다 — 같은 질문에 두 번 답하면 관찰이 두 행이 된다.
+        # 한도보다 앞이라 늦게 온 답은 한도를 쓰기 전에 400 으로 끝난다(#439 리뷰).
+        # 지우지 않고 "사용 중" 으로 둔다. 러너가 끝나며 지우거나 표시를 푼다 (#564)
+        continuation = await pending_reply.claim(
             run_id=body.reply_to, parent_id=parent.parent_id, child_id=child.child_id
         )
         if continuation is None:
@@ -515,57 +598,70 @@ async def create_input(
                 "이전 질문을 이어서 확인할 수 없어요.",
             )
 
-    # 재생 뒤에 센다 — 같은 키 재생은 새 입력이 아니다. Agent 를 부르기 전에 막는다 (quota.py).
-    # 되묻기 답도 센다. 이어받기 run 도 Memory 를 부른다. 같은 조각의 되묻기는 처음 질문까지
-    # 4회가 상한이지만(#251 · agents/memory/agent.py MAX_QUESTIONS), 조각마다 새로 열리니
-    # 답을 빼면 하루 한도를 비껴간다.
-    if not quota.consume(
-        parent_id=parent.parent_id, today=quota.today_kst(), limit=settings.INPUT_DAILY_LIMIT
-    ):
-        raise ApiError(429, "daily_input_limit", "오늘은 더 적을 수 없어요. 내일 다시 적어 주세요.")
-
-    if body.reply_to is not None:
-        # get 과 여기 사이에 await 가 없어서 같은 reply_to 로 온 다른 요청이 끼어들지 못한다.
-        # 🚨 이 사이에 await 를 넣지 말 것 — tests/unit/api/test_create_input_consent.py 의
-        #    "같은 되묻기에 거의 동시에 두 번 답하면 하나만 받는다" 가 막는다.
-        # 지우지 않고 "사용 중" 으로 둔다. 같은 질문에 두 번 답하면 관찰이 두 행이 된다.
-        # 러너가 끝나며 지우거나 표시를 푼다 (#564)
-        pending_reply.claim(
-            run_id=body.reply_to, parent_id=parent.parent_id, child_id=child.child_id
-        )
-
-    channel = registry.open_run(parent_id=parent.parent_id)
+    # 🚨 찜한 뒤 러너가 뜨기 전에 무엇이 터지든(429 · 한도 저장 오류 · 키 기억 실패) 표시를 푼다.
+    #    풀어 줄 러너가 없어서, 풀지 않으면 15분 동안 그 질문에 답할 수 없다 (#564 · #887 리뷰)
     try:
-        idempotency.remember(**scope, replay=channel.run_id)
-    except Exception:
-        # 러너가 안 떠서 이 채널은 아무도 닫지 않는다. 닫아야 지울 예약이 걸린다 (#536 리뷰)
-        channel.close()
-        # 표시를 풀어 줄 러너도 없다. 풀지 않으면 15분 동안 그 질문에 답할 수 없다 (#564)
-        if body.reply_to is not None:
-            pending_reply.release(body.reply_to)
+        # 재생 뒤에 센다 — 같은 키 재생은 새 입력이 아니다. Agent 를 부르기 전에 막는다 (quota.py).
+        # 되묻기 답도 센다. 이어받기 run 도 Memory 를 부른다. 같은 조각의 되묻기는 처음 질문까지
+        # 4회가 상한이지만(#251 · agents/memory/agent.py MAX_QUESTIONS), 조각마다 새로 열리니
+        # 답을 빼면 하루 한도를 비껴간다.
+        if not await quota.consume(
+            parent_id=parent.parent_id, today=quota.today_kst(), limit=settings.INPUT_DAILY_LIMIT
+        ):
+            raise ApiError(
+                429, "daily_input_limit", "오늘은 더 적을 수 없어요. 내일 다시 적어 주세요."
+            )
+
+        channel = registry.open_run(parent_id=parent.parent_id)
+        try:
+            # 채널 행이 표에 쓰인 뒤에 202 — 화면이 바로 다른 워커로 SSE 를 열어도 404 가 아니고,
+            # 같은 키 재시도도 다른 워커에서 이 run 을 찾는다 (#877 4단계 · #899 리뷰)
+            await channel.opened()
+            # 재생 확인 뒤에 같은 키가 겹쳐 왔으면 먼저 적은 요청만 러너를 띄운다 (idempotency.py)
+            winner = await idempotency.remember_first(**scope, replay=channel.run_id)
+        except Exception:
+            # 러너가 안 떠서 이 채널은 아무도 닫지 않는다. 닫아야 지울 예약이 걸린다 (#536 리뷰)
+            channel.close()
+            raise
+        if winner is not None:
+            # 진 요청 — 먼저 적힌 run 을 돌려준다. 러너를 안 띄우니 채널을 닫는 것도, 찜한 되묻기
+            # 맥락을 푸는 것도 여기서 한다(아래 except 는 예외에만 돈다).
+            # 🚨 하루 한도는 이미 1회 썼다 — 한도가 키 적기보다 앞이라서다. 순서는 그대로 둔다
+            channel.close()
+            if continuation is not None and body.reply_to is not None:
+                await tidy(pending_reply.release(body.reply_to), "되묻기 표시 풀기", body.reply_to)
+            return CreateInputResponse(run_id=winner)
+        # 대화 기록(#228). 접수한 시각으로 날짜를 정한다 — run 이 끝나 행을 쓰는 시각이 아니다
+        record = chat_record.TurnRecorder(
+            parent_id=parent.parent_id,
+            child_id=child.child_id,
+            run_id=channel.run_id,
+            raw_text=body.text,
+            reply_to=body.reply_to,
+            accepted_at=datetime.now(UTC),
+        )
+        # 보호자는 본문이 아니라 토큰에서 — Memory 가 작성자로 적어서 보호자의 말이 아이의 사실이
+        # 되지 않는다 (§2).
+        job = runner.agent_job(
+            child_id=child.child_id,
+            birth_date=child.birth_date,
+            child_health_granted=health_consent,
+            location=location,
+            activity_weather=getattr(request.app.state, "activity_weather", None),
+            activity_events=getattr(request.app.state, "activity_events", None),
+            # 병원 어댑터만 넘긴다. 좌표는 Health 에 넘기지 않는다 — 위 위치 동의 확인이 약관의 판을
+            # 보지 않아서다(runner.agent_job · #586)
+            health_places=getattr(request.app.state, "health_places", None),
+            parent_id=parent.parent_id,
+            raw_text=body.text,
+            continuation=continuation,
+            reply_to=body.reply_to,
+            on_event=record.add,
+        )
+        runner.start(channel, job, raw_text=body.text, on_end=record.save)
+    except BaseException:
+        if continuation is not None and body.reply_to is not None:
+            # 풀기가 실패해도 원래 응답(429 · 503 …)을 덮지 않는다 — 표시는 15분 뒤 만료된다
+            await tidy(pending_reply.release(body.reply_to), "되묻기 표시 풀기", body.reply_to)
         raise
-    # 대화 기록(#228). 접수한 시각으로 날짜를 정한다 — run 이 끝나 행을 쓰는 시각이 아니다
-    record = chat_record.TurnRecorder(
-        parent_id=parent.parent_id,
-        child_id=child.child_id,
-        run_id=channel.run_id,
-        raw_text=body.text,
-        reply_to=body.reply_to,
-        accepted_at=datetime.now(UTC),
-    )
-    # 보호자는 본문이 아니라 토큰에서 — Memory 가 작성자로 적어서 보호자의 말이 아이의 사실이
-    # 되지 않는다 (§2).
-    job = runner.agent_job(
-        child_id=child.child_id,
-        birth_date=child.birth_date,
-        child_health_granted=health_consent,
-        location=location,
-        activity_weather=getattr(request.app.state, "activity_weather", None),
-        parent_id=parent.parent_id,
-        raw_text=body.text,
-        continuation=continuation,
-        reply_to=body.reply_to,
-        on_event=record.add,
-    )
-    runner.start(channel, job, raw_text=body.text, on_end=record.save)
     return CreateInputResponse(run_id=channel.run_id)
