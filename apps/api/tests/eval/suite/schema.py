@@ -143,6 +143,7 @@ class Expect(_Strict):
     guidance: tuple[str, ...] = ()  # 이 안내 코드가 모두 나가야 한다
     event_drafts_min: int | None = None
     draft_items: DraftItemsExpect | None = None  # 일정 초안의 준비물
+    questions_min: int | None = None  # 이만큼은 되물어야 한다 — 음식 이름 없는 끼니(#929 B)
     questions_max: int | None = None
     # 삭제 후보 제안(propose_delete)이 나와야 한다(True) / 나오면 안 된다(False). 지우는 것 자체는
     # 불변식 I15 가 본다 — 여기는 "후보를 냈나" 만
