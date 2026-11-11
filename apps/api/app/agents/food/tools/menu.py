@@ -7,7 +7,7 @@ from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import DateParseError
 from app.agents.common.food_safety import SafetyVerdict, filter_food_safety
 from app.agents.food.amount_rules import amount_of, is_amount_text
-from app.agents.food.context import FoodContext
+from app.agents.food.context import FoodContext, read_daycare_rows
 from app.agents.food.daycare_intent import (
     is_question,
     is_uncertain,
@@ -29,6 +29,7 @@ from app.agents.food.meal_dates import (
 )
 from app.agents.food.menu_resolver import MenuResolver
 from app.agents.food.readouts import (
+    CLOSED_DAYCARE_UNREAD,
     DAYCARE_ABSENT,
     DAYCARE_ALLERGY_CONFLICT,
     DAYCARE_ALLERGY_UNCHECKED,
@@ -55,6 +56,7 @@ from app.agents.food.schemas.daycare import (
 from app.agents.food.schemas.menu import DaycareMenuArgs, MenuDay
 from app.agents.food.store.ports import (
     DAYCARE_SLOT_ORDER,
+    DaycareLookupError,
     DaycareMealRow,
     DaycareSlot,
     MenuCatalogRow,
@@ -63,6 +65,11 @@ from app.agents.food.store.ports import (
 from app.rules.allergen import ALLERGEN_NAMES
 from app.rules.menu_key import normalize_menu_key
 
+# 급식 표를 읽지 못했을 때 모델에게 돌려주는 말. 급식과 겹치는지는 보지 않고 후보에서 고르게 한다
+_DAYCARE_READ_FAILED = (
+    "급식 메뉴를 지금 읽지 못했다. 식단 추천이면 급식과 겹치는지는 보지 말고 후보에서 고른다. "
+    "급식을 고치는 요청이면 고치지 말고 keep_daycare_meal 로 끝낸다."
+)
 _DAY_OFFSET: dict[MenuDay, int] = {MenuDay.YESTERDAY: -1, MenuDay.TODAY: 0, MenuDay.TOMORROW: 1}
 
 
@@ -85,10 +92,14 @@ async def lookup_daycare_menu(context: FoodContext, args: DaycareMenuArgs) -> To
     """
     ports = context.ports
     day = context.today + timedelta(days=_DAY_OFFSET[MenuDay(args.day)])
-    rows = sorted(
-        await ports.daycare.rows(child_id=context.child_id, date_from=day, date_to=day),
-        key=lambda row: DAYCARE_SLOT_ORDER[row.meal_slot],
-    )
+    try:
+        found_rows = await read_daycare_rows(
+            context, date_from=day, date_to=day, at="lookup_daycare_menu"
+        )
+    except DaycareLookupError:
+        # 모델이 읽는 메시지다 — 원문 · 메뉴를 싣지 않고, 다음 행동을 적는다
+        return fail("query", "daycare_menu", ErrorCode.UPSTREAM_ERROR, _DAYCARE_READ_FAILED)
+    rows = sorted(found_rows, key=lambda row: DAYCARE_SLOT_ORDER[row.meal_slot])
     keys = tuple(dict.fromkeys(key for row in rows for key in row.menu_keys))
     entries = context.state.safety
 
@@ -204,7 +215,12 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
     if day is None:
         return _stop(context, "update", stop)
     ports = context.ports
-    rows = await ports.daycare.rows(child_id=context.child_id, date_from=day, date_to=day)
+    try:
+        rows = await read_daycare_rows(
+            context, date_from=day, date_to=day, at="update_daycare_meal"
+        )
+    except DaycareLookupError:
+        return _stop(context, "update", CLOSED_DAYCARE_UNREAD)
     row, stop = _pick_row(rows, args.slot)
     if row is None:
         if stop == DAYCARE_NOT_FOUND and _amount_only(args) and day.weekday() < 5:
@@ -325,7 +341,12 @@ async def delete_daycare_meal(context: FoodContext, args: DeleteDaycareMealArgs)
     if day is None:
         return _stop(context, "delete", stop)
     ports = context.ports
-    rows = await ports.daycare.rows(child_id=context.child_id, date_from=day, date_to=day)
+    try:
+        rows = await read_daycare_rows(
+            context, date_from=day, date_to=day, at="delete_daycare_meal"
+        )
+    except DaycareLookupError:
+        return _stop(context, "delete", CLOSED_DAYCARE_UNREAD)
     targets = [row for row in rows if args.slot is None or row.meal_slot == args.slot]
     if not targets:
         return _stop(context, "delete", DAYCARE_NOT_FOUND)
@@ -467,9 +488,12 @@ async def show_daycare_meal(context: FoodContext, args: DaycareLookupArgs) -> To
     if date_from < context.today - timedelta(days=EDIT_PAST_DAYS):
         return _stop(context, "query", DAYCARE_OUT_OF_RANGE)
 
-    rows = await context.ports.daycare.rows(
-        child_id=context.child_id, date_from=date_from, date_to=date_to
-    )
+    try:
+        rows = await read_daycare_rows(
+            context, date_from=date_from, date_to=date_to, at="show_daycare_meal"
+        )
+    except DaycareLookupError:
+        return _stop(context, "query", CLOSED_DAYCARE_UNREAD)
     state.readouts = lookup_readouts(rows, date_from=date_from, date_to=date_to)
     return ok(
         "query",

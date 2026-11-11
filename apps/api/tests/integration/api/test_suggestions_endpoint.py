@@ -1158,6 +1158,7 @@ async def test_05_도_Food_카탈로그_어댑터를_넘긴다(db_client, bearer
     assert type(calls[0]["food_catalog"]).__name__ == "DbMenuCatalog"
     assert type(calls[0]["food_recipes"]).__name__ == "DbRecipeCatalog"
     assert type(calls[0]["food_suggestions"]).__name__ == "DbSuggestionHistory"
+    assert type(calls[0]["food_daycare"]).__name__ == "DbDaycareMeals"
 
 
 # ── Food 일반 추천의 메뉴 근거 (#442) ────────────────────────────────────

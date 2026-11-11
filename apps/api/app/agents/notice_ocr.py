@@ -17,11 +17,19 @@ from zoneinfo import ZoneInfo
 from app.core.config import settings
 from app.domains.notice.assemble import NewNotice, assemble
 from app.domains.notice.models import NoticeDocKind, NoticeInputFormat
-from app.providers.meal_plan.image_ocr import ImageOcrMealPlanReader, ReadDeadlineExceeded
-from app.providers.meal_plan.schema import MealPlanJSON
+from app.providers.meal_plan.image_ocr import (
+    ImageOcrMealPlanReader,
+    MissedRange,
+    ReadDeadlineExceeded,
+    merge_outputs,
+)
+from app.providers.meal_plan.schema import MealPlanJSON, UnparsedCell
 from app.providers.model_errors import MODEL_CALL_FAILURES
 from app.providers.notice.document_text import UnreadableDocument, normalize_image
 from app.providers.notice.extractor import NoticeExtractor
+from app.rules.meal_plan_coverage import ThinRange, thin_ranges
+from app.rules.meal_plan_month import MealMonth, decide_year_month
+from app.rules.menu_key import is_nutrition_line, menu_display_name
 from app.rules.notice_text import clean_text
 
 log = logging.getLogger(__name__)
@@ -40,6 +48,12 @@ class PhotoReading:
     meal_plan: MealPlanJSON | None
     meal_failed: bool = False  # 식단표인데 표를 못 읽었다. 공지 항목은 살아 있다
     meal_timed_out: bool = False  # 못 읽은 이유가 시간이다 — 사진을 다시 찍으라고 하지 않는다
+    meal_month: MealMonth | None = None
+    """급식표의 연월과 연도의 출처(`rules/meal_plan_month`). `year` 가 None 이면 연도를 몰라 급식을
+    내보내지 않았다(`meal_failed`) — 화면은 "언제 급식표인지 알 수 없어요" 한 줄을 본다."""
+    meal_thin: tuple[ThinRange, ...] = ()
+    """조용히 덜 읽혔을 수 있는 구간(`flag_thin_ranges`). 화면 줄은 이미 `meal_plan.unparsed` 에
+    있다 — 이 값은 서버 로그(run id 를 아는 `photo_run`)가 쓴다."""
 
 
 def read_photo(
@@ -90,7 +104,35 @@ def read_photo(
             log.warning("식단표 진행 알림 실패 — 표는 계속 읽는다 (%s)", type(e).__name__)
     reader = ImageOcrMealPlanReader.from_settings(settings, max_calls=2, deadline=meal_deadline)
     try:
-        return PhotoReading(notice=notice, meal_plan=reader.read(image, mime_type=mime_type))
+        parts = reader.read_parts(image, mime_type=mime_type)
+        # 🚨 연도는 모델에게 묻지 않는다 (§2 · §3).
+        #    월은 모델이 읽은 것, 연도는 사진 글자 또는 받은 날이다
+        decided = decide_year_month(
+            (part.year_month for part in parts.outputs),
+            transcript=source,
+            received_on=received_at.astimezone(KST).date(),
+        )
+        if decided is None:
+            # 월을 못 읽었거나 두 호출의 월이 다르다 — 어느 달인지 모르면 날짜를 하나도 쓸 수 없다
+            log.warning("meal_plan 의 월을 정하지 못했다 — 공지 항목만 낸다")
+            return PhotoReading(notice=notice, meal_plan=None, meal_failed=True)
+        if decided.source != "written":
+            # 🚨 연도를 사진 글자에서 그대로 얻지 못했다. 추정했다는 안내를 그릴 화면 통로가 아직
+            #    없어서 여기 남긴다(docs/meal-plan 결정 ④). 메뉴 글자는 남기지 않는다
+            log.warning("meal_plan 연도를 사진 글자에서 정하지 못했다 — %s", decided.source)
+        if decided.year is None:
+            # 원문에 연도가 없고 받은 날의 앞뒤 한 달 밖이다 — 짐작하지 않는다. 급식을 날짜로
+            # 내보내지 않고 "언제 급식표인지 알 수 없어요" 한 줄만 낸다 (photo_run.build_entries)
+            return PhotoReading(notice=notice, meal_plan=None, meal_failed=True, meal_month=decided)
+        plan = names_from_raw(
+            merge_outputs(
+                parts.outputs,
+                year_month=f"{decided.year:04d}-{decided.month:02d}",
+                missed=parts.missed,
+            )
+        )
+        plan, thin = flag_thin_ranges(plan, ranges=parts.ranges, missed=parts.missed)
+        return PhotoReading(notice=notice, meal_plan=plan, meal_month=decided, meal_thin=thin)
     except ReadDeadlineExceeded:
         log.warning("meal_plan 읽기가 기한 안에 끝나지 않았다 — 공지 항목만 낸다")
         return PhotoReading(notice=notice, meal_plan=None, meal_failed=True, meal_timed_out=True)
@@ -99,3 +141,67 @@ def read_photo(
         # 식단표 호출만 시간 초과 · 429 로 실패해도 읽은 공지 항목까지 버리지 않는다
         log.warning("meal_plan 읽기 실패 — 공지 항목만 낸다 (%s)", type(e).__name__)
         return PhotoReading(notice=notice, meal_plan=None, meal_failed=True)
+
+
+def names_from_raw(plan: MealPlanJSON) -> MealPlanJSON:
+    """메뉴 이름을 모델의 `name` 대신 원문(`raw`)에서 코드로 다시 만든다 (#908).
+
+    화면 제목과 저장 키가 이 이름으로 만들어진다(`photo_run._meal_entries` → `meal_row`).
+    모델 이름에 찌꺼기가 붙은 적이 있어서(" Riot" · "/Optional?") 원문에서 번호 · 기호만 지운다.
+    응답 스키마는 그대로 둔다 — `name` 을 빼면 프롬프트 지문이 바뀐다.
+    급식표 eval(`scripts/meal_ocr_eval.py`)도 이 함수를 거쳐 운영과 같은 이름을 채점한다.
+
+    열량 · 영양 표기 줄("총 511 kcal" · "462/17")은 메뉴가 아니라서 뺀다 — 이름이 "총 kcal" 가 되어
+    가짜 메뉴로 저장됐다. 그 줄뿐인 끼니는 끼니째 뺀다. 이름을 못 읽은 칸이 아니라 급식이 없는
+    칸이다(`photo_run._meal_entries` 는 그런 끼니를 확인 항목으로 만들지 않는다).
+    """
+    fixed = plan.model_copy(deep=True)
+    for day in fixed.days:
+        for meal in day.meals:
+            meal.items = [item for item in meal.items if not is_nutrition_line(item.raw)]
+            for item in meal.items:
+                item.name = menu_display_name(item.raw)
+        day.meals = [meal for meal in day.meals if meal.items]
+    return fixed
+
+
+def flag_thin_ranges(
+    plan: MealPlanJSON,
+    *,
+    ranges: tuple[tuple[int, int], ...],
+    missed: tuple[MissedRange, ...] = (),
+) -> tuple[MealPlanJSON, tuple[ThinRange, ...]]:
+    """한 구간이 조용히 덜 읽혔으면 못 읽은 칸 한 줄을 더한다 (2026-11-11 실측).
+
+    뒤 호출이 16일 하나만 내고 정상 종료한 적이 있다 — 오류가 아니라 "읽지 못했어요" 줄이 나가지
+    않았다. 평일 수와 견주는 것은 규칙(`rules/meal_plan_coverage`)이 한다. 🚨 저장은 막지 않는다 —
+    읽은 급식은 그대로 두고, 한쪽 호출이 실패했을 때와 같은 통로(`unparsed`)로 한 줄만 더한다.
+
+    **읽은 날** — 화면에 흔적이 있거나 모델이 그 날을 답한 날이다.
+    - 메뉴가 하나라도 있는 날. 이름을 못 읽은 끼니도 못 읽은 칸으로 화면에 나가니 넣는다.
+    - 휴일 표시(`note`)가 있는 날 — 모델이 "그 날은 급식이 없다" 고 답했다. 빠뜨린 것이 아니다.
+      방학 · 연휴가 표에 적힌 달에 잘못 알리지 않는다.
+    - 날짜가 붙은 못 읽은 칸이 있는 날.
+    - 날짜만 내고 끼니도 휴일 표시도 없는 날은 넣지 않는다 — 화면에 아무것도 안 나가 조용히
+      빠진 것과 같다.
+    """
+    year, month = (int(x) for x in plan.year_month.split("-"))
+    read = {
+        day.day
+        for day in plan.days
+        if (day.note or "").strip() or any(meal.items for meal in day.meals)
+    }
+    read |= {cell.day for cell in plan.unparsed if cell.day is not None}
+    thin = thin_ranges(year, month, ranges, read, failed=((m.first, m.last) for m in missed))
+    if not thin:
+        return plan, ()
+    cells = [UnparsedCell(why=_thin_why(r)) for r in thin]
+    return plan.model_copy(update={"unparsed": [*plan.unparsed, *cells]}), thin
+
+
+def _thin_why(thin: ThinRange) -> str:
+    span = f"{thin.first}일~{thin.last}일 급식"
+    if thin.read_days == 0:
+        # 그 날짜가 없는 급식표(보름치)일 수도 있다 — "일부만 읽었어요" 라고 하지 않는다
+        return f"{span}은 찾지 못했어요. 사진에 이 날짜가 있는지 확인해 주세요."
+    return f"{span} 중 일부만 읽었어요. 사진과 비교해 주세요."

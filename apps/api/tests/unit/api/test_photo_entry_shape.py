@@ -174,3 +174,157 @@ def test_급식도_같은_칸을_싣는다() -> None:
 
     got = [(e["date"], e["past"]) for e in entries]
     assert got == [("2026-11-08", True), ("2026-11-09", False)]
+
+
+def test_급식_제목은_빈_이름을_잇지_않는다() -> None:
+    # 원문이 번호뿐인 항목("2")은 원문에서 만든 이름이 비어 있다(`menu_display_name`, #908).
+    # 그대로 이으면 화면 제목이 "밥, , 우유" 가 된다
+    from types import SimpleNamespace
+
+    from app.api.runs.photo_run import PhotoRun
+
+    names = ["밥", "", "우유", ""]
+    meal = SimpleNamespace(
+        meal_type=SimpleNamespace(value="lunch"),
+        items=[SimpleNamespace(name=name) for name in names],
+    )
+    plan = SimpleNamespace(
+        days=[SimpleNamespace(day=9, meals=[meal])],
+        unparsed=[],
+        date_of=lambda day: date(2026, 11, day),
+    )
+    run = PhotoRun("r1", None, None, 0.0)
+
+    (entry,) = _meal_entries(run, plan, today=TODAY)
+
+    assert entry["title"] == "밥, 우유"
+
+
+def test_이름이_하나도_없는_끼니는_읽지_못한_칸으로_보낸다() -> None:
+    # 원문이 번호뿐인 항목만 있는 끼니("2" · "1,5")는 이름이 전부 비어 제목이 "" 가 된다. 빈 제목
+    # 급식 항목이 화면에 나가면 저장 요청 전체가 422("제목이 비어 있어요")로 막힌다 — 조용히 빼지
+    # 않고, 모델이 못 읽었다고 한 칸(unparsed)과 같은 모양으로 확인을 받는다
+    from types import SimpleNamespace
+
+    from app.api.runs.photo_run import PhotoRun
+
+    def meal(meal_type: str, *items: tuple[str, str]) -> SimpleNamespace:
+        return SimpleNamespace(
+            meal_type=SimpleNamespace(value=meal_type),
+            items=[SimpleNamespace(name=name, raw=raw) for name, raw in items],
+        )
+
+    plan = SimpleNamespace(
+        days=[
+            SimpleNamespace(
+                day=9, meals=[meal("lunch", ("밥", "밥")), meal("snack_pm", ("", "2"), ("", "1,5"))]
+            )
+        ],
+        unparsed=[SimpleNamespace(day=None, meal_type=None, raw="생일식단", why="날짜 없는 열")],
+        date_of=lambda day: date(2026, 11, day),
+    )
+    run = PhotoRun("r1", None, None, 0.0)
+
+    entries = _meal_entries(run, plan, today=TODAY)
+
+    assert [e["id"] for e in entries] == [
+        "pe_meal_9_lunch",
+        "pe_meal_unread_0",
+        "pe_meal_unread_1",
+    ]
+    assert all(e["title"] for e in entries)  # 빈 제목 항목이 나가지 않는다
+    unread = entries[2]
+    assert (unread["kind"], unread["title"], unread["date"]) == ("meal", "2, 1,5", None)
+    # 어느 날 어느 끼니인지 보여야 보호자가 종이에서 찾는다 (날짜를 아는 칸만)
+    assert (unread["needs_review"], unread["review_reason"]) == (
+        True,
+        "11월 9일 오후 간식 — 이 칸은 읽지 못했어요.",
+    )
+    assert entries[1]["review_reason"] == "날짜 없는 열"  # 날짜 없는 칸은 이유만
+    assert list(run.meals) == ["pe_meal_9_lunch"]  # 저장할 끼니로 들고 있지 않는다
+
+
+def test_한_날에_같은_끼니가_두_번이면_앞의_것만_싣고_뒤는_읽지_못한_칸이다() -> None:
+    # 같은 끼니가 두 번 오면 항목 id 가 겹친다(pe_meal_9_lunch). 웹이 그대로 보내면 저장 전체가
+    # "같은 항목을 두 번 보냈어요" 로 막힌다 — 합치기의 같은 날 규칙처럼 앞의 것을 남긴다
+    from types import SimpleNamespace
+
+    from app.api.runs.photo_run import PhotoRun
+
+    def meal(*raws: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            meal_type=SimpleNamespace(value="lunch"),
+            items=[SimpleNamespace(name=r, raw=r) for r in raws],
+        )
+
+    plan = SimpleNamespace(
+        days=[SimpleNamespace(day=9, meals=[meal("흑미밥"), meal("현미밥", "미역국")])],
+        unparsed=[],
+        date_of=lambda day: date(2026, 11, day),
+    )
+    run = PhotoRun("r1", None, None)
+
+    entries = _meal_entries(run, plan, today=TODAY)
+
+    assert [(e["id"], e["title"], e["needs_review"]) for e in entries] == [
+        ("pe_meal_9_lunch", "흑미밥", False),
+        ("pe_meal_unread_0", "현미밥, 미역국", True),
+    ]
+    assert list(run.meals) == ["pe_meal_9_lunch"]
+
+
+def test_모델이_못_읽었다고_한_칸도_어느_날인지_보인다() -> None:
+    from types import SimpleNamespace
+
+    from app.api.runs.photo_run import PhotoRun
+
+    plan = SimpleNamespace(
+        days=[],
+        unparsed=[
+            SimpleNamespace(
+                day=4, meal_type=SimpleNamespace(value="lunch"), raw="빵(찐", why="잘림"
+            ),
+            SimpleNamespace(day=15, meal_type=None, raw="현미밥", why="두 번 읽힘"),
+            SimpleNamespace(day=31, meal_type=None, raw=None, why="흐림"),  # 11월에 없는 날
+        ],
+        date_of=lambda day: date(2026, 11, day),
+    )
+
+    entries = _meal_entries(PhotoRun("r1", None, None), plan, today=TODAY)
+
+    assert [e["review_reason"] for e in entries] == [
+        "11월 4일 점심 — 잘림",
+        "11월 15일 — 두 번 읽힘",
+        "흐림",
+    ]
+    assert all(e["date"] is None for e in entries)  # 저장하지 않는 칸이라 날짜 칸은 비운다
+
+
+def test_연도를_몰라_급식을_내지_않았으면_그_까닭_한_줄만_보인다() -> None:
+    # 원문에 연도가 없고 받은 날의 앞뒤 한 달 밖(11월에 받은 3월 급식표) — 짐작하지 않는다.
+    # "더 밝게 다시 찍어 주세요" 가 아니다 — 다시 찍어도 연도는 생기지 않는다
+    from types import SimpleNamespace
+
+    from app.agents.notice_ocr import PhotoReading
+    from app.api.runs.photo_run import PhotoRun, build_entries
+    from app.rules.meal_plan_month import MealMonth
+
+    reading = PhotoReading(
+        notice=SimpleNamespace(items=()),
+        meal_plan=None,
+        meal_failed=True,
+        meal_month=MealMonth(3, None, "unknown"),
+    )
+    run = PhotoRun("r1", None, None)
+
+    (entry,) = build_entries(run, reading, today=TODAY)
+
+    assert (entry["id"], entry["kind"], entry["date"], entry["needs_review"]) == (
+        "pe_meal_unread_0",
+        "meal",
+        None,
+        True,
+    )
+    assert "연도" in entry["review_reason"] and "3월" in entry["review_reason"]
+    assert "찍어" not in entry["review_reason"]
+    assert run.meals == {}  # 저장할 끼니가 없다

@@ -122,11 +122,14 @@ def recent_turns_loader(parent_id: UUID, child_id: UUID) -> entrypoint.LoadRecen
 
 
 def food_stores() -> dict[str, object]:
-    """Food 가 읽는 카탈로그 · 추천 이력 어댑터. 호출마다 짧은 세션을 연다 — 러너와 05 가 같이 쓴다.
+    """Food 가 읽는 카탈로그 · 추천 이력 · 급식 어댑터. 호출마다 짧은 세션을 연다.
+
+    러너와 05 가 같이 쓴다.
 
     입력 run 과 05 가 같은 어댑터를 넘겨야 두 경로의 후보 풀이 갈라지지 않는다. 만들 때는 세션을
     열지 않는다(`background_session` 을 함수로 넘길 뿐이다).
     """
+    from app.domains.daycare_meal.agent_reader import DbDaycareMeals
     from app.domains.food.agent_reader import DbMenuCatalog, DbRecipeCatalog
     from app.domains.suggestion.agent_reader import DbSuggestionHistory
 
@@ -134,6 +137,7 @@ def food_stores() -> dict[str, object]:
         "food_catalog": DbMenuCatalog(background_session),
         "food_recipes": DbRecipeCatalog(background_session),
         "food_suggestions": DbSuggestionHistory(background_session),
+        "food_daycare": DbDaycareMeals(background_session),
     }
 
 

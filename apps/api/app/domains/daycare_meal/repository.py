@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -82,3 +82,9 @@ async def list_daycare_meals(
         .order_by(DaycareMeal.serve_date, DaycareMeal.meal_slot)
     )
     return list((await session.scalars(stmt)).all())
+
+
+async def has_daycare_meals(session: AsyncSession, *, child_id: uuid.UUID) -> bool:
+    """아이의 급식 행이 하나라도 있나 — 날짜 무관. Food 포트(DaycareMealStore.has_rows)와 같다."""
+    stmt = select(exists().where(DaycareMeal.child_id == child_id))
+    return bool(await session.scalar(stmt))

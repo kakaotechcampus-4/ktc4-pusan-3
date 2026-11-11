@@ -47,7 +47,7 @@ from app.agents.common.food_safety import filter_food_safety
 from app.agents.common.gate import Gate
 from app.agents.common.tool_schema import ToolDefinition, build_tool_specs
 from app.agents.food.context import FoodContext
-from app.agents.food.readouts import CHECK_BLOCKED_SAFETY
+from app.agents.food.readouts import CHECK_BLOCKED_SAFETY, CLOSED_DAYCARE_UNREAD
 from app.agents.food.result import ErrorCode, ToolResult, fail
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.schemas.tool_defs import TOOL_DEFINITIONS
@@ -151,7 +151,10 @@ def closed_readout_key(task: FoodTaskType, gate: Gate) -> str | None:
         # 영양 안내가 식품군("달걀 반찬 늘리기")을 말하므로, 걸러 낼 알레르기를 모르면 열지 않는다
         return None if gate.safety_ok else "blocked.safety"
     if task in (FoodTaskType.DAYCARE_MEAL, FoodTaskType.DAYCARE_LOOKUP):
-        # 조회는 알레르기를 쓰지 않아 `safety_ok` · 단계로 닫지 않는다. 급식 행이 없을 때만 닫힌다
+        # 조회는 알레르기를 쓰지 않아 `safety_ok` · 단계로 닫지 않는다. 급식 행이 없을 때나
+        # 급식 표를 못 읽었을 때만 닫힌다. 못 읽은 것은 없다는 말이 아니라서 문구가 따로다(#956)
+        if gate.data.daycare_unread:
+            return CLOSED_DAYCARE_UNREAD
         if not gate.data.daycare_meal:
             return "closed.no_daycare"
         return NOT_READY.get(task)

@@ -72,7 +72,11 @@ async def test_식단표_읽기에는_전체_상한보다_이른_기한을_넘�
 def _meal_failed_reason(*, timed_out: bool) -> str:
     run = photo_run.open_photo_run(run_id="run_test", parent_id=uuid.uuid4(), child_id=uuid.uuid4())
     reading = SimpleNamespace(
-        notice=SimpleNamespace(items=[]), meal_plan=None, meal_failed=True, meal_timed_out=timed_out
+        notice=SimpleNamespace(items=[]),
+        meal_plan=None,
+        meal_failed=True,
+        meal_timed_out=timed_out,
+        meal_month=None,
     )
     (entry,) = photo_run.build_entries(run, reading, today=date(2026, 11, 10))
     return entry["review_reason"]

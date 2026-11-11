@@ -9,8 +9,8 @@
 C1 (docs/agents/eval/MEAL_OCR_EVAL.md §2, 11-09 PM) — 정답에 없는 메뉴가 그 날짜 · 끼니의
 급식으로 읽힌 끼니. 입력 하나 = 끼니 하나(날짜 × 끼니). 메뉴를 빼먹기만 한 끼니는 일반 실패다.
 알레르기 번호 · 공백 차이는 실패로 세지 않는다 (10-09 부터 서비스가 번호를 읽지 않는다).
-운영이 화면 · 저장에 싣는 것을 잰다 (§3) — 항목은 원문과 이름이 둘 다 맞아야 하고, 운영이 버리는
-끼니(아침 · 저녁)는 보지 않는다.
+운영이 화면 · 저장에 싣는 것을 잰다 (§3) — 이름은 운영처럼 원문에서 만든 것(`names_from_raw`)을
+보고, 운영이 버리는 끼니(아침 · 저녁)는 보지 않는다. 모델이 낸 이름이 깨진 횟수는 참고로만 센다.
 반복이 끝나면 측정 이력에 적을 C1 `a/b` · 안정 오답 · 불안정과 실행 메타
 (`tests/eval/agents/live_run_meta.json`)를 남긴다. 한 번도 못 읽으면 남기지 않고 종료 코드 1.
 """
@@ -26,6 +26,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.agents.notice_ocr import names_from_raw
 from app.core.config import settings
 from app.domains.daycare_meal.models import DaycareSlot
 from app.providers.meal_plan.image_ocr import (
@@ -35,6 +36,7 @@ from app.providers.meal_plan.image_ocr import (
 )
 from app.providers.meal_plan.schema import MealPlanJSON, MealPlanSource, MenuItem
 from app.rules.allergen import parse_allergens, strip_allergen_marks
+from app.rules.menu_key import menu_display_name
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FIXTURE = ROOT / "tests" / "fixtures" / "meal_plan_2025_01.json"
@@ -217,8 +219,10 @@ def menu_keys(raw: str) -> set[str]:
 
     정답셋은 "…,우유2" 를 항목 2개로 나누고 "A 또는 B" 는 한 항목으로 두는데, 모델이 붙이거나
     나눠도 메뉴가 같으면 같게 본다. 알레르기 번호 사이 쉼표는 번호를 먼저 떼서 나누지 않는다.
+    번호를 떼는 것과 기호 정리(끝의 ` · 겹친 && 등)는 운영이 이름을 만들 때와 같은 함수
+    (`menu_display_name`)로 한다 — 운영 화면에서 같은 이름이면 같은 메뉴다. 글자가 다르면 다르다.
     """
-    keys = {menu_key(part) for part in _MENU_SEP.split(strip_allergen_marks(raw))}
+    keys = {menu_key(part) for part in _MENU_SEP.split(menu_display_name(raw))}
     return keys - {""}
 
 
@@ -240,9 +244,10 @@ _HANGUL = re.compile(r"[가-힣]")
 def stray_words(name: str, raw: str) -> list[str]:
     """이름(`name`)의 낱말 가운데 제 원문(`raw`)에 없는 것.
 
-    화면 제목과 저장 키는 원문이 아니라 이름으로 만든다 (`photo_run._meal_entries`). 이름은 원문에서
-    번호 · 분량 · 대체 메뉴를 뺀 것이라 원문의 일부여도 맞다 — `백김치9(백깍두기9)` 의 이름
-    `백김치`. 낱말은 한글 · 영문이 이어진 덩어리로 끊는다 (`증편Riot` → `증편` · `Riot`).
+    운영은 이름을 원문에서 만들어(`names_from_raw`) 이 값이 늘 비지만, 채점은 받은 이름 그대로
+    본다 — 모델 이름의 깨짐(`model_name_breaks`)을 세는 데도 쓴다. 이름은 원문에서 번호 · 분량 ·
+    대체 메뉴를 뺀 것이라 원문의 일부여도 맞다 — `백김치9(백깍두기9)` 의 이름 `백김치`.
+    낱말은 한글 · 영문이 이어진 덩어리로 끊는다 (`증편Riot` → `증편` · `Riot`).
     """
     whole = _letters(raw)
     return [word for word in _WORD.findall(name) if _letters(word) not in whole]
@@ -252,9 +257,8 @@ def is_another_menu(stray: list[str]) -> bool:
     """원문에 없는 낱말이 다른 음식 이름인가 (C1), 깨진 출력의 찌꺼기인가 (일반 실패).
 
     한글 낱말이면 다른 음식으로 본다 — 원문 `현미밥` 에 이름 `흑미밥`. 한글이 아닌 것뿐이면
-    찌꺼기다 — `백김치(백깍두기 Riot`. 같은 음식이고, 저장되면 카탈로그에 없는 메뉴가 되어 알레르기
-    판정이 "확인 못 함" 으로 나온다(안전함으로 나오지 않는다). 찌꺼기가 한글이면 다른 음식으로
-    잡힌다 — 헷갈릴 때 엄하게 세는 쪽이다.
+    찌꺼기다 — `백김치(백깍두기 Riot`. 찌꺼기가 한글이면 다른 음식으로 잡힌다 — 헷갈릴 때 엄하게
+    세는 쪽이다. 운영은 이 이름을 쓰지 않는다(#908) — 모델 이름 깨짐(참고)의 종류를 가르는 데 쓴다.
     """
     return any(_HANGUL.search(word) for word in stray)
 
@@ -292,6 +296,26 @@ def grade_slots(expected: MealPlanJSON, actual: MealPlanJSON) -> dict[Slot, Slot
             garbled=garbled,
         )
     return graded
+
+
+def model_name_breaks(plan: MealPlanJSON) -> list[str]:
+    """모델이 낸 이름(`name`) 중 제 원문에 없는 낱말이 든 항목 — 참고 지표.
+
+    운영은 이 이름을 쓰지 않고 원문에서 만든다(`names_from_raw`). C1 · 실패에 넣지 않고 프롬프트가
+    바뀔 때 모델 출력이 나빠졌는지만 본다. 운영이 싣는 끼니(`SERVED`)만 센다.
+    원문에 없는 낱말(`stray_words`)과 원문에 없는 기호(`}{"` 같은 것, 11-11 측정)를 다 센다.
+    """
+    breaks = []
+    for key, items in _meals(plan).items():
+        if key[1] not in SERVED:
+            continue
+        for it in items:
+            stray = stray_words(it.name, it.raw)
+            symbols = {ch for ch in it.name if not (ch.isalnum() or ch.isspace())} - set(it.raw)
+            if stray or symbols:
+                kind = " · 다른 음식 낱말" if is_another_menu(stray) else ""
+                breaks.append(f"{it.raw} (이름: {it.name}){kind}")
+    return breaks
 
 
 def failed_run(expected: MealPlanJSON) -> MealPlanJSON:
@@ -488,6 +512,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     stem = f"meal_ocr_{args.model.replace('/', '_')}_{args.effort}"
     plans: list[MealPlanJSON] = []  # 채점용 — 읽기 실패 회차는 `failed_run` 으로 채운다
     read: list[MealPlanJSON] = []  # 실제로 읽힌 회차만
+    name_breaks: list[int] = []  # 읽힌 회차마다 모델 이름 깨짐(참고) 항목 수
     total_cost = 0.0
     for n in range(1, args.repeat + 1):
         reader = new_reader()
@@ -513,8 +538,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             plans.append(failed_run(expected))
             print(f"{usage_line} · 읽기 실패 {error}")
             continue
-        plans.append(plan)
-        read.append(plan)
+        # 저장 파일은 모델 출력 그대로다 — 다시 채점할 때 모델 이름 깨짐도 다시 셀 수 있다
+        name_breaks.append(len(model_name_breaks(plan)))
+        served = names_from_raw(plan)  # 운영과 같은 이름 (notice_ocr.read_photo)
+        plans.append(served)
+        read.append(served)
         out = out_dir / f"{stem}_run{n}.json"
         out.write_text(plan.model_dump_json(indent=2, exclude_none=False), encoding="utf-8")
         print(f"{usage_line} · 저장 {out}")
@@ -533,6 +561,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     print_report(grade(expected, read[-1]))
     print("\n── 측정 이력 칸 ──")
     print_c1_report(summarize_runs(expected, plans))
+    print(
+        f"모델 이름 깨짐(참고) : {sum(name_breaks)}항목 · 회차별 {name_breaks}"
+        "  (운영은 원문에서 이름을 만들어 화면 · 저장에 가지 않는다)"
+    )
     if failures:
         print(
             f"읽기 실패 {failures}/{args.repeat}회 — 그 회차는 모든 끼니를 빼먹은 것으로 셌다."

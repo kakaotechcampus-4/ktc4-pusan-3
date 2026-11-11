@@ -104,6 +104,7 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 - 레시피 행은 받지 않는다 — DB 는 `source` CHECK, 코드는 `RECIPE_SOURCES`(`store/ports.py`)로 막는다.
 - 운영 트래픽을 API에 직접 걸지 않는다. 매일 새벽 배치(FT-19) + 카탈로그에 없을 때(캐시 미스) 1회 — 그 1회는 Food 요청 중에 부르고, 저장은 어댑터가 한다.
 - 배치는 요청 중 조회와 **같은 규칙으로 행을 고른다**(`nutrition_source.pick_nutrition` — 품목대표 · 이름 정확히 일치 · 그룹 순서). 다르게 고르면 같은 메뉴가 배치 전후로 다른 영양값을 갖는다. **✅ 정함(10-13, #321 파트 2)** — 이 함수는 `app.core.nutrition_pick` 으로 내려왔다(배치·Agent 공용, apps/api/CLAUDE.md 레이어 경계). 배치는 받은 품목대표 행을 그대로 `nutrition_facts_by_key(rows)` 에 넘겨 `dict[menu_key, NutritionFacts]` 를 받는다 — 메뉴마다 직접 `pick_nutrition_row` 를 부를 필요가 없다. (#326 코멘트로 BE 에 전달 예정)
+- 급식표 사진 저장(`photo_run.meal_row`)만 `normalize_menu_key` 위에 괄호 안 음식 이름을 키로 하나 더 싣는다(`meal_menu_keys`) — [급식표 파이프라인 결정 ⑤](../../meal-plan/meal-plan-pipeline-v1.md).
 
 ### 1-1. `recipe_catalog` — 레시피 카탈로그 (추천 후보) · 재료명 정리 표
 
@@ -274,6 +275,8 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 - 모델은 tool 을 꼭 불러야 끝나서(`required`) 묻는 말 · 가정도 쓰기로 올 수 있다. 원문을 코드가 본다(`daycare_intent`) — 묻는 말이면 쓰지 않고, 가정 · 짐작이거나 빠졌다는 말이 없으면 지우지 않는다. 바뀐 게 없으면 모델은 쓰지 않는 `keep_daycare_meal` 로 끝낸다
 - 적재(INSERT)는 백엔드 · OCR, 발화로 고치기(UPDATE · DELETE)는 Food 다. 메뉴는 집합 연산(`menu_keys − removed + added`)이라 같은 갱신을 두 번 해도 결과가 같다. 메뉴를 고치면 `caregiver_checked=true`, 양만 말하면 그대로다. 양은 양 사전(`amount_terms.yaml`)에 있는 말일 때만 바꾼다
 - "바꿨어요" 문구는 쓰기가 commit 된 뒤에만 낸다. 넣은 메뉴가 알레르기와 겹치면 저장은 하고 경고를 함께 낸다
+- 어댑터는 `app/domains/daycare_meal/agent_reader.py` 의 `DbDaycareMeals` 다. 러너와 05 가 `agent_ports.food_stores()` 로 같이 넘긴다(`food_daycare`) — 안 넘기면 빈 메모리라 급식이 있어도 "등록된 기관 급식 정보가 없어요" 로 닫힌다(#956). `update` 는 `menu_keys` · `amount_factor` · `amount_known` · `caregiver_checked` 넷만 바꾸고(날짜 · 끼니 · 출처는 둔다), `delete` 는 다른 아이 id 가 하나라도 섞이면 아무것도 지우지 않는다
+- 급식 표를 읽지 못하면(`DaycareLookupError`) 없다고 하지 않는다. 급식 조회 · 고치기는 도중에 못 읽어도 `closed.daycare_unread` · `blocked` 로 닫고(게이트에서 못 읽은 것과 같다), 영양소 분석 · 식단 추천은 급식 행 없이 계속 간다. 한 task 에서 한 번 못 읽으면 다시 읽지 않는다(`context.read_daycare_rows` 한 곳)([`영양소_계산_설계.md`](영양소_계산_설계.md) §3). 쓰기(`update` · `delete`) 실패는 그대로 Food 실패다 — 못 썼는데 "바꿨어요" 를 낼 수 없다
 
 ---
 

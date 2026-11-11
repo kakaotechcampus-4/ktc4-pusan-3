@@ -1493,6 +1493,7 @@ async def test_Food_카탈로그_어댑터를_진입점에_넘긴다(monkeypatch
     assert type(seen["food_recipes"]).__name__ == "DbRecipeCatalog"
     assert type(seen["food_catalog"]).__name__ == "DbMenuCatalog"
     assert type(seen["food_suggestions"]).__name__ == "DbSuggestionHistory"
+    assert type(seen["food_daycare"]).__name__ == "DbDaycareMeals"
     assert len(opened) == 1  # run 세션 하나뿐 — 어댑터는 호출할 때마다 짧은 세션을 연다
 
 
