@@ -12,6 +12,7 @@ from typing import Any
 
 from app.agents.food.amount_rules import amount_of, portion_scale_for
 from app.agents.food.context import FoodContext, read_daycare_rows
+from app.agents.food.food_groups import appearance_food_groups
 from app.agents.food.kdri import NutrientRef, refs_for
 from app.agents.food.menu_resolver import MenuResolver, Resolved
 from app.agents.food.nutrient_wording import APPEARANCE_GROUPS
@@ -80,7 +81,7 @@ class DayTotals:
     # 않고 구간을 낼 수 있는지만 가른다
     unweighed: dict[str, float] = field(default_factory=dict)
     blank_menus: int = 0  # 해석됐지만 영양값이 하나도 없는 메뉴 수 — 얼마나 빠졌는지 알 수 없다
-    grouped_menus: int = 0  # 식품군을 아는 메뉴 수 — 찌개 · 국 같은 음식 행은 식품군이 빈다
+    grouped_menus: int = 0  # 식품군을 아는 메뉴 수(카탈로그 행 또는 단일 식품 표)
     daycare_rows: int = 0  # records 중 급식 행 수 — 영양소 분석이 급식을 참고했는지 밝히는 데 쓴다
     daycare_unknown_amount_rows: int = 0  # 그중 먹은 양을 모르는 행 수(`amount_known=False`)
 
@@ -225,16 +226,20 @@ async def daily_totals(
         def _apply(menu_name: str, factor: float, known: bool, *, disliked: bool = False) -> None:
             nonlocal menus, resolved_menus, weighed_menus, blank_menus, grouped_menus
             menus += 1
-            resolution = resolutions.get(normalize_menu_key(menu_name))
-            if not isinstance(resolution, Resolved):
-                return
-            resolved_menus += 1
-            row = resolution.row
-            if row.food_groups:
+            menu_key = normalize_menu_key(menu_name)
+            resolution = resolutions.get(menu_key)
+            row = resolution.row if isinstance(resolution, Resolved) else None
+            # 출현의 식품군은 카탈로그 행이 먼저고, 행이 없거나 식품군이 비었을 때만 단일 식품 표가
+            # 채운다. 표는 출현에만 쓴다 — 영양 합계 · 1인분 보정은 행의 식품군 그대로다
+            groups = appearance_food_groups(menu_key, row.food_groups if row else frozenset())
+            if groups:
                 grouped_menus += 1
             # 출현은 먹은 것만 센다 — 안 먹음 · 뱉음(양 0)이나 싫어한다는 관찰은 "나온 날" 이 아니다
             if not disliked and amount_weight(factor, known=known) > 0:
-                food_groups.update(row.food_groups)
+                food_groups.update(groups)
+            if row is None:
+                return
+            resolved_menus += 1
             if not row.nutrients:
                 blank_menus += 1
                 return
@@ -301,7 +306,8 @@ class NutrientVerdict:
     # "안 나왔다" 가 아니라 "모른다" 라서 안내 줄이 결론을 뒤집을 수 있는지 볼 때 쓴다(#739)
     group_unknown_days: dict[str, int] = field(default_factory=dict)
     # 출현을 말해도 되는가. 구간(`insufficient`)과 따로 본다 — 구간은 1인분 중량이 빈 메뉴에도
-    # 막히고 10행이 필요하지만, 출현은 "나왔는가" 라서 출현 창 3행 · 2일(N-1) · 메뉴 해석률이면 된다
+    # 막히고 10행이 필요하지만, 출현은 "나왔는가" 라서 출현 창 3행 · 2일(N-1) · 식품군을 아는 메뉴
+    # 비율이면 된다
     appearance_ready: bool = False
     appearance_records: int = 0  # 출현 창 행 수(집 기록 + 급식) — 적은 기록 · 기록 부족 문구의 건수
     daycare_days: int = 0  # 출현 창 중 급식 행이 있는 날 수
@@ -405,15 +411,14 @@ def _appearance_fields(totals: list[DayTotals], *, today: date) -> dict[str, Any
     records = sum(dt.records for dt in totals)
     menus = sum(dt.menus for dt in totals)
     recorded_days = sum(1 for dt in totals if dt.records > 0)
-    resolved_ratio = sum(dt.resolved_menus for dt in totals) / menus if menus else 0.0
-    # 식품군을 모르는 메뉴가 많으면 "0일" 은 안 나온 게 아니라 모르는 것이다 — 해석률과 같게 본다
+    # 식품군을 모르는 메뉴가 많으면 "0일" 은 안 나온 게 아니라 모르는 것이다. 메뉴 해석률은 보지
+    # 않는다 — 해석은 영양소 양을 계산하는 기준이고, 출현은 식품군만 알면 된다(단일 식품 표)
     grouped_ratio = sum(dt.grouped_menus for dt in totals) / menus if menus else 0.0
     # 먹은 기록 — 오늘 이후(오늘 포함)의 급식은 아직 먹었는지 모르는 식단이다. 앞날 급식이 많아도
     # 적은 기록이 풀리지 않게 센다
     eaten_records = sum(dt.records - (dt.daycare_rows if dt.day >= today else 0) for dt in totals)
     ready = (
         not is_appearance_insufficient(records, recorded_days)
-        and resolved_ratio >= MIN_RESOLUTION_RATIO
         and grouped_ratio >= MIN_RESOLUTION_RATIO
     )
     return {
@@ -435,7 +440,8 @@ def _appearance_fields(totals: list[DayTotals], *, today: date) -> dict[str, Any
 def _group_unknown_days(totals: list[DayTotals]) -> dict[str, int]:
     """식품군마다 "안 나왔는데 모르는 메뉴가 낀 날" 수. 0 인 식품군은 싣지 않는다.
 
-    기록이 있는 날만 본다. 식품군을 모르는 메뉴는 카탈로그에 없거나 식품군이 빈 행(찌개 · 국)이다.
+    기록이 있는 날만 본다. 식품군을 모르는 메뉴는 카탈로그에 없거나 식품군이 빈 행(찌개 · 국)이고
+    단일 식품 표에도 없는 메뉴다.
     """
     unknown_days = [dt for dt in totals if dt.records > 0 and dt.grouped_menus < dt.menus]
     counts = {

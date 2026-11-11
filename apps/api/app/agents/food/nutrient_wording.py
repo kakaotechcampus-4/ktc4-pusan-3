@@ -202,7 +202,7 @@ def appearance_readouts(
     """
     if not verdict.appearance_ready:
         # 출현 창에 행 수 · 날 수가 모자라면 기록 부족,
-        # 충분한데 메뉴 · 식품군을 못 읽었으면 살펴보지 못했다
+        # 충분한데 식품군을 아는 메뉴가 절반이 안 되면 살펴보지 못했다
         key = (
             NUTRIENT_INSUFFICIENT
             if is_appearance_insufficient(verdict.appearance_records, verdict.recorded_days)

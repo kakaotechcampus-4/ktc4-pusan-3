@@ -11,7 +11,9 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agents.food.context import FoodContext
+from app.agents.food.nutrient_wording import appearance_readouts
 from app.agents.food.nutrition_eval import daily_totals, evaluate_nutrient_bands
+from app.agents.food.readouts import NUTRIENT_SPARSE, NUTRIENT_UNSCORED, READOUTS
 from app.agents.food.store import (
     DaycareMealRow,
     FoodObservation,
@@ -1284,3 +1286,88 @@ async def test_앞날_급식은_늘_양을_모르는_급식이다() -> None:
     verdict = await evaluate_nutrient_bands(_week_context(daycare=rows), months=40)
 
     assert verdict.daycare_unknown_amount_days == 2
+
+
+# ── 단일 식품 표 (hotfix) ─────────────────────────────────────────────────
+
+
+async def test_카탈로그에_없는_단일_식품도_식품군_출현으로_센다() -> None:
+    context = _context(observations=[_observation(subject="바나나")])
+    [day] = await daily_totals(context, date_from=DAY, date_to=DAY)
+    assert day.food_groups == {"fruits"}
+    assert (day.grouped_menus, day.resolved_menus, day.weighed_menus) == (1, 0, 0)
+    assert day.grams == {}
+
+
+async def test_식품군이_빈_카탈로그_행은_표로_채우고_합계는_그대로다() -> None:
+    # 같은 영양값 · 같은 이름 규칙의 행을 표 밖 이름으로 하나 더 만들어 합계를 견준다
+    in_table = _menu_row(menu_key="식빵", display_name="식빵", food_groups=frozenset())
+    outside = _menu_row(menu_key="처음보는빵", display_name="처음보는빵", food_groups=frozenset())
+    [a] = await daily_totals(
+        _context(observations=[_observation(subject="식빵")], catalog_rows=[in_table]),
+        date_from=DAY,
+        date_to=DAY,
+    )
+    [b] = await daily_totals(
+        _context(observations=[_observation(subject="처음보는빵")], catalog_rows=[outside]),
+        date_from=DAY,
+        date_to=DAY,
+    )
+    assert a.food_groups == {"grains"} and a.grouped_menus == 1
+    assert b.food_groups == frozenset() and b.grouped_menus == 0
+    assert a.grams == b.grams and a.resolved_menus == b.resolved_menus == 1
+
+
+async def test_카탈로그_행의_식품군이_표보다_먼저다() -> None:
+    row = _menu_row(menu_key="바나나", display_name="바나나", food_groups=frozenset({"vegetables"}))
+    [day] = await daily_totals(
+        _context(observations=[_observation(subject="바나나")], catalog_rows=[row]),
+        date_from=DAY,
+        date_to=DAY,
+    )
+    assert day.food_groups == {"vegetables"}
+
+
+async def test_괄호가_붙은_이름도_표에서_찾는다() -> None:
+    [day] = await daily_totals(
+        _context(observations=[_observation(subject="바나나(반 개)")]), date_from=DAY, date_to=DAY
+    )
+    assert day.food_groups == {"fruits"}
+
+
+async def test_안_먹은_단일_식품은_나온_날로_세지_않는다() -> None:
+    refused = _observation(subject="바나나", amount_text="안 먹음")
+    disliked = replace(_observation(subject="사과", amount_text=None), polarity=-1)
+    [day] = await daily_totals(
+        _context(observations=[refused, disliked]), date_from=DAY, date_to=DAY
+    )
+    assert day.food_groups == frozenset()
+    assert day.grouped_menus == 2
+
+
+def _plain_week() -> FoodContext:
+    """최근 7일 매일 밥 · 계란찜 — 14건, 카탈로그 행 없음, 채소 · 과일 0일."""
+    return _context(
+        observations=[
+            _observation(subject=name, amount_text="한 그릇", day=_WINDOW_END - timedelta(days=d))
+            for d in range(7)
+            for name in ("밥", "계란찜")
+        ],
+        birth_date=BIRTH_DATE_3Y,
+    )
+
+
+async def test_카탈로그에서_못_찾아도_식품군을_알면_출현을_말한다() -> None:
+    verdict = await evaluate_nutrient_bands(_plain_week(), months=40)
+    assert verdict.resolved_ratio == 0.0
+    assert verdict.appearance_ready is True
+    assert verdict.food_group_days == {"grains": 7, "meat_fish_egg_legumes": 7}
+
+
+async def test_단일_식품_14건이면_살펴보지_못함_대신_적게_나온_식품군을_말한다() -> None:
+    verdict = await evaluate_nutrient_bands(_plain_week(), months=40)
+    readouts = appearance_readouts(verdict, frozenset())
+    bodies = [r.body for r in readouts]
+    assert READOUTS.render(NUTRIENT_UNSCORED, recorded=14).body not in bodies
+    assert READOUTS.render(NUTRIENT_SPARSE, group="채소가").body in bodies
+    assert READOUTS.render(NUTRIENT_SPARSE, group="과일이").body in bodies
