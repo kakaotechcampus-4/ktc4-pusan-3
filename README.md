@@ -1,8 +1,6 @@
 <div align="center">
 
-# 아이캐치
-
-**육아를 가장 많이 아는 AI가 아니라, 우리 아이를 가장 오래 알아온 AI**
+<img src="docs/assets/readme/banner.png" width="100%" alt="아이캐치 — 육아를 가장 많이 아는 AI가 아니라, 우리 아이를 가장 오래 알아온 AI">
 
 <a href="https://play.google.com/store/apps/details?id=kr.ai.icatch"><img alt="Google Play 에서 받기" src="https://play.google.com/intl/en_us/badges/static/images/badges/ko_badge_web_generic.png" height="80"></a>
 
