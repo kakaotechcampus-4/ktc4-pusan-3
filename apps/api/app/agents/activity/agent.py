@@ -29,6 +29,7 @@ from app.agents.activity.prompt import (
 )
 from app.agents.activity.readouts import (
     CAUTION_NON_FOOD_ALLERGY,
+    EVENTS_FEW,
     EVENTS_NO_NEW,
     EVENTS_NONE_AREA,
     EVENTS_NONE_NEAR,
@@ -180,7 +181,7 @@ async def run(
             *((READOUTS.render(PLACE_AREA_UNKNOWN),) if context.state.area_missed else ()),
             *((READOUTS.render(EVENTS_NO_NEW),) if context.state.no_new_events else ()),
             *((READOUTS.render(EVENTS_PENDING),) if context.state.events_pending else ()),
-            *_events_notice(context),
+            *_events_notice(context, drafts),
             *((READOUTS.render(LOCATION_MISSING),) if _location_missing(context, gate) else ()),
             *((notice,) if notice else ()),
         ),
@@ -188,20 +189,29 @@ async def run(
     )
 
 
-def _events_notice(context: ActivityContext) -> tuple[Readout, ...]:
-    """행사를 물었는데 행사 없이 골랐으면 왜인지 한 줄로 — 그날 열리는 행사가 없었다 · 목록을 못
-    불러왔다. 말하지 않으면 행사 조회가 고장 난 것처럼 보인다(11-11 운영).
+def _events_notice(
+    context: ActivityContext, drafts: tuple[SuggestionDraft, ...]
+) -> tuple[Readout, ...]:
+    """행사를 물었는데 행사 없이 · 행사 몇 개만으로 골랐으면 왜인지 한 줄로 — 그날 열리는 행사가
+    없었다 · 목록을 못 불러왔다 · 몇 개만 찾았다. 말하지 않으면 행사 조회가 고장 난 것처럼 보이고,
+    행사가 아닌 카드가 왜 섞였는지 모른다(11-11 운영).
 
-    - 이번 run 에서 행사를 하나라도 찾았거나, 다른 행사 안내(앞에서 보여 준 것뿐 · 일정 확인 중)가
-      붙으면 붙이지 않는다.
+    - 다른 행사 안내(앞에서 보여 준 것뿐 · 일정 확인 중)가 붙으면 붙이지 않는다.
     - 행사 · 축제 · 공연을 묻지 않았으면 붙이지 않는다 — 나들이를 물어 모델이 알아서 찾아본 run 에
       "행사가 없어요" 는 묻지 않은 말이다(`rules.asks_events`). 이번 입력의 원문과 해석한 요청을
       본다.
+    - "몇 개만" 은 찾은 행사를 다 카드에 썼는데도 카드가 남을 때만이다. 찾고도 안 쓴 행사가 있으면
+      행사가 모자란 게 아니라 모델이 고른 것이라 붙이지 않는다.
     """
     state = context.state
-    if state.seen_events or state.no_new_events or state.events_pending:
+    if state.no_new_events or state.events_pending:
         return ()
     if not asks_events((*state.original_texts, *state.request_texts)):
+        return ()
+    if state.seen_events:
+        used = sum(draft.event_starts_on is not None for draft in drafts)
+        if len(state.seen_events) <= used < len(drafts):
+            return (READOUTS.render(EVENTS_FEW, count=used),)
         return ()
     if state.events_unavailable:
         return (READOUTS.render(EVENTS_UNAVAILABLE),)

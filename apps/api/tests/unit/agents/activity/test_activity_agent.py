@@ -7,6 +7,7 @@
 """
 
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -1029,6 +1030,28 @@ class TestNoEvents:
             kind_code="EV01",
             progress="",
         )
+
+    FEW = "그날 열리는 행사를 1개만 찾아서 나머지는 행사가 아닌 놀이로 골랐어요."
+
+    async def propose_with_events(self, events: InMemoryEvents, *names: str) -> list[str]:
+        picked = [{**candidate(f"{n} 구경하기", setting="outdoor"), "place_name": n} for n in names]
+        rest = [candidate(text) for text in ("종이컵 탑 쌓기", "그림자놀이", "색종이 접기")]
+        llm = FakeLLM(
+            _tools(("search_events", {"day": "오늘"})),
+            _tools(("propose_activity_candidates", {"candidates": (picked + rest)[:3]})),
+        )
+        result = await run(task("오늘 갈 만한 행사 있어?"), self.ctx(events), client=llm)
+        return [r.body for r in result.readouts]
+
+    async def test_찾은_행사를_다_써도_모자라면_몇_개만_찾았는지_알린다(self):
+        bodies = await self.propose_with_events(InMemoryEvents([self.fest(BUSAN)]), "가상 모래축제")
+        assert self.FEW in bodies
+
+    async def test_찾은_행사를_다_쓰지_않았으면_알리지_않는다(self):
+        second = replace(self.fest(BUSAN), content_id="2", title="가상 불빛축제")
+        events = InMemoryEvents([self.fest(BUSAN), second])
+        bodies = await self.propose_with_events(events, "가상 모래축제")
+        assert not [body for body in bodies if "개만 찾아서" in body]
 
     async def ask(self, text: str, events: InMemoryEvents, *args: dict[str, Any]) -> list[str]:
         llm = FakeLLM(

@@ -71,6 +71,11 @@ events.unavailable:
   kind: notice
   template: 행사 정보를 지금 불러오지 못해서 행사 없이 골랐어요.
 
+# 찾은 행사를 다 카드에 썼는데도 카드가 남았다 — 행사가 아닌 카드가 왜 섞였는지 알린다
+events.few:
+  kind: notice
+  template: 그날 열리는 행사를 {count}개만 찾아서 나머지는 행사가 아닌 놀이로 골랐어요.
+
 place.location_missing:
   kind: notice
   template: "위치를 허용하거나 지역(예: 부산 해운대구)을 말씀해 주시면 행사 · 장소도 찾아볼게요."
