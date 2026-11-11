@@ -45,7 +45,7 @@
 
 Health는 다섯 Agent 중 **가장 위험하고, 그래서 AI가 가장 적게 일하는** Agent입니다.
 
-- **라벨 5개 중 3개는 AI를 부르지 않습니다.** 검진·접종 시기, 병원 찾기, 전달용 서류는 코드가 공식 기준표·공공 API·고정 서식으로 합니다.
+- **라벨 5개 중 3개는 AI를 부르지 않습니다.** 검진·접종 시기, 문 연 병원 안내, 전달용 서류는 코드가 공식 기준표·고정 안내·고정 서식으로 합니다.
 - AI가 일하는 두 곳(진료 전 요약, 복약 등록)에서도 **AI는 보호자 기록을 옮겨 적기만** 합니다. 해석·추정·보정은 없습니다.
 - 판정 문구는 **코드가 쓰고 AI가 고칠 수 없습니다**(`authored_by="code"`). AI가 다시 쓰다가 해석을 덧붙이는 일을 막습니다.
 
@@ -69,7 +69,7 @@ Health는 다섯 Agent 중 **가장 위험하고, 그래서 AI가 가장 적게 
 | --- | --- | --- | --- |
 | `visit_summary` (진료 준비) | "내일 소아과 가는데 정리해줘" · "요즘 열 얼마나 났지?" | 증상·식사·복약 타임라인 | 1 |
 | `schedule_check` (검진·접종) | "검진 언제야?" · "이번 달 맞을 주사 있어?" | 현재·다음 검진 차수, 이 시기 권장 접종 | **0** |
-| `place_lookup` (병원 찾기) | "지금 문 연 소아과" · "야간 진료" | 병원 목록 | **0** |
+| `place_lookup` (문 연 병원) | "지금 문 연 소아과" · "야간 진료" | 응급의료포털 · 119 안내 한 줄 (병원 목록은 없음, #926) | **0** |
 | `medication` (복약) | "항생제 하루 세 번 식후" · "약 끊었어" · "아까 약 먹였어" · "다음 약 언제야?" | 복약 일정 생성·수정(**초안 payload → 보호자 제출**) · 중단(한 번 묻고 `status='stopped'`) · 다음 예정 시각 · "먹였어"는 복약 화면 체크 안내 | 1 (조회·"먹였어" 안내는 **0**) |
 | **`care_handoff`** (전달용 서류) | "어린이집 투약의뢰서 써야 해" · "시터한테 알레르기 뭐라고 알려주지" | 투약의뢰서 · 응급 카드 (복사·공유용) | **0** |
 
@@ -108,7 +108,7 @@ Health는 다섯 Agent 중 **가장 위험하고, 그래서 AI가 가장 적게 
 ### 하는 일
 - **진료 준비** — 최근 증상·식사량·먹인 약·알레르기를 날짜순으로 정리. 모든 줄에 원 기록 링크
 - **검진·접종 안내** — 월령으로 현재 검진 차수와 이 시기 권장 접종을 계산
-- **병원 찾기** — 시간대에 맞춰 소아청소년과 · 달빛어린이병원 · 응급실
+- **문 연 병원 안내** — 병원을 찾아 주지 않고 응급의료포털 · 119 를 알려 줌 (#926)
 - **복약 일정 CRUD** — 생성·수정은 초안 payload를 내고 보호자가 제출할 때 백엔드가 저장. 중단은 한 번 묻고 '네' 면 soft delete(`status='stopped'`)
 - **증상 반복 감지** — 같은 증상이 최근 7일 안 3일 기록되면 병원 확인 안내. 등록 만성질환과 맞으면 그 이름과 공공 출처 안내를 함께 (§6-7)
 - **복약 체크 읽기** — 보호자가 화면에서 체크한 회차로 다음 예정 시각과 오늘 체크 수를 알려줌. "먹였어"에는 쓰지 않고 복약 화면에서 체크해 달라고 안내
@@ -160,7 +160,6 @@ Health는 다섯 Agent 중 **가장 위험하고, 그래서 AI가 가장 적게 
 | `child` (생년월일) | schedule_check | 월령. **성별은 읽지 않음** |
 | 공식 기준표 (코드 상수) | schedule_check | §11 |
 | 질환 사전 · (질환 × 증상) 안내 (코드 상수) | (hook) | §6-7 · §11 |
-| 공공 API | place_lookup | §11 |
 
 ### 쓰기
 
@@ -253,16 +252,12 @@ AI는 **요청에서 범위만 정합니다** (#551 리뷰). 보호자가 말한
 - 약 이름 · 용량은 등록 원문 그대로 코드가 쓴다 — 모델이 바꿔 적을 자리가 없다
 - 기록 원문(사전에 없는 증상 · 조치 · 식사)에 해석 표현 · 병 이름("때문에", "의심", "같아요", "~염", "~증" …)이 있으면 원문 대신 자리표시를 낸다(`wording.py`)
 
-### 6-4. `place_lookup` — 병원 찾기 (AI 0회)
+### 6-4. `place_lookup` — 문 연 병원 안내 (AI 0회)
 
-| 시간대 (코드 판정) | 먼저 보여줄 곳 |
-| --- | --- |
-| 평일 주간 | 소아청소년과 의원 (심평원 병원정보) |
-| 야간·휴일 | **달빛어린이병원** → 응급의료기관 |
-| 응급 안내에서 넘어옴 | 응급의료기관만 |
+병원을 찾아 주지 않습니다(#926). "지금 문 연 소아과" 같은 말에는 응급의료포털(www.e-gen.or.kr)과 119 를 알려 주는 고정 문구(`place.portal`) 한 줄로 끝납니다.
 
-- 위치는 기기에서 받고 **저장하지 않습니다.** 위치 권한이 없으면 tool이 닫히고 "위치를 허용하시면 가까운 병원을 찾아드려요".
-- 병원 **평가·추천 순위를 매기지 않습니다.** 거리순 · 운영 여부만.
+- 위치 · 아이 정보 · 모델을 쓰지 않고 저장도 없습니다. 건강정보 동의가 없으면 다른 라벨처럼 `blocked.consent` 로 닫힙니다.
+- 위치 약관과 결과 화면을 붙일 시간이 없어 병원 목록 · 시간대 분기 · 거리순은 하지 않기로 했습니다. 병원 평가 · 추천 순위도 없습니다.
 
 ### 6-5. `medication` — 복약 CRUD (AI 1회)
 
@@ -270,7 +265,7 @@ AI는 **요청에서 범위만 정합니다** (#551 리뷰). 보호자가 말한
 
 > **2026-11-10 — 지금은 꺼 두었습니다 (#923).** 스토어 건강 앱 선언 때문에 웹이 복약 화면 · 초안 카드를 꺼 두었고(`apps/web/src/lib/store-policy.ts`), 서버도 같은 스위치(`app/agents/health/registry.py` 의 `MEDICATION_ENABLED`)로 이 라벨을 닫습니다. 꺼 둔 동안은 동의 · 조회 · 모델 없이 `med.preparing` 한 줄("복약 관리는 아직 준비 중이에요. 용량 · 간격은 처방한 병원이나 약국에 확인해 주세요.")로 끝나고, pipeline 의 등록된 약 대조(`registered_titles`)도 하지 않아 "해열제 먹였어" 는 Memory 가 먹인 약 기록으로 남깁니다(약 이름이 없는 "약 먹였어" 는 Memory 가 무슨 약인지 되묻습니다). 아래는 켜져 있을 때의 동작입니다.
 >
-> **다시 켤 때** — ① 건강 앱 선언부터 고칩니다(`store-policy.ts` 머리말). ② 웹 `MEDICATION_ENABLED` 와 서버 `registry.MEDICATION_ENABLED` 를 같이 켭니다 — 한쪽만 켜면 답할 수 없는 질문이나 답이 없는 화면이 남습니다. ③ 꺼 둔 동안만 있는 것을 지웁니다 — 코드 · 문서 · 테스트에서 `#923` 을 찾으면 전부 나옵니다(스위치 상수와 주석, `agent.py` 의 `_switched_off` · `registered_titles` 의 꺼짐 분기와 docstring, `med.preparing` · `notice.preparing` 키(yaml · `readouts.py` · `Health_Tool_명세.md` §4 · 닫힘 줄), `handoff.py` · `pipeline.py` docstring 의 한 줄, `tests/unit/agents/health/test_health_medication_off.py`, `tests/conftest.py` 의 `_medication_on`, 이 인용 블록과 §6-6 의 것). 표시가 없는 것은 셋입니다 — `Health_Tool_명세.md` §4 표의 `med.preparing` · `notice.preparing` 두 줄(표 칸은 코드 문구와 글자 단위로 대조해서 표시를 달 수 없습니다), `test_health_readouts.py` 의 문구 수(75 → 73), (선택) `handoff.py` 의 `wants_notice` 를 `_wants_notice` 로 되돌리기.
+> **다시 켤 때** — ① 건강 앱 선언부터 고칩니다(`store-policy.ts` 머리말). ② 웹 `MEDICATION_ENABLED` 와 서버 `registry.MEDICATION_ENABLED` 를 같이 켭니다 — 한쪽만 켜면 답할 수 없는 질문이나 답이 없는 화면이 남습니다. ③ 꺼 둔 동안만 있는 것을 지웁니다 — 코드 · 문서 · 테스트에서 `#923` 을 찾으면 전부 나옵니다(스위치 상수와 주석, `agent.py` 의 `_switched_off` · `registered_titles` 의 꺼짐 분기와 docstring, `med.preparing` · `notice.preparing` 키(yaml · `readouts.py` · `Health_Tool_명세.md` §4 · 닫힘 줄), `handoff.py` · `pipeline.py` docstring 의 한 줄, `tests/unit/agents/health/test_health_medication_off.py`, `tests/conftest.py` 의 `_medication_on`, 이 인용 블록과 §6-6 의 것). 표시가 없는 것은 셋입니다 — `Health_Tool_명세.md` §4 표의 `med.preparing` · `notice.preparing` 두 줄(표 칸은 코드 문구와 글자 단위로 대조해서 표시를 달 수 없습니다), `test_health_readouts.py` 의 문구 수(74 → 72), (선택) `handoff.py` 의 `wants_notice` 를 `_wants_notice` 로 되돌리기.
 
 **역할 분담**
 
@@ -333,7 +328,7 @@ AI는 **요청에서 범위만 정합니다** (#551 리뷰). 보호자가 말한
 
 남에게 아이를 맡길 때 매번 손으로 적는 정보를 앱이 이미 갖고 있습니다. **판단이 0이고 체감이 큰** 자리입니다.
 
-**투약의뢰서** (`compose_daycare_med_notice`)
+**투약의뢰서** (`labels/handoff.py`)
 
 > **2026-11-10 — 꺼 두었습니다 (#923).** 서식은 등록된 복약 코스로만 채우는데, 복약을 꺼 둔 동안은 코스를 등록할 화면이 없습니다. 그래서 같은 스위치로 투약의뢰서 갈래만 `notice.preparing`("투약의뢰서는 아직 준비 중이에요.")으로 닫습니다. 응급 카드는 그대로입니다.
 
@@ -353,7 +348,7 @@ AI는 **요청에서 범위만 정합니다** (#551 리뷰). 보호자가 말한
 - 저장하지 않고 **복사·공유만** 합니다(알림장 앱에 붙여넣기).
 - 끝에 "보호자 확인 후 서명해 주세요"가 **항상** 붙습니다. 투약의뢰서는 보호자 책임 서류입니다.
 
-**응급 카드** (`build_emergency_card`) — 알레르기 · 만성질환 · 복용 중인 약 · 아이 기본 정보를 한 장으로. 등록된 값의 **복사본**이라 새로 판단하는 것이 하나도 없습니다. 알레르기 · 만성질환은 보호자가 등록한 반응 · 대처 원문을 이름 뒤 괄호에 그대로 붙입니다("땅콩 (반응: 두드러기 · 입술 부음 / 대처: 에피펜 놓고 119)" — 둘 다 없으면 이름만, 원문의 줄바꿈은 공백 하나로). **보호자 연락처는 넣지 않습니다**(10-18) — 연락처를 담을 칸이 없고, 넣으려면 수집 항목이 늘어납니다(루트 CLAUDE.md §2).
+**응급 카드** (`labels/handoff.py`) — 알레르기 · 만성질환 · 복용 중인 약 · 아이 기본 정보를 한 장으로. 등록된 값의 **복사본**이라 새로 판단하는 것이 하나도 없습니다. 알레르기 · 만성질환은 보호자가 등록한 반응 · 대처 원문을 이름 뒤 괄호에 그대로 붙입니다("땅콩 (반응: 두드러기 · 입술 부음 / 대처: 에피펜 놓고 119)" — 둘 다 없으면 이름만, 원문의 줄바꿈은 공백 하나로). **보호자 연락처는 넣지 않습니다**(10-18) — 연락처를 담을 칸이 없고, 넣으려면 수집 항목이 늘어납니다(루트 CLAUDE.md §2).
 
 ### 6-7. 코드 hook — 라벨과 무관하게 도는 것
 
@@ -361,7 +356,7 @@ Memory가 `observation_health`를 저장한 직후 **pipeline이 코드로 실�
 
 | hook | 조건 | 출력 |
 | --- | --- | --- |
-| `check_symptom_repetition` | 같은 증상 코드가 **최근 7일 안 3일 이상** 기록됨 (설정값) | readout `symptom_repeat` + 병원 찾기 버튼. 등록 만성질환과 맞는 행이 있으면 질환 이름을 붙인 문장 + 안내 카드(`condition_guidance`) |
+| `check_symptom_repetition` | 같은 증상 코드가 **최근 7일 안 3일 이상** 기록됨 (설정값) | readout `symptom_repeat`. 등록 만성질환과 맞는 행이 있으면 질환 이름을 붙인 문장 + 안내 카드(`condition_guidance`) |
 | `check_infant_fever` | **3개월 미만** + 최근 48시간 안 `fever` 코드 또는 체온 38.0 이상 (진료 준비의 응급 판정과 같은 함수 · 같은 기준 파일). "열이 38.3도야" 처럼 기록만 해도 나가야 해서 라벨 밖에 둔다 | readout `emergency` 1건 ("지금 바로 119에 연락하거나 가까운 응급실로 가세요."). 월령이 기준 이상이면 건강 기록을 읽지 않고, 건강정보 동의가 없으면 읽지 않습니다 |
 
 **세는 법** (10-18)
@@ -393,7 +388,7 @@ Memory가 `observation_health`를 저장한 직후 **pipeline이 코드로 실�
 
 ## 7. Tool 목록
 
-| Tool | 하는 일 | visit | schedule | ~~growth~~ | place | medication | handoff | AI에게 |
+| Tool | 하는 일 | visit | schedule | ~~growth~~ | ~~place~~ | medication | handoff | AI에게 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `search_health_observations` | 증상 기록 검색 | ✓ | – | – | – | – | – | 보임 |
 | `search_recent_meals` | 최근 식사량 | ✓ | – | – | – | – | – | 보임 |
@@ -402,22 +397,18 @@ Memory가 `observation_health`를 저장한 직후 **pipeline이 코드로 실�
 | `create_medication_schedule` | 코스+dose **초안 payload** (DB 저장 없음) | – | – | – | – | ✓ | – | 보임 |
 | `update_medication_schedule` | **초안 payload** (`op="update"`) | – | – | – | – | ✓ | – | 보임 |
 | `stop_medication_schedule` | 중단 — 한 번 묻고, '네' 면 `status='stopped'` | – | – | – | – | ✓ | – | 보임 |
-| `load_health_safety` | 알레르기·만성질환 주입 | ✓ | – | – | – | – | ✓ | **안 보임** |
 | `resolve_dose_timing` | 시점 표현 → anchor | – | – | – | – | ✓ | – | **안 보임** |
 | `normalize_symptom_term` | **증상 표준 코드** | ✓ | – | – | – | ✓ | – | **안 보임** |
 | `group_symptom_episodes` | **증상 에피소드 묶기** | ✓ | – | – | – | – | – | **안 보임** |
 | `build_fever_timeline` | **체온·복약 시각 나열** | ✓ | – | – | – | – | – | **안 보임** |
 | `get_next_dose` | **다음 예정 시각·오늘 체크 수** | ✓ | – | – | – | ✓ | – | **안 보임** |
-| `lookup_prescription_draft` | **OCR 결과 조회 (읽기만)** | – | – | – | – | ✓ | – | **안 보임** |
-| `compose_daycare_med_notice` | **투약의뢰서 (고정 서식)** | – | – | – | – | – | ✓ | **안 보임** |
-| `build_emergency_card` | **응급 카드** | – | – | – | – | – | ✓ | **안 보임** |
 | `summarize_checkup_context` | **검진 맥락 요약** | – | ✓ | – | – | – | – | **안 보임** |
-| `get_health_phrase` | **고정 문구 조회** (상수 파일) | ✓ | ✓ | – | – | – | – | **안 보임** |
 | `compute_checkup_schedule` | 검진 차수 | – | ✓ | – | – | – | – | **안 보임** |
 | `compute_vaccine_schedule` | 권장 접종 | – | ✓ | – | – | – | – | **안 보임** |
-| `find_pediatric_places` | 병원 검색 | – | – | – | ✓ | – | – | **안 보임** |
 | `check_symptom_repetition` | 증상 반복 (hook) | – | – | – | – | – | – | **안 보임** |
 | `lookup_condition_guidance` | **질환 사전 매칭 + (질환 × 증상) 안내** (hook) | – | – | – | – | – | – | **안 보임** |
+
+> 표는 만든 tool 만 적는다(#926). 투약의뢰서 · 응급 카드는 `labels/handoff.py`, 안전 조회는 `context.build_gate`, 고정 문구는 `READOUTS` 가 라벨 경로 안에서 직접 하고, `place_lookup` 은 tool 없이 고정 안내 한 줄이다.
 | `check_infant_fever` | **3개월 미만 발열 응급 안내** (hook) | – | – | – | – | – | – | **안 보임** |
 
 - 늘어난 tool 은 **모델에게 보이지 않습니다** — 전부 코드가 부릅니다. 복용 체크는 tool 이 아니라 보호자 화면입니다(10-20).
@@ -431,8 +422,6 @@ Memory가 `observation_health`를 저장한 직후 **pipeline이 코드로 실�
 | --- | --- |
 | `child_health` 동의 철회 | **Health 전체** → code readout |
 | `health_safety` 조회 실패 | `visit_summary`는 진행하되 "알레르기 정보를 불러오지 못했어요" 명시 |
-| 위치 권한 없음 | `place_lookup` |
-| 공공 API 장애 | `place_lookup` → "병원 정보를 불러오지 못했어요. 응급 시 119" |
 | 진행 중 복약 0건 | `care_handoff`의 투약의뢰서 (응급 카드는 동작) |
 | `observation_health.temperature` 0건 | `build_fever_timeline` → "체온 기록이 없어요" |
 | `prescription_draft` 없음 | 처방전 카드 없이 평소 복약 등록 흐름 |
@@ -447,7 +436,6 @@ Memory가 `observation_health`를 저장한 직후 **pipeline이 코드로 실�
 | --- | --- | --- | --- |
 | `readouts` | `checkup_schedule` | 코드 | 안 함 |
 | `readouts` | `symptom_timeline` | AI (사후 검사) | 안 함 |
-| `readouts` | `place_list` | 코드 | 안 함 |
 | `readouts` | `medication_notice` (확인 모달 · 제출 후 안내) | **코드** | 안 함 |
 | `readouts` | `symptom_repeat` | 코드 | 안 함 |
 | `readouts` | `condition_guidance` (등록 만성질환 × 증상 안내 · 출처) | **코드 (고정 문구)** | 안 함 — 승인·저장 버튼 없음 |
@@ -499,7 +487,7 @@ class MedicationDraft:
 - 머리를 부딪힌 뒤 반복 구토·처짐
 - 소변이 거의 없고 입이 마름 (탈수)
 
-**출력 (코드 상수)**: "지금 바로 119에 연락하거나 가까운 응급실로 가세요." + 응급의료기관 목록(병원 찾기 위치 PR 에서). AI 호출 없음.
+**출력 (코드 상수)**: "지금 바로 119에 연락하거나 가까운 응급실로 가세요." 한 줄. 응급의료기관 목록은 붙이지 않는다(병원 찾기를 하지 않기로 했다, #926). AI 호출 없음.
 
 **실행 순서** (`pipeline.handle_input`)
 
@@ -534,7 +522,6 @@ class MedicationDraft:
 | 되묻기 답을 못 알아들음 (대상 약 · 복용 시점) | 아무것도 쓰지 않고 초안도 내지 않고 다시 묻지도 않음. 약 이름 · 시간을 넣어 다시 말씀해 달라는 안내만 |
 | "지금 또 먹여도 돼?" | 허가 문구 없이 `dose_status`(마지막 체크 회차·다음 예정·오늘 체크 수)만 |
 | "양 늘려도 돼?" · "간격 줄여도 돼?" | 판단 없이 `med.ask_prescriber`("용량 · 간격은 처방한 병원이나 약국에 확인해 주세요.")만 · 초안 · 되묻기 없음 |
-| 공공 API 실패 | 목록 없이 안내 + 119 |
 | 20초 초과 | 다른 Agent 결과만이라도 표시 |
 
 ---
@@ -548,8 +535,8 @@ class MedicationDraft:
 | 영유아 검진 | 국민건강보험공단 영유아 건강검진 (일반 8회 · 구강 4회) — nhis.or.kr | `compute_checkup_schedule` 상수 | 제도 변경 시 |
 | 예방접종 | 질병관리청 「2026 국가예방접종 지침」 · 표준예방접종일정표 | `vaccine_schedule_<연도>.yaml` | **매년** |
 | 접종 기록 확인 | 예방접종도우미 nip.kdca.go.kr | 안내 링크만 (연동 안 함) | – |
-| 병원 | 건강보험심사평가원 병원정보서비스 Open API (data.go.kr) | `find_pediatric_places` | API |
-| 야간·휴일 소아 | 국립중앙의료원 달빛어린이병원 · 응급의료정보(E-Gen) (data.go.kr) | `find_pediatric_places` | API |
+| ~~병원~~ | ~~건강보험심사평가원 병원정보서비스 Open API (data.go.kr)~~ | **쓰지 않음** (#926) | – |
+| 문 연 병원 안내 | 응급의료포털(www.e-gen.or.kr, 국립중앙의료원 중앙응급의료센터) | `place.portal` 고정 문구 — 연동 없음 (#926) | – |
 | 응급 신호·증상 문구 검수 | 질병관리청 국가건강정보포털 health.kdca.go.kr · 대한소아청소년과학회 | Supervisor 규칙 · `reference/health_phrases.yaml` | 검수 시 |
 | 만성질환 × 증상 안내 (10-18) | 공공 출처 — **공공누리 제0·1유형 · 고시 · CC BY만** 행 출처로 쓴다 | `reference/condition_codes.yaml` · `reference/condition_guidance.yaml` | 검수 시 (**원문 대조 + 연결 적절성 확인** — 의료인 검수는 필수 아님, 10-19) |
 | 알레르기 표시 대상 | 식품 등의 표시·광고 법령 알레르기 표시 대상 | `health_safety` 라벨 정규화 (Food와 공유) | 고시 개정 시 |
@@ -578,7 +565,7 @@ class MedicationDraft:
 
 ### 프론트엔드
 - `authored_by="code"` readout은 문자열 그대로 렌더 (가공·요약 금지)
-- 위치는 요청 시점에만 전달, 저장 안 함
+- Health 는 위치를 받지 않음 (병원 찾기를 하지 않기로 했다, #926)
 
 ### 백엔드
 - Agent role: `medication_schedule` 의 중단(`status` · `updated_at`) UPDATE 만 부여 — 코스 생성·수정은 보호자 제출 API가 쓴다(10-18) · 회차 체크(`medication_dose.checked_at`)는 보호자 화면의 체크 API 가 쓴다(10-20), `medication_dose` 는 SELECT 만 · `health_safety` write **비부여**

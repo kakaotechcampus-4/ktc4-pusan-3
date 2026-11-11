@@ -2,6 +2,8 @@
 
 > 기준: [`Health_Agent_명세.md`](Health_Agent_명세.md) · [`health_agent_own_table.md`](health_agent_own_table.md) · [`Tool_공통.md`](../shared/Tool_공통.md)
 >
+> **2026-11-11 갱신 (#926)** — 병원 찾기(`find_pediatric_places` · `place_list` · 병원 어댑터 · Health 위치 통로)를 지웠다. `place_lookup` 은 응급의료포털 · 119 안내 한 줄(`place.portal`)로 끝난다. 표는 **만든 tool 만** 담는다 — 투약의뢰서 · 응급 카드는 `labels/handoff.py` 가, 안전 조회는 `context.build_gate` 가, 고정 문구는 `READOUTS` 가 라벨 경로 안에서 바로 하므로 tool 이 아니고, 처방전 조회(`lookup_prescription_draft`)는 만들지 않았다
+>
 > **2026-10-20 갱신** — 복용 기록 tool(`log_dose_taken` · `log_dose_skipped`)과 출력 상수(`dose.logged` · `dose.skipped` · `dose.duplicate`) 삭제 — 복용 체크는 보호자가 화면에서 하고(`medication_dose.checked_at`), Agent 는 읽기만 · "먹였어" · "못 먹였어" 는 쓰기 0 · 모델 0 · 화면 안내
 >
 > **2026-10-18 갱신** — 복약 중단은 **한 번 묻고**(`med.stop_confirm`) '네' 면 `status='stopped'`, 중단 시각은 `updated_at` · 증상 반복은 최근 7일 안 **기록된 날 3일** · 만성질환 × 증상 안내(`lookup_condition_guidance`) · 검진 맥락 요약에서 측정값 제외 · 응급 카드에서 연락처 제외
@@ -17,13 +19,13 @@
 | 국민건강보험공단 **영유아 건강검진** — nhis.or.kr | 일반 8회 · 구강 4회 주기 | `compute_checkup_schedule` | `reference/checkup_nhis.yaml` | 제도 변경 시 |
 | 질병관리청 고시 「예방접종의 실시기준 및 방법」 **[별표 1] 국가예방접종 대상 및 표준접종시기** | 백신·차수·표준접종 월령 | `compute_vaccine_schedule` | `reference/vaccine_2026.yaml` | **고시 개정 시** |
 | 예방접종도우미 — nip.kdca.go.kr | 개인 접종 기록 | 안내 링크만 | 연동 없음 | – |
-| 국립중앙의료원 **전국 병·의원 찾기 서비스** (data.go.kr/15000736) | 병원 목록 · 진료과목 · 좌표 · 요일별 진료시간 | `find_pediatric_places` (주간 · 야간 소아청소년과) | REST · 시도별 24h 캐시 | – |
-| 국립중앙의료원 **전국 응급의료기관 정보 조회 서비스** (data.go.kr/15000563) | 응급의료기관 목록 · 좌표 (실시간 병상은 아직 안 씀) | `find_pediatric_places` (야간·응급) | REST · 시도별 10분 캐시 | 실시간 |
+| ~~국립중앙의료원 **전국 병·의원 찾기 서비스** (data.go.kr/15000736)~~ | – | **쓰지 않음** — 병원 찾기를 하지 않는다(#926). 문 연 병원은 응급의료포털(www.e-gen.or.kr) · 119 로 안내만 한다 | – | – |
+| ~~국립중앙의료원 **전국 응급의료기관 정보 조회 서비스** (data.go.kr/15000563)~~ | – | **쓰지 않음** (#926) | – | – |
 | ~~달빛어린이병원 지정 목록~~ | – | **쓰지 않음** — 병·의원 진료시간으로 "지금 진료 중" 을 골라 달빛어린이병원도 잡힌다 (10-18) | – | – |
 | 식약처 알레르기 표시 대상 19종 | 코드표 | `health_safety` 라벨 정규화 | Food `ALLERGEN_CODES` 공유 | 고시 개정 시 |
 | 국가건강정보포털 health.kdca.go.kr · 대한소아청소년과학회 | 응급 신호 · 증상 문구 | Supervisor 규칙 · 고정 문구 **검수 근거** | 문서 | 검수 시 |
 | 공공 출처 (**공공누리 0·1 · 고시 · CC BY만**) | 만성질환별 관리 안내 | `lookup_condition_guidance` | `reference/condition_codes.yaml` · `reference/condition_guidance.yaml` | 검수 시 (**원문 대조 + 연결 적절성 확인** — 의료인 검수는 필수 아님, 10-19) |
-| **OCR 파이프라인** (처방전·약봉투) | 약품명·용량·용법 추출 텍스트 | `lookup_prescription_draft` | `prescription_draft` 테이블 **읽기만** | – |
+| **OCR 파이프라인** (처방전·약봉투) | 약품명·용량·용법 추출 텍스트 | ~~`lookup_prescription_draft`~~ (만들지 않음, #926) | `prescription_draft` 테이블 **읽기만** | – |
 | ~~의약품 허가 정보~~ | – | **쓰지 않음**(H-10 닫힘) | – | – |
 
 API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가이드로 확정. **쓰지 않음**: 의약품 정보 API · 증상→질환 자료 · 민간 리뷰.
@@ -34,14 +36,16 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 
 | 라벨 | 모델 tool | 코드 tool | 모델 호출 |
 | --- | --- | --- | --- |
-| `visit_summary` | search_health_observations · compose_symptom_timeline · show_fever_timeline | collect_meals · collect_medication_checks · load_health_safety · normalize_symptom_term · group_symptom_episodes · build_fever_timeline · get_next_dose · get_health_phrase | 1 (열 표현 표에 걸리는 열 타임라인 요청은 **0** · 표에 안 걸린 열 질문은 모델이 열 타임라인 출구를 골라 1) |
-| `schedule_check` | – | compute_checkup_schedule · compute_vaccine_schedule · summarize_checkup_context · get_health_phrase | 0 |
-| `place_lookup` | – | find_pediatric_places | 0 |
-| `medication` | search_medication_schedules · create/update/stop_medication_schedule · show_dose_status · defer_dose_question | resolve_dose_timing · normalize_symptom_term · get_next_dose · lookup_prescription_draft | 1 (표에 걸리는 조회 · "먹였어" 안내는 **0** · 표에 안 걸린 현황 · 용량 질문은 모델이 읽기 전용 출구를 골라 1) |
-| **`care_handoff`** | – | search_medication_schedules · load_health_safety · compose_daycare_med_notice · build_emergency_card | **0** |
+| `visit_summary` | search_health_observations · compose_symptom_timeline · show_fever_timeline | collect_meals · collect_medication_checks · normalize_symptom_term · group_symptom_episodes · build_fever_timeline · get_next_dose | 1 (열 표현 표에 걸리는 열 타임라인 요청은 **0** · 표에 안 걸린 열 질문은 모델이 열 타임라인 출구를 골라 1) |
+| `schedule_check` | – | compute_checkup_schedule · compute_vaccine_schedule · summarize_checkup_context | 0 |
+| `place_lookup` | – | – (고정 안내 `place.portal` 한 줄) | 0 |
+| `medication` | search_medication_schedules · create/update/stop_medication_schedule · show_dose_status · defer_dose_question | resolve_dose_timing · normalize_symptom_term · get_next_dose | 1 (표에 걸리는 조회 · "먹였어" 안내는 **0** · 표에 안 걸린 현황 · 용량 질문은 모델이 읽기 전용 출구를 골라 1) |
+| **`care_handoff`** | – | search_medication_schedules | **0** |
 | (hook) | – | check_symptom_repetition · lookup_condition_guidance · check_infant_fever | 0 |
 
-닫힘: 복약을 꺼 둔 동안(#923 · `registry.MEDICATION_ENABLED`) → `medication` 전부와 투약의뢰서, 동의보다 먼저 · 동의 없음 → 전 라벨 · 위치 없음 → `place_lookup` · `health_safety` 실패 → `visit_summary` 진행 + 경고 줄 · 진행 중 복약 0건 → 투약의뢰서 · 체온 기록 0건 → `build_fever_timeline`.
+닫힘: 복약을 꺼 둔 동안(#923 · `registry.MEDICATION_ENABLED`) → `medication` 전부와 투약의뢰서, 동의보다 먼저 · 동의 없음 → 전 라벨(`place_lookup` 포함) · `health_safety` 실패 → `visit_summary` 진행 + 경고 줄 · 진행 중 복약 0건 → 투약의뢰서 · 체온 기록 0건 → `build_fever_timeline`.
+
+표는 만든 tool 만 적는다(#926). 투약의뢰서 · 응급 카드는 `labels/handoff.py`, 안전 조회는 `context.build_gate`, 고정 문구는 `READOUTS` 가 라벨 경로 안에서 직접 하고, 문 연 병원 안내는 `labels/place.py` 가 한다.
 
 ### 연령 — tool을 여닫지 않고 계산 방식을 바꾼다
 
@@ -106,14 +110,14 @@ Memory 가 뽑은 문장이라 보호자 말 그대로라고 보장하지 못해
 
 검진 주기 상수: 일반 14–35일 · 4–6 · 9–12 · 18–24 · 30–36 · 42–48 · 54–60 · 66–71개월 / 구강 18–29 · 30–41 · 42–53 · 54–65개월
 
-### `find_pediatric_places`
-| 입력 | 흐린 좌표(`CoarseLocation`, 약 1km · 비저장), `now`(KST), `mode: "normal"\|"emergency"` |
+### `place_lookup` — 문 연 병원 안내 (#926)
+| 입력 | 없음 — 요청 문장도 아이 정보도 위치도 읽지 않는다 |
 | --- | --- |
-| 위치 | 🚨 **보호자 좌표를 병원 API 에 보내지 않는다** — 좌표 → 5km 격자만 어댑터(`FacilitySource`)에 넘기고, 어댑터가 시도로 바꿔 조회한다. 거리는 받은 기관 좌표로 서버 안에서 계산한다 (Activity 와 같은 원칙 · activity-agent-v1 D9 · #166 위치 약관) |
-| 분기 | 평일 09–18시 → 소아청소년과 · 그 밖(토 · 일 · 공휴일 · 야간) → **진료시간상 지금 진료 중인 소아청소년과**(달빛어린이병원 포함) → 응급의료기관 · emergency → 응급의료기관만. 종류 순서가 거리보다 먼저다. 달빛어린이병원은 API 에 표시 칸이 없어(자유 글에만 있음) 지정 목록 대신 진료시간(`dutyTime1~8`)으로 고른다 (10-18) |
-| 출력 | 종류 순 · 같은 종류는 거리순 ≤5 `{name, tier, distance_m, phone, open_now}` → `Readout(kind="place_list")`. 문을 닫은 게 확실한 곳(`open_now=False`)은 뺀다 |
-| 실패 | 조회 실패 → "병원 정보를 불러오지 못했어요. 응급 시 119에 연락하세요." · 0곳은 실패와 따로 → "근처에서 지금 찾을 수 있는 병원이 없어요. …" · 위치 없음 → "위치를 허용하시면 가까운 병원을 찾아드려요." |
-| 코드 | `app/agents/health/places/` — 시간대 분기 · 지금 진료 중 판정 · 거리순 · readout. 어댑터는 `app/integrations/hospital/`(`NmcHospitals`) — 국립중앙의료원 병·의원 찾기(`QD=D002` 소아청소년과) · 응급의료기관 목록을 **시도 이름**으로 묻는다(이 API 는 시군구를 이름으로만 받는다). 소아청소년과는 시도마다 24시간, 응급실은 10분 기억한다. 원문 계약은 `core/hospital_raw.py` |
+| 출력 | `place.portal` 한 줄(`Readout(kind="notice")`, §4) — 지금 문 연 병원은 응급의료포털(www.e-gen.or.kr)에서 찾을 수 있고 급하면 119 |
+| 모델 | **부르지 않는다.** 읽기 0 · 쓰기 0 · 저장 없음 |
+| 닫힘 | 건강정보 동의가 없으면 다른 라벨과 같이 `blocked.consent` |
+| 코드 | `app/agents/health/labels/place.py` |
+| 하지 않는 것 | 병원 찾기 — 위치 · 국립중앙의료원 목록 · 시간대 분기 · 거리순. 위치 약관과 결과 화면을 붙일 시간이 없어 하지 않기로 했다 |
 
 ### `resolve_dose_timing`
 | 입력 | `timing_span` (발화 원문) |
@@ -150,25 +154,15 @@ Memory 가 뽑은 문장이라 보호자 말 그대로라고 보장하지 못해
 | 출력 | `{last_checked, next_scheduled, checked_today, planned_today}` → `Readout(code, kind="dose_status")` — `last_checked` 는 체크된 회차 중 가장 늦은 것의 **회차 예정 시각**(`dose_date` + `scheduled_time`)이다. 체크를 누른 시각(`checked_at`)은 몰아서 누르면 실제와 어긋난다 |
 | 금지 | **`can_take` 같은 필드를 두지 않는다.** 허가·간격 판단 없음 · 체크 안 된 회차를 "안 먹였다"로 쓰지 않는다 |
 
-### `lookup_prescription_draft`
-| 입력 | `child_id`, `since` |
-| --- | --- |
-| 출처 | **OCR 파이프라인이 만든 `prescription_draft`.** Health는 읽기만, write 권한 없음 |
-| 출력 | `{title, dosage, frequency_text, timing_text, days, confidence{field: 0~1}}` → `Readout(code, kind="prescription_draft")` |
-| 규칙 | 신뢰도 낮은 칸은 **빈값 유지**(추측 금지) · 보호자가 확인·수정해야 등록 버튼 활성 · 등록 시 span 출처가 발화 대신 이 draft 텍스트 |
-| 약품명 | **대조하지 않는다.** 일치 여부 표시도, 치환·보완도 없다 (H-10) |
+### `lookup_prescription_draft` — 만들지 않음 (#926)
+처방전 OCR 조회는 이번 묶음 밖이라 코드 · tool 표 어디에도 없다. `prescription_draft` 테이블과 `source_draft_id` 는 DB 에 남아 있다(expand-only).
 
-### `get_health_phrase` — 고정 문구 조회
-
-| 입력 | `kind`, `key`, `age_months` |
-| --- | --- |
-| 출처 | **`reference/health_phrases.yaml`** (테이블 아님). 코드와 함께 배포된다 |
-| 출력 | 문구 1건 → 호출부의 `Readout(code)` 본문에 **글자 그대로** |
-| 규칙 | 키 정확 일치만. 의미 검색·임베딩 없음 — 비슷한 문구가 잘못 끌려오면 안 된다 |
-| 없으면 | 해당 안내를 **생략한다.** 모델에게 채우게 하지 않는다 |
-| 부팅 검사 | `seek_care`·`emergency_sign`은 `medical_reviewed: true`가 아니면 로드하지 않는다 · `emergency_sign` 키와 Supervisor 규칙이 1:1인지 CI가 확인한다 |
+### `get_health_phrase` — 만들지 않음 (#926)
+고정 문구는 `health.readout.yaml` 한 곳이고 `READOUTS.render(키)` 가 글자 그대로 낸다. 키 · 문구가 §4 표와 글자 단위로 같은지는 `test_health_readouts.py` 가 본다. `reference/health_phrases.yaml` 은 만들지 않았다.
 
 ### `compose_daycare_med_notice` · `build_emergency_card`
+> tool 로 만들지 않았다(#926) — `labels/handoff.py` 가 라벨 경로 안에서 직접 한다(`_med_notice` · `_emergency_card`). 아래 규칙은 그대로다.
+
 | | 내용 |
 | --- | --- |
 | 입력 | active 복약(코스+dose+`storage`·`med_form`·`indication_text`) · `health_safety` · `child`. 보호자 연락처는 넣지 않는다(10-18) |
@@ -185,7 +179,7 @@ Memory 가 뽑은 문장이라 보호자 말 그대로라고 보장하지 못해
 | 모델 | **부르지 않는다.** `schedule_check` 의 context 분기(모델 0회) |
 | 대필 | 문진표를 대신 써 달라는 말이면 `checkup.no_ghostwrite` 를 맨 앞에 두고 같은 요약을 낸다 |
 | 금지 | **발달 문항 답변·체크·점수** · 문진표 대필 · 수면 시간(기록 구조 없음) · 키·몸무게(`child_growth_log`를 읽지 않는다, 10-18) |
-| 문구 | 문진 항목 설명은 `reference/health_phrases.yaml`에서. "문진표는 직접 작성해 주세요" 고정 |
+| 문구 | 문진 항목 설명은 `health.readout.yaml`(§4 `checkup.ctx_*`)에서. "문진표는 직접 작성해 주세요" 고정 |
 
 ### hook (Memory가 `observation_health` 저장 직후, pipeline이 실행)
 | Tool | 조건 | 출력 |

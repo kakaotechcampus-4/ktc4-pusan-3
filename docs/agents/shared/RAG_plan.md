@@ -382,7 +382,7 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 | Food | `search_food_doc` (**코드 tool**, run 시작 시 자동 조회) | 단계 · `row_type` → 의미 검색 | 3 | 프롬프트 `[예시]` | `suggestion_evidence`(`*_doc`) → "참고: ○○ 자료" |
 | Growth | `search_growth_doc` (코드 tool) | 단계 · 영역 · `routine_category` · `trigger_tags` → 의미 검색 | 3 | 프롬프트 `[예시]` | 동일 |
 | Activity | `search_activity_doc` (코드 tool) | 월령 슬라이스 → 의미 검색 | 5 | 프롬프트 `[예시]` | 동일 |
-| Health | `get_health_phrase(kind, key, months)` — 상수 파일 | 키 정확 일치 | 1 | readout 본문 그대로 | 출처 한 줄 고정 |
+| Health | ~~`get_health_phrase(kind, key, months)`~~ — 만들지 않음(#926). 고정 문구는 `READOUTS` 가 키 정확 일치로 낸다 | 키 정확 일치 | 1 | readout 본문 그대로 | 출처 한 줄 고정 |
 
 - 조회는 **코드 tool**로 둔다. 모델에게 검색 tool을 주면 쿼리를 자유 문장으로 만들면서 아이 발화를 넣을 수 있고, 조회 결과 수와 조회 여부를 테스트로 고정하기 어렵다.
 - 의미 검색 쿼리는 **코드가 조립**한다: 라벨 · 단계 · 관심사 `merge_key` · 루틴 카테고리. 보호자 원문은 넣지 않는다.

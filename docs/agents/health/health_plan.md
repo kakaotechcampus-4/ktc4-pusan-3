@@ -44,7 +44,7 @@
 | 4 | 증상 반복 안내 — 날 수 세기 · 만성질환 연결 | S1 · S3 · S6 | (질환 × 증상) 안내 문구 확인 — 원문 대조 · 연결 적절성 (의료인 검수 필수 아님, PM 확인 대기) |
 | 5 | 복약 기록 · 초안 + 전달 서류 | S2 · S6 · S7 | BE · FE — 복약 테이블 · 제출 API · 회차 체크 API · 초안 카드 · 체크 화면 (8번 선행) |
 | 6 | 진료 준비 정리 · 열 타임라인 · 검진 맥락 요약 | S2(체온 3칸) · S8 | 의료 검수 — 3개월 미만 발열 응급 기준 |
-| 7 | 병원 찾기 (`place_lookup`) — 다른 작업자 | S4 · S6 | PM — 위치 약관 목적 · 다시 동의, API 키 · 서버 IP |
+| 7 | ~~병원 찾기~~ → 응급의료포털 · 119 안내 한 줄 (`place_lookup`, #926) | – | – |
 | 8 | 연결 — Supervisor · pipeline · 복약 어댑터 (§16) | S9 · S10 | BE · FE — SSE 번역 · 되묻기 보관 · 답하기 화면은 같이 |
 
 연결 이슈(§16)는 **5번의 BE/FE 작업이 develop 에 들어온 뒤** 연다(10-20 변경 — 원래는 7번 확인 직후였다). 복약을 실제 테이블로 읽지 못하는 채로 연결하면 `medication` · `care_handoff` 가 빈 저장소로 돌기 때문이다. 처방전 OCR 경로(`prescription_draft`)는 이 순서 밖이다 — OCR 파이프라인과 테이블이 생기면 따로 연다.
@@ -125,9 +125,9 @@ DoD: 왕복 마이그레이션 · `make_interval` IMMUTABLE 확인 · agent role
 
 | 어댑터 | 캐시 | DoD |
 | --- | --- | --- |
-| 심평원 병원정보 | 24h | 진료과목 코드 확정(E-2) · 계약 테스트 |
-| 국립중앙의료원 응급의료정보 | **캐시 금지** | 실시간 · 타임아웃 2.5s · 재시도 0 |
-| 달빛어린이병원 목록 | 월 1회 동기화 | 심평원 좌표 조인 |
+| ~~심평원 병원정보~~ | – | 쓰지 않음 (#926) |
+| ~~국립중앙의료원 응급의료정보~~ | – | 쓰지 않음 (#926) |
+| ~~달빛어린이병원 목록~~ | – | 쓰지 않음 (#926) |
 
 공통: 내부 dataclass 변환 · 실패는 전용 예외 · **좌표는 요청 바디로만, 저장·로그·예외 메시지에 없음**.
 
@@ -142,7 +142,6 @@ DoD: 왕복 마이그레이션 · `make_interval` IMMUTABLE 확인 · agent role
 | 축 | 닫히는 것 |
 | --- | --- |
 | `child_health` 동의 철회 | **전 라벨** |
-| 위치 권한 없음 | `place_lookup` |
 | `health_safety` 조회 실패 | `visit_summary` 진행 + 경고 줄 |
 | 진행 중 복약 0건 | 투약의뢰서 (응급 카드는 동작) |
 | 체온 기록 0건 | `build_fever_timeline` |
@@ -161,9 +160,9 @@ DoD: mock `run()` · 라벨 5개 각각 `tools_for()` 스냅샷 테스트.
 | 6-5 | `check_symptom_repetition` | **기록된 날** 기준 최근 7일 3일 · 같은 날 여러 번 = 1일 · 3일 연속 = 3일 (10-18) |
 | 6-5a | `lookup_condition_guidance` | 질환 사전 매칭 · (질환 × 증상) 행 있을 때만 질환 문장·카드 · 알레르기 제외 · 사전 밖 이름은 기본 문장 · **쓰기 0건** |
 | 6-6 | `build_fever_timeline` | 약 계열 단어 0건 · 다음 예정은 **등록 일정에서만** |
-| 6-7 | `find_pediatric_places` | 시간대 분기 · 실패 문구 |
+| 6-7 | ~~`find_pediatric_places`~~ | 만들지 않음 (#926) — `place_lookup` 은 고정 안내 한 줄 |
 | 6-8 | `summarize_checkup_context` | **발달 문항 0건** |
-| 6-9 | `build_emergency_card` · `compose_daycare_med_notice` | 고정 서식 · 서명 문구 항상 · 모델 0회 |
+| 6-9 | 응급 카드 · 투약의뢰서 (`labels/handoff.py`, tool 아님) | 고정 서식 · 서명 문구 항상 · 모델 0회 |
 
 **이 단계가 끝나면 라벨 5개 중 3개가 완성됩니다**(schedule_check · place_lookup · care_handoff).
 
@@ -179,7 +178,7 @@ DoD: mock `run()` · 라벨 5개 각각 `tools_for()` 스냅샷 테스트.
 | 7-4 | `update` · `stop` | update는 `op="update"` 초안(DB 미접촉) · stop은 한 번 묻고(그 run 변경 0) '네' 다음 run 에서 `status='stopped'` · `updated_at`=중단 시각 · 대상 모호하면 역질의 |
 | 7-4a | 제출 처리 (백엔드) | create → INSERT 코스 + 기간만큼 회차 행, update → 같은 행 UPDATE + 아직 오지 않은 회차만 재생성 (한 트랜잭션) · `missing` 비지 않으면 거절 · `stopped` 코스 수정 거절 |
 | 7-5 | `get_next_dose` · "먹였어" 안내 | 오늘 체크 n/m · 마지막 체크 = 회차 예정 시각 · 쓰기 0 · **반환에 `can_take` 없음** |
-| 7-6 | `lookup_prescription_draft` | 낮은 신뢰도 칸 빈값 유지 · 확인 전 등록 차단 |
+| 7-6 | ~~`lookup_prescription_draft`~~ | 만들지 않음 (#926) |
 
 승인 모달의 실제 시각: 생성·수정 결과에 시각이 없으면 **tool 호출 실패**로 처리합니다.
 
@@ -195,7 +194,7 @@ DoD: mock `run()` · 라벨 5개 각각 `tools_for()` 스냅샷 테스트.
 
 | 채널 | 종류 |
 | --- | --- |
-| `readouts` | `checkup_schedule`·`symptom_timeline`·`place_list`·`medication_notice`·`symptom_repeat`·`condition_guidance`·`fever_timeline`·`dose_status`·`med_notice_form`·`emergency_card`·`checkup_context`·`prescription_draft`·`unsupported` |
+| `readouts` | `checkup_schedule`·`symptom_timeline`·`medication_notice`·`symptom_repeat`·`condition_guidance`·`fever_timeline`·`dose_status`·`med_notice_form`·`emergency_card`·`checkup_context`·`prescription_draft`·`unsupported` |
 | `event_requests` | 검진 알림 — 초안 payload, 제출 시 저장 |
 | `needs_observation` | 복용 시점 · 대상 약 |
 | `suggestions` | **없음** |
@@ -254,7 +253,7 @@ tool 을 하나 붙일 때마다 지금까지의 케이스를 다시 돌려 응�
 | 2 | `care_handoff` | 서식 불변 · 서명 문구 |
 | 3 | `schedule_check` | "놓쳤어요" 0건 |
 | 4 | `visit_summary` (모델 1회) | 해석 표현 0건 · ref 누락 0건 |
-| 5 | `place_lookup` | API 실패 시 119 안내 |
+| 5 | `place_lookup` | 고정 안내 글자 그대로 · 모델 0회 (#926) |
 | 6 | hook 1종 | 증상 반복 판정 관측 |
 
 ### 13-1. 드라이런
@@ -299,7 +298,7 @@ H-1 · H-8 · H-9 · H-11 · H-13 ([`Health_Agent_명세.md`](Health_Agent_명�
 
 ## 16. 연결 이슈에서 할 일
 
-**상태 (10번 PR ①)** — 끝난 것: Supervisor health 라벨 · `IMPLEMENTED_AGENTS` · `_RUNNERS` · `_WRITING_TASKS` · 추천 없는 Agent 표(`NON_RECOMMENDING_AGENTS`) · pipeline 출력(복약 초안 · 되묻기 · 검진 알림 일정 초안) · 건강 기록 저장 직후 hook(영아 발열 · 증상 반복) · 등록된 약 대조 · 응급 사전검사. 남은 것: **병원 찾기 위치**(16번 — 지금은 `place.preparing` 문구로 닫힌다) · 화면 확인(FE). SSE 번역(`medication_draft` · 코스 ref) · 되묻기 이어받기(`awaits_reply` · Health 답 run)는 11번에서 끝났다.
+**상태 (10번 PR ①)** — 끝난 것: Supervisor health 라벨 · `IMPLEMENTED_AGENTS` · `_RUNNERS` · `_WRITING_TASKS` · 추천 없는 Agent 표(`NON_RECOMMENDING_AGENTS`) · pipeline 출력(복약 초안 · 되묻기 · 검진 알림 일정 초안) · 건강 기록 저장 직후 hook(영아 발열 · 증상 반복) · 등록된 약 대조 · 응급 사전검사. 남은 것: 화면 확인(FE). 병원 찾기는 하지 않기로 했다(#926 — `place_lookup` 은 응급의료포털 · 119 안내 한 줄). SSE 번역(`medication_draft` · 코스 ref) · 되묻기 이어받기(`awaits_reply` · Health 답 run)는 11번에서 끝났다.
 
 5번의 BE/FE 작업이 들어온 뒤 한 이슈로 연다(10-20 변경). 그 전에는 Health 가 pipeline 에 붙지 않아서 Supervisor 가 health 로 보내면 `unavailable` 로 끝난다. 그 사이 빠지는 게 없도록 여기 고정한다.
 
@@ -318,7 +317,7 @@ H-1 · H-8 · H-9 · H-11 · H-13 ([`Health_Agent_명세.md`](Health_Agent_명�
 - **`event_requests`**(검진 알림) → Memory 일정 tool 을 코드로 불러 초안 payload
 - **hook** — Memory 가 `observation_health` 를 저장한 직후 `check_symptom_repetition` 을 동기 호출
 - **복약 DB 어댑터 · 배선** — `domains/health/agent_reader.py`(Agent 포트를 테이블로) · `apps/api/CLAUDE.md` 저장 계약 예외 표 · `entrypoint._domain_contexts` · `api/agent_ports.py`
-- **병원 찾기 위치** — `HealthContext.location` · `HealthPorts.places` 와 `entrypoint.handle_input(health_location=…, health_places=…)` 까지 섰다(#713 후속). 🚨 위치는 Activity 의 `location` 과 따로 받는다 — 위치 약관은 판마다 목적이 달라서, 병원 찾기 목적이 든 판(2026-11-03)에 동의한 보호자의 위치만 넘긴다. 남은 것: 라벨 실행기가 `find_pediatric_places(location=context.location, source=context.ports.places, now=…)` 로 부르기(`now` 는 KST 벽시계) · api 가 동의한 판을 확인해 `health_location` 을 넘기기(지금 `location_granted` 는 판을 보지 않는다)
+- ~~**병원 찾기 위치**~~ — 하지 않기로 했다(#926). `HealthContext` 의 위치 · `HealthPorts` 의 병원 어댑터 · `entrypoint.handle_input` 의 Health 위치 · 병원 인자를 지웠고, `place_lookup` 은 응급의료포털 · 119 안내 한 줄(`place.portal`)로 끝난다. Activity 의 `location` 은 그대로다
 
 **BE/FE 와 같이 하는 것** — pipeline 이벤트가 생겨야 끝까지 확인할 수 있어서 연결 이슈에 둔다
 
