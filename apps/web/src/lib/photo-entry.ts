@@ -1,4 +1,4 @@
-import type { PhotoEntry, SubmitEventBody } from "@/lib/api/types";
+import type { PhotoEntry, PhotoEntryDetail, SubmitEventBody } from "@/lib/api/types";
 import { seoulDate, seoulTime, withSeoulDateTime } from "@/lib/event-draft";
 import { formatDateTime, formatDayRange, formatEventTime, formatTimeOfDay } from "@/lib/format";
 import { isPast, NO_REMINDER, type ReminderChoice } from "@/lib/reminder";
@@ -346,6 +346,38 @@ export function eventBody(entry: PhotoEntry, plan: EventPlan): SubmitEventBody |
     items: entry.items.map((item) => ({ item_id: null, item_name: item })),
     reminder: plan.reminder === NO_REMINDER ? null : { lead: plan.reminder },
   };
+}
+
+/* ── 딸린 정보 (`details`) ─────────────────────────────────────────────── */
+
+/**
+ * 목록 줄에 그릴 딸린 정보 — 장소 · 금액 · 등원 시각처럼 서버가 이름-값으로 보내는 줄.
+ *
+ * 🚨 **읽기 전용이다.** 고칠 칸이 없고, 저장할 때도 싣지 않는다(`commitEntry`) — 서버가 run 에 든 값으로 저장한다.
+ * 🚨 **급식에는 그리지 않는다.** 서버도 급식 항목에는 이 칸을 보내지 않는다(`photo_run.py` 의 `_meal_entries`).
+ * 🚨 **이름 · 값을 고치거나 자르지 않는다.** 이름은 문서마다 달라서 코드로 가르지 않고, 개수 · 길이는 서버가
+ *    이미 묶었다(12줄 · `assemble.py` 의 `MAX_DETAILS`). 비어 온 줄만 뺀다 — 빈 이름표를 세우지 않으려고.
+ */
+export function entryDetails(entry: PhotoEntry): PhotoEntryDetail[] {
+  if (entry.kind === "meal") return [];
+  return (entry.details ?? []).filter(
+    (detail) => detail.name.trim() !== "" && detail.value.trim() !== "",
+  );
+}
+
+/**
+ * 저장(commit)에 싣는 항목 하나. 넣은 일정의 id 를 `event_id` 로 싣는다 (#723).
+ *
+ * 🚨 **받는 값은 `recordedEntry` 를 거친 값이다** — 화면은 `commitEntry(recordedEntry(entry, plan), id)`
+ *    로 부른다. 고친 시작을 얹는 일은 `recordedEntry` 몫이고(#952), 이 함수는 값을 고치지 않고
+ *    `event_id` 싣기와 `details` 빼기만 한다. 읽은 값을 그대로 넘기면 고친 시작이 기록에서 빠진다.
+ * 🚨 **딸린 정보는 뺀다.** 보호자가 고칠 수 없는 값이라 화면이 보낼 까닭이 없다 — 서버는 받아도 쓰지 않고
+ *    run 에 든 값으로 저장한다(`schemas/photos.py` 의 `PhotoEntry`).
+ */
+export function commitEntry(entry: PhotoEntry, eventId: string | undefined): PhotoEntry {
+  const out: PhotoEntry = { ...entry, event_id: eventId ?? null };
+  delete out.details;
+  return out;
 }
 
 /** 캘린더에 넣은 것. 🚨 일시는 **응답에서** 받는다 — 같은 키 재시도면 서버는 처음 넣은 일정을 돌려준다 (#792 리뷰). */

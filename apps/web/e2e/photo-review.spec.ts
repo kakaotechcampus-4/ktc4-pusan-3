@@ -617,3 +617,66 @@ test("시각을 읽은 마감은 목록에 시각까지 보이고, 일정의 시
   await expect(sheet.getByRole("checkbox", { name: "하루 종일" })).toBeChecked();
   await expect(sheet.getByRole("group", { name: "시작 시간" })).toHaveCount(0);
 });
+
+test("딸린 정보(details)는 목록 줄에 이름과 값으로 서고, 없는 줄에는 아무것도 없다", async ({
+  page,
+}) => {
+  const calls = recordApi(page);
+  await openNotice(page);
+
+  // 🚨 시트를 열지 않아도 보인다 — 일정(10시)과 다른 "9시까지 등원" 이 사라지면 안 된다.
+  const lesson = row(page, "부모 참여 수업");
+  await expect(lesson.getByRole("term").filter({ hasText: "등원 시각" })).toBeVisible();
+  await expect(
+    lesson.getByRole("definition").filter({ hasText: "당일은 9시까지 등원" }),
+  ).toBeVisible();
+  await expect(lesson.getByRole("term").filter({ hasText: "장소" })).toBeVisible();
+  await expect(lesson.getByRole("definition").filter({ hasText: "강당" })).toBeVisible();
+  await expect(row(page, "체험학습 동의서 회신")).toContainText("30,000원");
+
+  // 🚨 없는 줄에는 빈 이름표도 빈 상자도 세우지 않는다 — 날짜 줄 하나뿐이다.
+  await expect(row(page, "도서관 나들이").getByRole("term")).toHaveCount(1);
+
+  // 🚨 긴 값은 줄을 바꾼다 — 줄이 카드 밖으로 넘쳐 가로 스크롤이 생기면 안 된다.
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(0);
+
+  // 🚨 고칠 수 없는 값이라 저장 본문에 싣지 않는다 — 서버가 보관한 값으로 저장한다.
+  await page.getByRole("button", { name: /^저장하고 캘린더에/ }).click();
+  await page.waitForURL(`**/child/${CHILD}/home`);
+  const [commit] = writes(calls, "POST", COMMIT);
+  const sent = (commit.body as { entries: Array<Record<string, unknown>> }).entries;
+  expect(sent.length).toBeGreaterThan(0);
+  for (const entry of sent) expect(entry).not.toHaveProperty("details");
+});
+
+for (const width of [390, 320]) {
+  test(`🚨 띄어쓰기 없는 긴 딸린 정보도 목록 줄 안에서 줄을 바꾼다 — ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await openNotice(page);
+
+    const consent = row(page, "체험학습 동의서 회신");
+    const card = consent.locator(":scope > div").first();
+    // 목의 106자 주소 · 띄어쓰기 없는 한 낱말 (`mocks/handlers/photos.ts`)
+    const values = [
+      consent.getByRole("definition").filter({ hasText: "https://example.com/forms/" }),
+      consent.getByRole("definition").filter({ hasText: "가을현장체험학습참가신청서" }),
+    ];
+    const box = (await card.boundingBox())!;
+    for (const value of values) {
+      await expect(value).toBeVisible();
+      const own = (await value.boundingBox())!;
+      // 🚨 값 칸이 카드 안에 있고, 글자가 값 칸 밖으로 나가지 않는다. 전역이 `keep-all` 이라 줄바꿈 클래스를
+      //    빼면 글자가 값 칸 밖으로 나간다(390px 43 · 320px 105). 문서 폭은 그때도 늘지 않아서 칸마다 잰다.
+      expect(own.x + own.width).toBeLessThanOrEqual(box.x + box.width);
+      expect(await value.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    }
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+    ).toBe(0);
+  });
+}

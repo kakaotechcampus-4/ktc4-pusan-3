@@ -136,6 +136,10 @@ function seoulAt(day: string, time: string): string {
   return `${day}T${time}:00+09:00`;
 }
 
+/** 띄어쓰기 없는 106자 주소 — 딸린 정보 값 칸이 목록 줄 밖으로 넘치지 않는지 e2e 가 잰다. */
+export const LONG_DETAIL_URL =
+  "https://example.com/forms/field-trip-consent/2026-autumn/sunflower-class/application-guide-for-parents.pdf";
+
 /**
  * 알림장 한 장에서 나온 항목들. 🚨 **일부러 못 읽은 것을 섞는다** — 화면이 두 무리로 가르는
  * 것이 이 목의 요점이고, 전부 잘 읽힌 상태만 있으면 "확인이 필요해요" 를 볼 수가 없다.
@@ -196,6 +200,18 @@ function noticeEntries(): PhotoEntry[] {
       starts_at: null,
       ends_at: null,
       due_at: seoulAt(consentDue, "23:59"),
+      // 🚨 긴 값이 줄을 바꾸는지 보려고 한 줄은 길게 둔다 (서버 상한 200자 · `assemble.py`).
+      //    띄어쓰기 없는 긴 값(주소 · 한 낱말)도 둔다 — 전역이 `keep-all` 이라 끊을 자리가 없다 (e2e 가 폭을 잰다).
+      details: [
+        { name: "체험비", value: "30,000원" },
+        {
+          name: "회신 방법",
+          value:
+            "동의서에 서명해서 가방에 넣어 보내 주세요. 참여하지 않으면 아래 칸에 표시해 주세요.",
+        },
+        { name: "신청 주소", value: LONG_DETAIL_URL },
+        { name: "준비 서류", value: "가을현장체험학습참가신청서와보호자동의서및건강확인서" },
+      ],
     },
     {
       id: "pe_8",
@@ -211,6 +227,12 @@ function noticeEntries(): PhotoEntry[] {
       starts_at: seoulAt(classDay, "10:00"),
       ends_at: seoulAt(classDay, "12:00"),
       due_at: seoulAt(classDue, "23:59"),
+      // 🚨 딸린 정보(`details`). 일시(10시)와 다른 시각("9시까지 등원")이 여기 실려 온다 — 화면이 안 그리면
+      //    보호자가 못 본다. 이름은 문서마다 달라서 서버도 화면도 코드로 가르지 않는다.
+      details: [
+        { name: "장소", value: "강당" },
+        { name: "등원 시각", value: "당일은 9시까지 등원" },
+      ],
     },
     {
       id: "pe_9",
